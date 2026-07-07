@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "src/plugin/**/*",
+    "src/shared/**/*",
+    "external/blockbench/types/custom/**/*",
+    "external/blockbench/types/generated/**/*"
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "name": "minecraft-blockbench-mcp",
+  "version": "0.1.0",
+  "description": "MCP integration for Blockbench: a Claude Code-launched stdio MCP adapter plus a Blockbench desktop plugin for AI-assisted Minecraft Java block/item model editing.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "minecraft-blockbench-mcp": "dist/adapter/cli.js"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.adapter.json --noEmit && tsc -p tsconfig.plugin.json --noEmit",
+    "build": "npm run build:adapter && npm run build:plugin",
+    "build:adapter": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist/adapter', { recursive: true, force: true }); rmSync('dist/shared', { recursive: true, force: true });\" && tsc -p tsconfig.adapter.json",
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "test": "node --test --import tsx tests/*.test.ts",
+    "dev": "tsx src/adapter/cli.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.18.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/ws": "^8.18.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}
