@@ -127,6 +127,35 @@ export class PluginSession {
     this.#setStatus('stopped');
   }
 
+  /** Reconnect immediately, e.g. after the user changes the port or secret in
+   * settings, instead of waiting out the current backoff window. */
+  reconnectNow(): void {
+    if (this.#stopped) return;
+    if (this.#retryTimer !== null) {
+      clearTimeout(this.#retryTimer);
+      this.#retryTimer = null;
+    }
+    if (this.#status === 'connected' || this.#status === 'authenticating' || this.#status === 'connecting') {
+      // Drop the current socket first; its close handler is detached so it
+      // won't schedule a competing retry.
+      const socket = this.#socket;
+      this.#socket = null;
+      if (socket !== null) {
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onclose = null;
+        socket.onerror = null;
+        try {
+          socket.close(1000, 'reconnect');
+        } catch {
+          // ignore close errors mid-handshake
+        }
+      }
+    }
+    this.#backoffMs = this.#options.backoffInitialMs ?? 1_000;
+    this.#connect();
+  }
+
   /** Send a fire-and-forget event to the adapter (e.g. scope_changed). */
   sendEvent(event: string, data?: unknown): void {
     const socket = this.#socket;

@@ -63,6 +63,9 @@ function acquireScopedFs(normalizedPath: string): ScopedFsLike | null {
 }
 
 function setupRuntime(): PluginRuntime {
+  // Changing the port or secret reconnects immediately instead of waiting out
+  // the current backoff window.
+  const reconnectOnChange = () => runtime?.session.reconnectNow();
   const settings: Setting[] = [
     new Setting(SETTING_PORT, {
       name: 'MCP Adapter Port',
@@ -70,6 +73,7 @@ function setupRuntime(): PluginRuntime {
       category: 'general',
       type: 'number',
       value: DEFAULT_WS_PORT,
+      onChange: reconnectOnChange,
     }),
     new Setting(SETTING_SECRET, {
       name: 'MCP Shared Secret',
@@ -77,6 +81,7 @@ function setupRuntime(): PluginRuntime {
       category: 'general',
       type: 'password',
       value: '',
+      onChange: reconnectOnChange,
     }),
   ];
 

@@ -213,6 +213,26 @@ test('an empty secret never attempts a connection and reports auth_failed', asyn
   assert.equal(bridge.connected, false);
 });
 
+test('reconnectNow connects promptly after a secret becomes available', async (t) => {
+  const port = nextPort++;
+  const bridge = makeBridge(port);
+  await bridge.start();
+  t.after(() => bridge.stop());
+
+  let secret = '';
+  const { session, statuses } = makeSession(port, { secret: () => secret });
+  t.after(() => session.stop());
+  session.start();
+  // First attempt sees no secret and backs off (max backoff).
+  await waitFor(() => statuses.includes('auth_failed'));
+  assert.equal(bridge.connected, false);
+
+  // Simulate the user entering the secret and the onChange hook firing.
+  secret = SECRET;
+  session.reconnectNow();
+  await waitFor(() => session.status === 'connected' && bridge.connected, 2_000);
+});
+
 test('scope_changed events reach the adapter cache through sendEvent', async (t) => {
   const port = nextPort++;
   const bridge = makeBridge(port);
