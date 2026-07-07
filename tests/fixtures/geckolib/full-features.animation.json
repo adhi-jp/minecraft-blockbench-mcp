@@ -1,0 +1,61 @@
+{
+  "format_version": "1.8.0",
+  "animations": {
+    "animation.ghost.idle": {
+      "loop": true,
+      "animation_length": 2,
+      "bones": {
+        "body": {
+          "position": {
+            "0.0": [0, 0, 0],
+            "0.5": { "post": [0, 1, 0], "easing": "easeInOutSine" },
+            "1.0": { "vector": [0, 0.5, 0], "easing": "easeOutBounce", "easingArgs": [3] },
+            "2.0": [0, 0, 0]
+          },
+          "scale": 1
+        },
+        "head": {
+          "rotation": {
+            "0.0": [0, 0, 0],
+            "1.0": { "post": ["math.sin(query.anim_time * 90) * 5", 0, 0], "lerp_mode": "catmullrom" },
+            "2.0": [0, 0, 0]
+          }
+        }
+      }
+    },
+    "animation.ghost.attack": {
+      "loop": "hold_on_last_frame",
+      "animation_length": 1.25,
+      "anim_time_update": "query.anim_time + query.delta_time",
+      "bones": {
+        "body": {
+          "rotation": {
+            "0": [0, 0, 0],
+            "0.25": { "vector": [-15, 0, 0], "easing": "easeInBack", "easingArgs": [1.7] },
+            "1": { "vector": [0, 0, 0], "easing": "step", "easingArgs": [4] }
+          },
+          "position": "math.sin(query.anim_time)"
+        }
+      },
+      "sound_effects": {
+        "0.25": { "effect": "attack_swing" }
+      },
+      "particle_effects": {
+        "0.5": { "effect": "examplemod:swing_trail", "locator": "body" }
+      },
+      "timeline": {
+        "0.0": "/say attack start",
+        "1.0": ["/say attack end", "/particle minecraft:crit ~ ~1 ~"]
+      }
+    },
+    "animation.ghost.spin": {
+      "loop": "play_once",
+      "bones": {
+        "body": {
+          "rotation": { "0.0": [0, 0, 0], "1.0": [0, 360, 0] }
+        }
+      }
+    }
+  },
+  "geckolib_format_version": 2
+}

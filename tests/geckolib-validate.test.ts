@@ -10,8 +10,10 @@ import { dirname, join } from 'node:path';
 import {
   validateGeoJson,
   validateAnimationBoneRefs,
+  validateAnimationJson,
   validateGeckolibProject,
   geometryBoneNames,
+  GECKOLIB_EASING_NAMES,
   GECKOLIB_VALIDATION_PROFILE,
   TESTED_GECKOLIB_PLUGIN_VERSION,
 } from '../src/shared/geckolib-validate.js';
@@ -229,6 +231,219 @@ test('malformed animation entries and uninspectable geometries degrade explicitl
 test('geometry bone names are extractable for cross-checks', () => {
   assert.deepEqual(geometryBoneNames(geoFixture()), ['body', 'head']);
   assert.equal(geometryBoneNames({}), null);
+});
+
+// --- validateAnimationJson (animation content checks, no geometry needed) ---
+
+function fullFeaturesFixture(): Record<string, unknown> {
+  return loadFixture('full-features.animation.json') as Record<string, unknown>;
+}
+
+/** Wrap one animation body into a minimal animation file. */
+function animationFile(animation: Record<string, unknown>, name = 'animation.ghost.test'): Record<string, unknown> {
+  return { animations: { [name]: animation } };
+}
+
+/** Wrap one bone-channel keyframe map into a minimal animation file. */
+function channelFile(channel: string, value: unknown): Record<string, unknown> {
+  return animationFile({ bones: { body: { [channel]: value } } });
+}
+
+test('an animation file exercising every supported content feature produces no diagnostics', () => {
+  assert.deepEqual(validateAnimationJson(fullFeaturesFixture()), []);
+});
+
+test('the full-features animation cross-checks cleanly against the geometry fixture', () => {
+  assert.deepEqual(validateAnimationBoneRefs(fullFeaturesFixture(), geoFixture()), []);
+});
+
+test('the GeckoLib plugin easing whitelist has the 32 surveyed names', () => {
+  assert.equal(GECKOLIB_EASING_NAMES.length, 32);
+  assert.equal(new Set(GECKOLIB_EASING_NAMES).size, 32);
+  assert.ok(GECKOLIB_EASING_NAMES.includes('linear'));
+  assert.ok(GECKOLIB_EASING_NAMES.includes('step'));
+  assert.ok(GECKOLIB_EASING_NAMES.includes('easeInOutBounce'));
+});
+
+test('loop values GL4 cannot resolve are warnings naming the silent play-once fallback', () => {
+  for (const accepted of [true, false, 'loop', 'true', 'false', 'play_once', 'hold_on_last_frame']) {
+    assert.deepEqual(validateAnimationJson(animationFile({ loop: accepted })), [], `loop ${JSON.stringify(accepted)}`);
+  }
+  for (const rejected of ['forever', 5, null, 'Loop']) {
+    const diagnostics = validateAnimationJson(animationFile({ loop: rejected }));
+    assert.equal(diagnostics.length, 1, `loop ${JSON.stringify(rejected)} must be flagged`);
+    assert.equal(diagnostics[0].severity, 'warning');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_loop_value');
+    assert.equal(diagnostics[0].target, 'animation.ghost.test');
+  }
+});
+
+test('unknown easing names are warnings; the whitelist is case-insensitive and includes GL4 aliases', () => {
+  const withEasing = (easing: unknown): Record<string, unknown> =>
+    channelFile('rotation', { '0.0': { post: [0, 0, 0], easing } });
+  for (const accepted of ['easeInOutSine', 'EASEINOUTSINE', 'easeinoutsine', 'none', 'catmullrom', 'single_step']) {
+    assert.deepEqual(validateAnimationJson(withEasing(accepted)), [], `easing ${JSON.stringify(accepted)}`);
+  }
+  for (const rejected of ['easeInOutBanana', 'ease-in-sine', 42]) {
+    const diagnostics = validateAnimationJson(withEasing(rejected));
+    assert.equal(diagnostics.length, 1, `easing ${JSON.stringify(rejected)} must be flagged`);
+    assert.equal(diagnostics[0].severity, 'warning');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_easing_name');
+    assert.equal(diagnostics[0].target, 'animation.ghost.test/body/rotation/0.0');
+  }
+});
+
+test('easingArgs that are not numeric arrays are errors', () => {
+  for (const rejected of ['fast', ['a'], 5, [1, 'two']]) {
+    const diagnostics = validateAnimationJson(
+      channelFile('rotation', { '0.0': { post: [0, 0, 0], easing: 'easeInBack', easingArgs: rejected } }),
+    );
+    assert.equal(diagnostics.length, 1, `easingArgs ${JSON.stringify(rejected)} must be flagged`);
+    assert.equal(diagnostics[0].severity, 'error');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_easing_args');
+    assert.equal(diagnostics[0].target, 'animation.ghost.test/body/rotation/0.0');
+  }
+  assert.deepEqual(
+    validateAnimationJson(channelFile('rotation', { '0.0': { post: [0, 0, 0], easing: 'easeInBack', easingArgs: [1.7] } })),
+    [],
+  );
+});
+
+test('non-numeric, negative, duplicated, and out-of-order keyframe timestamps are errors', () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['non-numeric', { start: [0, 0, 0], '1.0': [0, 1, 0] }],
+    ['hex-literal', { '0x10': [0, 0, 0], '20.0': [0, 1, 0] }],
+    ['negative', { '-0.5': [0, 0, 0] }],
+    ['duplicate 0 and 0.0', { '0': [0, 0, 0], '0.0': [0, 1, 0] }],
+    ['out of order', { '1.5': [0, 0, 0], '0.5': [0, 1, 0] }],
+  ];
+  for (const [label, map] of cases) {
+    const diagnostics = validateAnimationJson(channelFile('position', map));
+    assert.equal(diagnostics.length, 1, `${label} timestamps must be flagged`);
+    assert.equal(diagnostics[0].severity, 'error');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_timestamp');
+    assert.equal(diagnostics[0].target, 'animation.ghost.test/body/position');
+  }
+});
+
+test('ascending timestamps mixing integer and decimal keys are accepted despite JSON key reordering', () => {
+  // JSON.parse iterates "0" and "1" ahead of "0.5"; the validator must not
+  // mistake that iteration order for a file-order violation.
+  const diagnostics = validateAnimationJson(
+    channelFile('position', { '0': [0, 0, 0], '0.5': [0, 1, 0], '1': [0, 0, 0] }),
+  );
+  assert.deepEqual(diagnostics, []);
+});
+
+test('keyframe values outside the number/molang/3-entry-vector shapes are errors', () => {
+  const badValues: unknown[] = [
+    [0, 1],
+    [0, 1, 2, 3],
+    [true, 0, 0],
+    { easing: 'linear' },
+    { post: [0, 1] },
+    true,
+    null,
+  ];
+  for (const value of badValues) {
+    const diagnostics = validateAnimationJson(channelFile('scale', { '0.0': value }));
+    assert.equal(diagnostics.length, 1, `value ${JSON.stringify(value)} must be flagged`);
+    assert.equal(diagnostics[0].severity, 'error');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_value_shape');
+    assert.equal(diagnostics[0].target, 'animation.ghost.test/body/scale/0.0');
+  }
+  const bareBad = validateAnimationJson(channelFile('scale', true));
+  assert.equal(bareBad.length, 1);
+  assert.equal(bareBad[0].check_id, 'geckolib_animation_value_shape');
+  assert.equal(bareBad[0].target, 'animation.ghost.test/body/scale');
+});
+
+test('an animation_length shorter than the last bone keyframe is a warning', () => {
+  for (const declaredLength of [1, '1']) {
+    const diagnostics = validateAnimationJson(
+      animationFile({
+        animation_length: declaredLength,
+        bones: { body: { rotation: { '0.0': [0, 0, 0], '2.0': [0, 1, 0] } } },
+      }),
+    );
+    assert.equal(diagnostics.length, 1, `animation_length ${JSON.stringify(declaredLength)} must be compared`);
+    assert.equal(diagnostics[0].severity, 'warning');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_length_mismatch');
+    assert.equal(diagnostics[0].target, 'animation.ghost.test');
+  }
+});
+
+test('empty bones maps and empty keyframe maps produce no diagnostics', () => {
+  assert.deepEqual(validateAnimationJson(animationFile({ bones: {} })), []);
+  assert.deepEqual(validateAnimationJson(channelFile('rotation', {})), []);
+});
+
+test('an empty channel array is an invalid keyframe value', () => {
+  const diagnostics = validateAnimationJson(channelFile('rotation', []));
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].severity, 'error');
+  assert.equal(diagnostics[0].check_id, 'geckolib_animation_value_shape');
+});
+
+test('malformed effect keyframes are errors, including two-data-points-per-timestamp arrays', () => {
+  const cases: Array<[string, Record<string, unknown>, string]> = [
+    [
+      'array-valued sound entry',
+      { sound_effects: { '0.5': [{ effect: 'a' }, { effect: 'b' }] } },
+      'animation.ghost.test/sound_effects/0.5',
+    ],
+    ['sound entry missing effect', { sound_effects: { '0.5': { locator: 'body' } } }, 'animation.ghost.test/sound_effects/0.5'],
+    ['sound entry as bare string', { sound_effects: { '0.5': 'attack_swing' } }, 'animation.ghost.test/sound_effects/0.5'],
+    [
+      'array-valued particle entry',
+      { particle_effects: { '0.5': [{ effect: 'a' }] } },
+      'animation.ghost.test/particle_effects/0.5',
+    ],
+    ['non-string timeline entry', { timeline: { '0.5': 42 } }, 'animation.ghost.test/timeline/0.5'],
+    ['non-object effect container', { sound_effects: [] }, 'animation.ghost.test/sound_effects'],
+  ];
+  for (const [label, animation, target] of cases) {
+    const diagnostics = validateAnimationJson(animationFile(animation));
+    assert.equal(diagnostics.length, 1, `${label} must be flagged`);
+    assert.equal(diagnostics[0].severity, 'error');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_effect_keyframe');
+    assert.equal(diagnostics[0].target, target);
+  }
+});
+
+test('molang strings are not evaluated; only unbalanced parentheses are warnings', () => {
+  for (const balanced of ['math.sin(query.anim_time * 90) * 5', 'query.is_moving ? 1 : 0', '']) {
+    assert.deepEqual(
+      validateAnimationJson(channelFile('position', { '0.0': balanced })),
+      [],
+      `molang ${JSON.stringify(balanced)} must pass`,
+    );
+  }
+  for (const unbalanced of ['math.sin(query.anim_time', 'math.cos)query.x(']) {
+    const diagnostics = validateAnimationJson(channelFile('position', { '0.0': unbalanced }));
+    assert.equal(diagnostics.length, 1, `molang ${JSON.stringify(unbalanced)} must warn`);
+    assert.equal(diagnostics[0].severity, 'warning');
+    assert.equal(diagnostics[0].check_id, 'geckolib_animation_molang_parentheses');
+  }
+  const timeUpdate = validateAnimationJson(animationFile({ anim_time_update: 'query.anim_time + (' }));
+  assert.equal(timeUpdate.length, 1);
+  assert.equal(timeUpdate[0].check_id, 'geckolib_animation_molang_parentheses');
+  assert.equal(timeUpdate[0].target, 'animation.ghost.test/anim_time_update');
+});
+
+test('broken animation content envelopes are errors', () => {
+  const cases: unknown[] = [
+    'nope',
+    {},
+    animationFile('nope' as unknown as Record<string, unknown>),
+    animationFile({ bones: 'nope' }),
+    animationFile({ bones: { body: 'nope' } }),
+  ];
+  for (const parsed of cases) {
+    const diagnostics = validateAnimationJson(parsed);
+    assert.deepEqual(checkIds(diagnostics), ['geckolib_animation_envelope']);
+    assert.equal(diagnostics[0].severity, 'error');
+  }
 });
 
 test('project rules pass for a well-formed entity project', () => {

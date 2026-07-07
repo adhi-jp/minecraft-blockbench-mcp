@@ -228,6 +228,392 @@ export function validateGeoJson(
   return diagnostics;
 }
 
+// ---------------------------------------------------------------------------
+// Animation content rules (no geometry required)
+// ---------------------------------------------------------------------------
+
+/** Loop values GL4's LoopType.fromJson resolves without falling back:
+ * booleans, their string forms, and the two registered names. Anything else
+ * silently becomes PLAY_ONCE (the registry is extensible, so unknown values
+ * are a warning, not an error). */
+const GL4_LOOP_VALUES = new Set<unknown>([true, false, 'loop', 'true', 'false', 'play_once', 'hold_on_last_frame']);
+
+/** Easing names the GeckoLib Blockbench plugin 4.2.5 whitelists per keyframe:
+ * linear, step, and easeIn/easeOut/easeInOut for each of the ten curve
+ * families. GL4's EasingType registry matches case-insensitively and also
+ * registers the aliases in GL4_EASING_ALIASES; unknown names silently fall
+ * back to LINEAR (extensible registry, so this is a warning). */
+const GECKOLIB_EASING_FAMILIES = [
+  'Quad',
+  'Cubic',
+  'Quart',
+  'Quint',
+  'Sine',
+  'Expo',
+  'Circ',
+  'Back',
+  'Elastic',
+  'Bounce',
+] as const;
+
+export const GECKOLIB_EASING_NAMES = [
+  'linear',
+  'step',
+  ...GECKOLIB_EASING_FAMILIES.flatMap((family) => [`easeIn${family}`, `easeOut${family}`, `easeInOut${family}`]),
+] as const;
+
+const GL4_EASING_ALIASES = ['none', 'catmullrom', 'single_step'] as const;
+
+const ACCEPTED_EASING_NAMES_FOLDED = new Set<string>(
+  [...GECKOLIB_EASING_NAMES, ...GL4_EASING_ALIASES].map((name) => name.toLowerCase()),
+);
+
+const ANIMATION_CHANNELS = ['rotation', 'position', 'scale'] as const;
+
+/** Molang posture: expressions are never evaluated or parsed here. The only
+ * shape check is parenthesis balance, because GL4's MathParser drops the whole
+ * animation at load when an expression fails to compile. */
+function molangParenthesesBalanced(expression: string): boolean {
+  let depth = 0;
+  for (const character of expression) {
+    if (character === '(') depth += 1;
+    else if (character === ')') {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
+}
+
+function checkMolangString(expression: string, target: string, diagnostics: GeckolibDiagnostic[]): void {
+  if (!molangParenthesesBalanced(expression)) {
+    diagnostics.push(
+      warning(
+        'geckolib_animation_molang_parentheses',
+        `The molang expression "${expression}" has unbalanced parentheses, which typically fails to compile in GL4's MathParser and drops the whole animation at load. Molang is not otherwise evaluated.`,
+        target,
+      ),
+    );
+  }
+}
+
+/** True for keys JavaScript treats as array indices. JSON.parse moves them
+ * ahead of other keys in iteration order, so their position in the source
+ * file cannot be recovered here; textual-order checks must skip them. */
+function isArrayIndexKey(key: string): boolean {
+  return /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < 4294967295;
+}
+
+/** Plain decimal numbers (optional sign and exponent). Number() alone would
+ * also accept JS-only literal forms like hex/binary/octal that GL4's
+ * Java-side number parsing rejects. */
+const DECIMAL_NUMBER_PATTERN = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
+function parseDecimalNumber(text: string): number | null {
+  const trimmed = text.trim();
+  if (!DECIMAL_NUMBER_PATTERN.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Validate the timestamp keys of one keyframe map and return the largest
+ * valid time. GL4 coerces non-numeric keys to 0 and computes per-keyframe
+ * time deltas in file order, so a negative, duplicated, or out-of-order key
+ * corrupts the whole channel. Ordering is only checked across keys that
+ * survive JSON.parse in source order (non-array-index keys); numeric
+ * duplicates are always detected.
+ */
+function validateTimestampKeys(map: Record<string, unknown>, target: string, diagnostics: GeckolibDiagnostic[]): number {
+  let maxTime = 0;
+  let previousOrdered: number | null = null;
+  const seen = new Map<number, string>();
+  for (const key of Object.keys(map)) {
+    const time = parseDecimalNumber(key);
+    if (time === null) {
+      diagnostics.push(
+        error(
+          'geckolib_animation_timestamp',
+          `Keyframe timestamp "${key}" is not a decimal number; GL4 does not parse it as a time (non-numeric keys collapse to 0 and reorder the channel).`,
+          target,
+        ),
+      );
+      continue;
+    }
+    if (time < 0) {
+      diagnostics.push(
+        error('geckolib_animation_timestamp', `Keyframe timestamp "${key}" is negative.`, target),
+      );
+      continue;
+    }
+    const duplicate = seen.get(time);
+    if (duplicate !== undefined) {
+      diagnostics.push(
+        error(
+          'geckolib_animation_timestamp',
+          `Keyframe timestamp "${key}" duplicates "${duplicate}"; keyframe times must be strictly increasing.`,
+          target,
+        ),
+      );
+      continue;
+    }
+    seen.set(time, key);
+    if (time > maxTime) maxTime = time;
+    if (!isArrayIndexKey(key)) {
+      if (previousOrdered !== null && time < previousOrdered) {
+        diagnostics.push(
+          error(
+            'geckolib_animation_timestamp',
+            `Keyframe timestamp "${key}" is out of order; GL4 reads keyframes in file order and a backwards step produces a negative time delta.`,
+            target,
+          ),
+        );
+      }
+      previousOrdered = time;
+    }
+  }
+  return maxTime;
+}
+
+function isVectorEntry(value: unknown): value is number | string {
+  return typeof value === 'number' || typeof value === 'string';
+}
+
+/** Validate a scalar/vector keyframe payload (a number, a molang string, or a
+ * 3-entry array of number|string — GL4's getTripletObj shapes). */
+function validateVectorValue(value: unknown, target: string, diagnostics: GeckolibDiagnostic[]): void {
+  if (typeof value === 'number') return;
+  if (typeof value === 'string') {
+    checkMolangString(value, target, diagnostics);
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length !== 3 || !value.every(isVectorEntry)) {
+      diagnostics.push(
+        error(
+          'geckolib_animation_value_shape',
+          'A vector keyframe value must be an array of exactly 3 numbers or molang strings; GL4 fails to load the animation otherwise.',
+          target,
+        ),
+      );
+      return;
+    }
+    for (const entry of value) {
+      if (typeof entry === 'string') checkMolangString(entry, target, diagnostics);
+    }
+    return;
+  }
+  diagnostics.push(
+    error(
+      'geckolib_animation_value_shape',
+      'A keyframe value must be a number, a molang string, or a 3-entry array of number|string.',
+      target,
+    ),
+  );
+}
+
+function validateEasingProperties(keyframe: Record<string, unknown>, target: string, diagnostics: GeckolibDiagnostic[]): void {
+  if ('easing' in keyframe) {
+    const easing = keyframe.easing;
+    if (typeof easing !== 'string' || !ACCEPTED_EASING_NAMES_FOLDED.has(easing.toLowerCase())) {
+      diagnostics.push(
+        warning(
+          'geckolib_animation_easing_name',
+          `Easing ${typeof easing === 'string' ? `"${easing}"` : 'value'} is not one of the GeckoLib plugin 4.2.5 easing names or GL4 registry aliases; GL4 silently falls back to linear.`,
+          target,
+        ),
+      );
+    }
+  }
+  if ('easingArgs' in keyframe) {
+    const easingArgs = keyframe.easingArgs;
+    if (!Array.isArray(easingArgs) || !easingArgs.every((entry) => typeof entry === 'number')) {
+      diagnostics.push(
+        error(
+          'geckolib_animation_easing_args',
+          'easingArgs must be an array of numbers; GL4 drops the whole animation at load otherwise.',
+          target,
+        ),
+      );
+    }
+  }
+}
+
+/** Validate one keyframe entry of a bone channel: a plain vector payload or
+ * the object form ({vector} from the GeckoLib plugin export, {pre}/{post}
+ * from Bedrock-style files) with optional easing metadata. */
+function validateKeyframeValue(value: unknown, target: string, diagnostics: GeckolibDiagnostic[]): void {
+  if (isRecord(value)) {
+    validateEasingProperties(value, target, diagnostics);
+    if (!('vector' in value) && !('post' in value)) {
+      diagnostics.push(
+        error(
+          'geckolib_animation_value_shape',
+          'An object-form keyframe must carry a "vector" or "post" value; GL4 fails to load the animation otherwise.',
+          target,
+        ),
+      );
+      return;
+    }
+    for (const key of ['vector', 'pre', 'post'] as const) {
+      if (key in value) validateVectorValue(value[key], target, diagnostics);
+    }
+    return;
+  }
+  validateVectorValue(value, target, diagnostics);
+}
+
+function validateEffectMap(
+  animationName: string,
+  container: 'sound_effects' | 'particle_effects' | 'timeline',
+  value: unknown,
+  diagnostics: GeckolibDiagnostic[],
+): void {
+  const containerTarget = `${animationName}/${container}`;
+  if (!isRecord(value)) {
+    diagnostics.push(
+      error('geckolib_animation_effect_keyframe', `${container} must be a map of timestamps to entries.`, containerTarget),
+    );
+    return;
+  }
+  validateTimestampKeys(value, containerTarget, diagnostics);
+  for (const [timestamp, entry] of Object.entries(value)) {
+    const target = `${containerTarget}/${timestamp}`;
+    if (container === 'timeline') {
+      if (typeof entry !== 'string' && !Array.isArray(entry)) {
+        diagnostics.push(
+          error('geckolib_animation_effect_keyframe', 'A timeline entry must be a string or an array.', target),
+        );
+      }
+      continue;
+    }
+    if (Array.isArray(entry)) {
+      diagnostics.push(
+        error(
+          'geckolib_animation_effect_keyframe',
+          `An array-valued ${container} entry (two keyframes at one timestamp) makes GL4 fail to load the whole animation.`,
+          target,
+        ),
+      );
+      continue;
+    }
+    if (!isRecord(entry)) {
+      diagnostics.push(
+        error('geckolib_animation_effect_keyframe', `A ${container} entry must be a single JSON object.`, target),
+      );
+      continue;
+    }
+    if (container === 'sound_effects' && typeof entry.effect !== 'string') {
+      diagnostics.push(
+        error('geckolib_animation_effect_keyframe', 'A sound_effects entry needs a string "effect" field.', target),
+      );
+    }
+  }
+}
+
+/**
+ * Validate the content of a parsed GeckoLib animation JSON against GL4 load
+ * behavior: loop values, per-keyframe easing names and easingArgs, timestamp
+ * keys, keyframe value shapes, animation_length consistency, and effect
+ * keyframe structure. Needs no geometry; bone existence is
+ * validateAnimationBoneRefs' job. Molang expressions are never evaluated.
+ */
+export function validateAnimationJson(parsed: unknown): GeckolibDiagnostic[] {
+  const diagnostics: GeckolibDiagnostic[] = [];
+
+  if (!isRecord(parsed) || !isRecord(parsed.animations)) {
+    diagnostics.push(
+      error('geckolib_animation_envelope', 'The animation file is not a JSON object with an animations map.'),
+    );
+    return diagnostics;
+  }
+
+  for (const [animationName, animation] of Object.entries(parsed.animations)) {
+    if (!isRecord(animation)) {
+      diagnostics.push(
+        error('geckolib_animation_envelope', `Animation "${animationName}" is not a JSON object.`, animationName),
+      );
+      continue;
+    }
+
+    if ('loop' in animation && !GL4_LOOP_VALUES.has(animation.loop)) {
+      diagnostics.push(
+        warning(
+          'geckolib_animation_loop_value',
+          `Animation "${animationName}" has loop value ${JSON.stringify(animation.loop)}; GL4 only resolves true/false ("true"/"false"), "loop", "play_once", and "hold_on_last_frame", and silently plays anything else once.`,
+          animationName,
+        ),
+      );
+    }
+
+    if (typeof animation.anim_time_update === 'string') {
+      checkMolangString(animation.anim_time_update, `${animationName}/anim_time_update`, diagnostics);
+    }
+
+    let lastKeyframeTime = 0;
+    const bones = animation.bones;
+    if (bones !== undefined) {
+      if (!isRecord(bones)) {
+        diagnostics.push(
+          error('geckolib_animation_envelope', `Animation "${animationName}" has a non-object bones map.`, animationName),
+        );
+      } else {
+        for (const [boneName, bone] of Object.entries(bones)) {
+          const boneTarget = `${animationName}/${boneName}`;
+          if (!isRecord(bone)) {
+            diagnostics.push(
+              error('geckolib_animation_envelope', `Animated bone "${boneName}" is not a JSON object.`, boneTarget),
+            );
+            continue;
+          }
+          for (const channel of ANIMATION_CHANNELS) {
+            if (!(channel in bone)) continue;
+            const channelValue = bone[channel];
+            const channelTarget = `${boneTarget}/${channel}`;
+            if (isRecord(channelValue)) {
+              const channelMax = validateTimestampKeys(channelValue, channelTarget, diagnostics);
+              if (channelMax > lastKeyframeTime) lastKeyframeTime = channelMax;
+              for (const [timestamp, keyframe] of Object.entries(channelValue)) {
+                validateKeyframeValue(keyframe, `${channelTarget}/${timestamp}`, diagnostics);
+              }
+            } else {
+              // A bare value is a single keyframe at time 0.
+              validateKeyframeValue(channelValue, channelTarget, diagnostics);
+            }
+          }
+        }
+      }
+    }
+
+    // Gson coerces numeric-string primitives, so a string animation_length
+    // still truncates GL4 playback like a number does.
+    const declaredLength = animation.animation_length;
+    const animationLength =
+      typeof declaredLength === 'number'
+        ? declaredLength
+        : typeof declaredLength === 'string'
+          ? parseDecimalNumber(declaredLength)
+          : null;
+    if (animationLength !== null && lastKeyframeTime > animationLength) {
+      diagnostics.push(
+        warning(
+          'geckolib_animation_length_mismatch',
+          `Animation "${animationName}" declares animation_length ${animationLength} but its last bone keyframe is at ${lastKeyframeTime}; GL4 truncates playback at animation_length.`,
+          animationName,
+        ),
+      );
+    }
+
+    for (const container of ['sound_effects', 'particle_effects', 'timeline'] as const) {
+      if (container in animation) {
+        validateEffectMap(animationName, container, animation[container], diagnostics);
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
 /**
  * Cross-check a parsed animation JSON against the geometry's bone names.
  * At runtime GeckoLib skips animation entries for bones it cannot find (or
