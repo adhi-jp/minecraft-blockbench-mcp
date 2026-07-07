@@ -2,7 +2,7 @@
 // settings, the connection status / scope revocation actions, and wires the
 // WebSocket session core to Blockbench. Command handlers attach to the
 // session via registerHandler.
-import { DEFAULT_WS_PORT } from '../shared/protocol.js';
+import { DEFAULT_WS_PORT, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { PluginSession } from './session.js';
 import { ScopeManager, type ScopedFsLike } from './scope-manager.js';
 import { registerModelCommands } from './commands/model-commands.js';
@@ -123,7 +123,7 @@ function setupRuntime(): PluginRuntime {
   session.registerHandler('get_plugin_status', () => ({
     plugin_version: PLUGIN_VERSION,
     blockbench_version: Blockbench.version,
-    protocol_version: 1,
+    protocol_version: PROTOCOL_VERSION,
     capabilities: ['java_block'],
     scope: scope.status,
   }));

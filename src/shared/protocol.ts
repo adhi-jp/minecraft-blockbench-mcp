@@ -3,7 +3,7 @@
 // adapter (Node) and plugin (browser/Blockbench) TypeScript configurations.
 import { z } from 'zod';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const DEFAULT_WS_PORT = 39731;
 
@@ -39,6 +39,7 @@ export const ERROR_CODES = [
   'E_PREFLIGHT_FAILED',
   'E_NOT_FOUND',
   'E_FORMAT_UNSUPPORTED',
+  'E_PLUGIN_DEPENDENCY_MISSING',
   'E_BLOCKBENCH_ERROR',
 ] as const;
 
@@ -107,6 +108,9 @@ const getPluginStatusResult = z.object({
   protocol_version: z.number().int(),
   capabilities: z.array(z.string()),
   scope: scopeStatusSchema,
+  // Version of the third-party GeckoLib Blockbench plugin when it is installed
+  // and detectable; absent otherwise.
+  geckolib_plugin_version: z.string().optional(),
 });
 
 const getProjectStateParams = z
@@ -371,6 +375,100 @@ const proposeScopedDirectoryResult = z.object({
   normalized_path: z.string(),
 });
 
+// ---------------------------------------------------------------------------
+// GeckoLib format surface (requires the third-party "GeckoLib Models &
+// Animations" Blockbench plugin, id `geckolib`, which registers the
+// geckolib_model format at runtime)
+// ---------------------------------------------------------------------------
+
+export const GECKOLIB_MODEL_TYPES = ['Entity', 'Block', 'Item', 'Armor', 'Object'] as const;
+
+// Matches the GeckoLib plugin's own modid validation; also used for the model
+// identifier because it feeds `geometry.<identifier>` and export file names.
+const geckolibNamePattern = /^[_\-.a-z0-9]+$/;
+
+export const GECKOLIB_VALIDATION_PROFILE = 'gl4' as const;
+
+const createGeckolibProjectParams = z
+  .object({
+    modid: z
+      .string()
+      .regex(geckolibNamePattern)
+      .describe('Mod namespace (lowercase letters, digits, `_`, `-`, `.`), stored as geckolib_modid.'),
+    model_type: z.enum(GECKOLIB_MODEL_TYPES),
+    identifier: z
+      .string()
+      .regex(geckolibNamePattern)
+      .describe('Object ID used for `geometry.<identifier>` and recommended export file names.'),
+    name: z.string().optional(),
+    force: z
+      .boolean()
+      .optional()
+      .describe('Required when an unsaved project is open; the new project opens in a separate tab.'),
+  })
+  .strict();
+const createGeckolibProjectResult = z.object({
+  created: z.literal(true),
+  format: z.literal('geckolib_model'),
+  name: z.string().optional(),
+  modid: z.string(),
+  model_type: z.enum(GECKOLIB_MODEL_TYPES),
+  identifier: z.string(),
+});
+
+const openGeckolibModelParams = z
+  .object({
+    path: z
+      .string()
+      .describe('GeckoLib .bbmodel path inside the confirmed scoped directory (absolute or scope-relative).'),
+    force: z
+      .boolean()
+      .optional()
+      .describe('Required when an unsaved project is open; the model opens in a separate tab.'),
+  })
+  .strict();
+const openGeckolibModelResult = z.object({
+  opened: z.boolean(),
+  format: z.literal('geckolib_model'),
+  name: z.string().optional(),
+  counts: z.object({
+    cubes: z.number().int().nonnegative(),
+    groups: z.number().int().nonnegative(),
+    textures: z.number().int().nonnegative(),
+  }),
+});
+
+const geckolibExportParams = z
+  .object({
+    path: z.string(),
+    overwrite: z
+      .boolean()
+      .optional()
+      .describe('Required to replace an existing file at the destination; applies to this write only.'),
+  })
+  .strict();
+
+const geckolibDiagnosticSchema = z.object({
+  severity: z.enum(['error', 'warning']),
+  message: z.string(),
+  check_id: z.string(),
+  target: z.string().optional(),
+});
+
+const validateGeckolibFileParams = z
+  .object({
+    geo_path: z.string().describe('Bedrock geometry JSON (.geo.json) path inside the confirmed scoped directory.'),
+    animation_path: z
+      .string()
+      .optional()
+      .describe('Optional animation JSON whose bone references are cross-checked against the geometry.'),
+  })
+  .strict();
+const validateGeckolibFileResult = z.object({
+  diagnostics: z.array(geckolibDiagnosticSchema),
+  profile: z.literal(GECKOLIB_VALIDATION_PROFILE),
+});
+
 // Format-neutral operations work in any Blockbench project format and are the
 // reuse surface for later format adapters.
 export const FORMAT_NEUTRAL_COMMAND_SPECS = {
@@ -498,9 +596,52 @@ export const JAVA_FORMAT_COMMAND_SPECS = {
   },
 } as const satisfies Record<string, CommandSpec>;
 
+// Format-specific commands for GeckoLib animated models (Blockbench format id
+// `geckolib_model`, registered by the third-party GeckoLib plugin). The plugin
+// checks the GeckoLib plugin's presence per call and fails with
+// E_PLUGIN_DEPENDENCY_MISSING when the format is not registered.
+export const GECKOLIB_FORMAT_COMMAND_SPECS = {
+  create_geckolib_project: {
+    description:
+      'Create a new GeckoLib animated model project (Blockbench format geckolib_model; requires the third-party GeckoLib plugin) in a new project tab. When an unsaved project is open, force:true is required.',
+    mutates: true,
+    params: createGeckolibProjectParams,
+    result: createGeckolibProjectResult,
+  },
+  open_geckolib_model: {
+    description:
+      'Open a GeckoLib .bbmodel project file from the confirmed scoped directory in a new project tab; rejects .bbmodel files whose format is not geckolib_model. When an unsaved project is open, force:true is required.',
+    mutates: true,
+    params: openGeckolibModelParams,
+    result: openGeckolibModelResult,
+  },
+  export_geckolib_model: {
+    description:
+      'Export the current geckolib_model project geometry as Bedrock-format geo JSON (format_version 1.12.0) to a file inside the confirmed scoped directory; the recommended file name is <identifier>.geo.json. Overwrite must be explicitly flagged.',
+    mutates: true,
+    params: geckolibExportParams,
+    result: writeResultSchema,
+  },
+  export_geckolib_animations: {
+    description:
+      'Export the current geckolib_model project animations as GeckoLib animation JSON to a file inside the confirmed scoped directory; the recommended file name is <identifier>.animation.json. Fails with E_NOT_FOUND when the project has no animations. Overwrite must be explicitly flagged.',
+    mutates: true,
+    params: geckolibExportParams,
+    result: writeResultSchema,
+  },
+  validate_geckolib_file: {
+    description:
+      'Validate a Bedrock geometry JSON file (and optionally cross-check an animation JSON) inside the confirmed scoped directory against GeckoLib 4 baseline rules; returns structured diagnostics. Read-only.',
+    mutates: false,
+    params: validateGeckolibFileParams,
+    result: validateGeckolibFileResult,
+  },
+} as const satisfies Record<string, CommandSpec>;
+
 export const COMMAND_SPECS = {
   ...FORMAT_NEUTRAL_COMMAND_SPECS,
   ...JAVA_FORMAT_COMMAND_SPECS,
+  ...GECKOLIB_FORMAT_COMMAND_SPECS,
 } as const;
 
 export type CommandName = keyof typeof COMMAND_SPECS;

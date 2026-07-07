@@ -118,7 +118,7 @@ test('a valid hello authenticates, receives hello_ack with capabilities, and tak
   const ack = frames.find((f): f is Record<string, unknown> => (f as { type?: string }).type === 'hello_ack');
   assert.ok(ack);
   assert.equal(ack.protocol_version, PROTOCOL_VERSION);
-  assert.deepEqual(ack.capabilities, ['java_block']);
+  assert.deepEqual(ack.capabilities, ['java_block', 'geckolib_model']);
   assert.deepEqual(bridge.pluginInfo?.capabilities, ['java_block']);
 });
 

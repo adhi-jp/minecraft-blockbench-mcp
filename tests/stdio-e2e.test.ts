@@ -94,6 +94,11 @@ const MINIMAL_ARGS: Record<CommandName, Record<string, unknown>> = {
   open_model: { path: 'model.json' },
   set_display_transform: { slot: 'gui', scale: [1, 1, 1] },
   export_model: { path: 'out/model.json' },
+  create_geckolib_project: { modid: 'examplemod', model_type: 'Entity', identifier: 'ghost' },
+  open_geckolib_model: { path: 'ghost.bbmodel' },
+  export_geckolib_model: { path: 'out/ghost.geo.json' },
+  export_geckolib_animations: { path: 'out/ghost.animation.json' },
+  validate_geckolib_file: { geo_path: 'out/ghost.geo.json' },
 };
 
 test('with Blockbench closed: initialize, list tools, healthy health, and immediate not-connected precondition errors for every operation tool', async (t) => {

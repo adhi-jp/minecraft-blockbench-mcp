@@ -221,7 +221,7 @@ export class WsBridge {
             type: 'hello_ack',
             protocol_version: PROTOCOL_VERSION,
             heartbeat_interval_ms: this.#options.heartbeatIntervalMs,
-            capabilities: ['java_block'],
+            capabilities: ['java_block', 'geckolib_model'],
           }),
         );
         this.#startHeartbeat(socket);
