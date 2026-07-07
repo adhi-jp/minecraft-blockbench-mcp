@@ -1,36 +1,12 @@
 // Blockbench command handlers: every Blockbench mutation or inspection the
 // adapter can request runs here, inside the plugin, through Blockbench APIs.
 // Mutations create undo entries and refresh the viewport.
-import { z } from 'zod';
-
-import { COMMAND_SPECS, DEFAULTS, type CommandName } from '../../shared/protocol.js';
+import { DEFAULTS } from '../../shared/protocol.js';
+import { validateGeckolibProject } from '../../shared/geckolib-validate.js';
 import { CommandError, type PluginSession } from '../session.js';
 import type { ScopeManager } from '../scope-manager.js';
 import { readFileCommand, writeFilesCommand, writeSingleFile, resolveForIo } from '../file-commands.js';
-
-type ParamsOf<K extends CommandName> = z.infer<(typeof COMMAND_SPECS)[K]['params']>;
-
-/** Register a handler with plugin-side structural re-validation. The adapter
- * validates too, but the plugin is the trust boundary for its own state. */
-function register<K extends CommandName>(
-  session: PluginSession,
-  command: K,
-  handler: (params: ParamsOf<K>) => Promise<unknown> | unknown,
-): void {
-  session.registerHandler(command, (rawParams) => {
-    const parsed = COMMAND_SPECS[command].params.safeParse(rawParams ?? {});
-    if (!parsed.success) {
-      throw new CommandError('E_INVALID_PARAMS', 'Parameters failed plugin-side validation.', parsed.error.issues);
-    }
-    return handler(parsed.data as ParamsOf<K>);
-  });
-}
-
-function requireProject(): void {
-  if (!Project) {
-    throw new CommandError('E_NOT_FOUND', 'No project is open. Use create_project or open_model first.');
-  }
-}
+import { register, requireProject, projectCounts, detectGeckolibPluginVersion } from './helpers.js';
 
 function requireJavaBlockFormat(): void {
   requireProject();
@@ -69,10 +45,6 @@ function rotationToVector(rotation: RotationParam): [number, number, number] {
     default:
       return [0, 0, rotation.angle];
   }
-}
-
-function projectCounts(): { cubes: number; groups: number; textures: number } {
-  return { cubes: Cube.all.length, groups: Group.all.length, textures: Texture.all.length };
 }
 
 export function registerModelCommands(session: PluginSession, scope: ScopeManager): void {
@@ -366,7 +338,8 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
 
   register(session, 'validate_project', () => {
     requireProject();
-    const diagnostics: Array<{ severity: 'error' | 'warning'; message: string; check_id?: string }> = [];
+    const diagnostics: Array<{ severity: 'error' | 'warning'; message: string; check_id?: string; target?: string }> =
+      [];
     // ValidatorCheck is implemented in still-untyped Blockbench JavaScript;
     // this is the shape js/validator.js actually exposes.
     interface ValidatorCheckLike {
@@ -393,6 +366,32 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
           check_id: check.id,
         });
       }
+    }
+    if (Format?.id === 'geckolib_model') {
+      const project = Project as unknown as Record<string, unknown>;
+      const texture = Texture.all[0] as { width?: number; height?: number } | undefined;
+      const textureSize =
+        texture !== undefined && typeof texture.width === 'number' && typeof texture.height === 'number'
+          ? { width: texture.width, height: texture.height }
+          : undefined;
+      const declaredTextureSize =
+        Project !== null && typeof Project.texture_width === 'number' && typeof Project.texture_height === 'number'
+          ? { width: Project.texture_width, height: Project.texture_height }
+          : undefined;
+      diagnostics.push(
+        ...validateGeckolibProject({
+          boneNames: Group.all.map((group) => group.name),
+          modid: typeof project.geckolib_modid === 'string' && project.geckolib_modid !== '' ? project.geckolib_modid : undefined,
+          identifier:
+            typeof project.model_identifier === 'string' && project.model_identifier !== ''
+              ? project.model_identifier
+              : undefined,
+          modelType: typeof project.geckolib_model_type === 'string' ? project.geckolib_model_type : undefined,
+          textureSize,
+          declaredTextureSize,
+          detectedPluginVersion: detectGeckolibPluginVersion(),
+        }),
+      );
     }
     return { diagnostics };
   });

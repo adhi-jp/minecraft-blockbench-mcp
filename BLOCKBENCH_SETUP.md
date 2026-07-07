@@ -49,3 +49,20 @@ npm run dev
 ```
 
 In this Codex sandbox, commands that bind localhost ports or launch Electron may need elevated execution permissions. The local WSL environment has both `DISPLAY=:0` and `WAYLAND_DISPLAY=wayland-0`, so WSLg GUI launch should be available.
+
+## GeckoLib plugin (one-time install)
+
+The MCP `geckolib_*` commands require the third-party **GeckoLib Models &
+Animations** Blockbench plugin (plugin id `geckolib`; tested with 4.2.5 on
+Blockbench 5.1.4). Install it once inside Blockbench:
+
+1. **File → Plugins → Available**, search "GeckoLib", click **Install**.
+
+The install persists across restarts (Blockbench records it in its local
+plugin registry). Headless installation by file placement alone does not work —
+Blockbench only loads plugins listed in that registry. From a DevTools console
+(`npm run dev` exposes remote debugging on port 9223) the same install can be
+scripted with `Plugins.all.find(p => p.id === 'geckolib').install()`.
+
+Until the plugin is installed, `geckolib_*` MCP commands fail per call with
+`E_PLUGIN_DEPENDENCY_MISSING`; everything else works without it.

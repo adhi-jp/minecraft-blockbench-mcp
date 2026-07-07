@@ -3,7 +3,9 @@
 MCP integration for [Blockbench](https://www.blockbench.net/): a Claude Code-launched
 **stdio MCP adapter** plus a **Blockbench desktop plugin**, connected over a
 loopback WebSocket, so AI clients can create and edit Minecraft Java
-block/item models (`java_block` format) through Blockbench itself.
+block/item models (`java_block` format) and GeckoLib animated models
+(`geckolib_model` format, via the third-party GeckoLib plugin) through
+Blockbench itself.
 
 ```
 Claude Code ──(stdio MCP)── adapter process ──(ws://127.0.0.1:39731)── Blockbench plugin
@@ -101,9 +103,43 @@ plugin: `get_plugin_status`, `get_project_state`, `create_project`,
 `export_model`, `read_file`, `write_files`, `capture_screenshot`,
 `validate_project`, `propose_scoped_directory`.
 
+GeckoLib tools (they require the third-party **GeckoLib Models & Animations**
+plugin, see below): `create_geckolib_project`, `open_geckolib_model`,
+`export_geckolib_model`, `export_geckolib_animations`,
+`validate_geckolib_file`.
+
 While Blockbench (or the plugin) is not running, operation tools return a
 structured `E_PLUGIN_NOT_CONNECTED` error immediately — the adapter never
 auto-launches Blockbench, waits, or retries in the background.
+
+## GeckoLib models
+
+The `geckolib_*` tools drive the third-party
+[GeckoLib](https://wiki.geckolib.com/) Blockbench plugin ("GeckoLib Models &
+Animations", plugin id `geckolib`; tested with 4.2.5). Install it once inside
+Blockbench via **File → Plugins → Available**. Without it, every `geckolib_*`
+tool fails per call with a structured `E_PLUGIN_DEPENDENCY_MISSING` error that
+names the install remediation; the plugin re-checks the format registration on
+every call, so installing or re-enabling GeckoLib takes effect immediately.
+
+- `create_geckolib_project` needs `modid`, `model_type`
+  (`Entity|Block|Item|Armor|Object`), and `identifier`; the identifier becomes
+  `geometry.<identifier>` and the recommended export file names
+  `<identifier>.geo.json` / `<identifier>.animation.json`.
+- Geometry building reuses the format-neutral tools (`create_cubes`,
+  `create_group`, `assign_texture`, ...) on the GeckoLib project.
+- `export_geckolib_model` writes Bedrock-format geometry with
+  `format_version 1.12.0` (GeckoLib 4 strict; also loads on GeckoLib 5);
+  `export_geckolib_animations` writes the animation JSON with GeckoLib's
+  keyframe encoding and `geckolib_format_version: 2`. Item display-settings
+  JSON export is not supported.
+- `validate_geckolib_file` checks an exported `.geo.json` (and optionally an
+  animation JSON's bone references) against rules derived from GeckoLib
+  runtime behavior — no official schema exists, so diagnostics carry stable
+  `geckolib_*` check ids and the applied profile (`gl4`). `validate_project`
+  additionally runs GeckoLib project checks (bone naming, modid/identifier,
+  Armor bone template, texture size) when a `geckolib_model` project is open.
+- Validation never blocks exports; export and validate are independent tools.
 
 ## Troubleshooting
 

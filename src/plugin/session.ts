@@ -64,7 +64,9 @@ export interface SessionOptions {
   secret: () => string;
   pluginVersion: string;
   blockbenchVersion: () => string;
-  capabilities: string[];
+  /** Evaluated at connect time so runtime-detected format support (e.g. the
+   * GeckoLib plugin's format registration) is reflected in the hello. */
+  capabilities: () => string[];
   /** Reconnect backoff bounds; the delay doubles per attempt up to max. */
   backoffInitialMs?: number;
   backoffMaxMs?: number;
@@ -202,7 +204,7 @@ export class PluginSession {
           secret: this.#options.secret(),
           plugin_version: this.#options.pluginVersion,
           blockbench_version: this.#options.blockbenchVersion(),
-          capabilities: this.#options.capabilities,
+          capabilities: this.#options.capabilities(),
         }),
       );
     };

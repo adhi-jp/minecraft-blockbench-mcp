@@ -6,6 +6,8 @@ import { DEFAULT_WS_PORT, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { PluginSession } from './session.js';
 import { ScopeManager, type ScopedFsLike } from './scope-manager.js';
 import { registerModelCommands } from './commands/model-commands.js';
+import { registerGeckolibCommands } from './commands/geckolib-commands.js';
+import { geckolibFormatRegistered, detectGeckolibPluginVersion } from './commands/helpers.js';
 
 const PLUGIN_ID = 'minecraft_blockbench_mcp';
 const PLUGIN_VERSION = '0.1.0';
@@ -54,6 +56,14 @@ function confirmScopeDialog(normalizedPath: string, reason: string | undefined):
   });
 }
 
+/** Evaluated per connect/status call: the GeckoLib plugin may be installed,
+ * loaded, or disabled at any time independently of this plugin. */
+function currentCapabilities(): string[] {
+  const capabilities = ['java_block'];
+  if (geckolibFormatRegistered()) capabilities.push('geckolib_model');
+  return capabilities;
+}
+
 function acquireScopedFs(normalizedPath: string): ScopedFsLike | null {
   const fs = requireNativeModule('fs', {
     scope: normalizedPath,
@@ -91,7 +101,7 @@ function setupRuntime(): PluginRuntime {
     secret: currentSecret,
     pluginVersion: PLUGIN_VERSION,
     blockbenchVersion: () => Blockbench.version,
-    capabilities: ['java_block'],
+    capabilities: currentCapabilities,
     onStatusChange: (status) => {
       if (status === 'connected') {
         Blockbench.showQuickMessage('MCP adapter connected', 1500);
@@ -120,13 +130,17 @@ function setupRuntime(): PluginRuntime {
     onScopeChanged: (status) => session.sendEvent('scope_changed', status),
   });
 
-  session.registerHandler('get_plugin_status', () => ({
-    plugin_version: PLUGIN_VERSION,
-    blockbench_version: Blockbench.version,
-    protocol_version: PROTOCOL_VERSION,
-    capabilities: ['java_block'],
-    scope: scope.status,
-  }));
+  session.registerHandler('get_plugin_status', () => {
+    const geckolibVersion = detectGeckolibPluginVersion();
+    return {
+      plugin_version: PLUGIN_VERSION,
+      blockbench_version: Blockbench.version,
+      protocol_version: PROTOCOL_VERSION,
+      capabilities: currentCapabilities(),
+      scope: scope.status,
+      ...(geckolibVersion !== undefined ? { geckolib_plugin_version: geckolibVersion } : {}),
+    };
+  });
 
   session.registerHandler('propose_scoped_directory', async (params) => {
     const { path, reason } = params as { path: string; reason?: string };
@@ -134,6 +148,7 @@ function setupRuntime(): PluginRuntime {
   });
 
   registerModelCommands(session, scope);
+  registerGeckolibCommands(session, scope);
 
   const actions: Action[] = [
     new Action(`${PLUGIN_ID}_status`, {

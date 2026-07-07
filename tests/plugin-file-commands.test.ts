@@ -68,7 +68,7 @@ async function makeHarness(options: { confirm?: boolean; previousScopeMemo?: str
     secret: () => SECRET,
     pluginVersion: '0.1.0',
     blockbenchVersion: () => '5.1.4',
-    capabilities: ['java_block'],
+    capabilities: () => ['java_block'],
     backoffInitialMs: 50,
     backoffMaxMs: 200,
   });

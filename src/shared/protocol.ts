@@ -360,6 +360,8 @@ const validateProjectResult = z.object({
       severity: z.enum(['error', 'warning']),
       message: z.string(),
       check_id: z.string().optional(),
+      // Named object (bone, property) a diagnostic points at, when one exists.
+      target: z.string().optional(),
     }),
   ),
 });

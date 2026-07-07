@@ -159,6 +159,24 @@ test('GeckoLib open/export params accept valid shapes and reject unknown extra f
   }
 });
 
+test('validate_project diagnostics accept an optional target naming the affected object', () => {
+  const spec = COMMAND_SPECS.validate_project;
+  assert.equal(
+    spec.result.safeParse({
+      diagnostics: [
+        { severity: 'warning', message: 'template bone missing', check_id: 'geckolib_armor_template', target: 'bipedHead' },
+        { severity: 'error', message: 'legacy shape without target', check_id: 'unknown_texture' },
+      ],
+    }).success,
+    true,
+  );
+  assert.equal(
+    spec.result.safeParse({ diagnostics: [{ severity: 'error', message: 'x', target: 42 }] }).success,
+    false,
+    'a non-string target must be rejected',
+  );
+});
+
 test('get_plugin_status result accepts an optional GeckoLib plugin version', () => {
   const base = {
     plugin_version: '0.1.0',
