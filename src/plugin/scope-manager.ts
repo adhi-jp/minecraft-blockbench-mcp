@@ -110,15 +110,28 @@ export class ScopeManager {
       });
     }
     this.#proposalInFlight = true;
+    // Snapshot the current grant: a rejected re-proposal must not tear down
+    // an already-confirmed scope.
+    const previous = { state: this.#state, path: this.#normalizedPath, fs: this.#fs };
+    const restorePrevious = () => {
+      if (previous.state === 'confirmed' && previous.fs !== null) {
+        this.#state = 'confirmed';
+        this.#normalizedPath = previous.path;
+        this.#fs = previous.fs;
+      } else {
+        this.#state = 'unconfirmed';
+        this.#normalizedPath = null;
+        this.#fs = null;
+      }
+      this.#emit();
+    };
     this.#state = 'proposed';
     this.#normalizedPath = normalized;
     this.#emit();
     try {
       const confirmed = await this.#options.confirmDialog(normalized, reason);
       if (!confirmed) {
-        this.#state = 'unconfirmed';
-        this.#normalizedPath = null;
-        this.#emit();
+        restorePrevious();
         throw new CommandError('E_SCOPE_NOT_CONFIRMED', 'The Blockbench user rejected the proposed scoped directory.', {
           reason: 'user_rejected',
           proposed_path: normalized,
@@ -126,9 +139,7 @@ export class ScopeManager {
       }
       const fs = this.#options.acquireScopedFs(normalized);
       if (fs === null) {
-        this.#state = 'unconfirmed';
-        this.#normalizedPath = null;
-        this.#emit();
+        restorePrevious();
         throw new CommandError(
           'E_SCOPE_NOT_CONFIRMED',
           'Blockbench denied filesystem access for the proposed directory.',

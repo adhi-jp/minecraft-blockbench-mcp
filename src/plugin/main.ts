@@ -5,6 +5,7 @@
 import { DEFAULT_WS_PORT } from '../shared/protocol.js';
 import { PluginSession } from './session.js';
 import { ScopeManager, type ScopedFsLike } from './scope-manager.js';
+import { registerModelCommands } from './commands/model-commands.js';
 
 const PLUGIN_ID = 'minecraft_blockbench_mcp';
 const PLUGIN_VERSION = '0.1.0';
@@ -126,6 +127,8 @@ function setupRuntime(): PluginRuntime {
     const { path, reason } = params as { path: string; reason?: string };
     return scope.propose(path, reason);
   });
+
+  registerModelCommands(session, scope);
 
   const actions: Action[] = [
     new Action(`${PLUGIN_ID}_status`, {

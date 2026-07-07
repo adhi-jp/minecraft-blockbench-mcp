@@ -111,8 +111,18 @@ export class PluginSession {
     }
     const socket = this.#socket;
     this.#socket = null;
-    if (socket !== null && socket.readyState === WS_OPEN) {
-      socket.close(1000, 'plugin_unload');
+    if (socket !== null) {
+      // Close CONNECTING sockets too: an in-flight handshake could otherwise
+      // complete later and keep serving an unloaded plugin.
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onclose = null;
+      socket.onerror = null;
+      try {
+        socket.close(1000, 'plugin_unload');
+      } catch {
+        // Some WebSocket implementations throw when closing mid-handshake.
+      }
     }
     this.#setStatus('stopped');
   }

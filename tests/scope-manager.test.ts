@@ -110,6 +110,18 @@ test('a previous-session grant reports as expired until reconfirmed', async () =
   assert.equal(manager.fs, fakeFs);
 });
 
+test('a rejected re-proposal keeps the previously confirmed scope intact', async () => {
+  let confirmNext = true;
+  const { manager } = makeManager({ confirm: () => Promise.resolve(confirmNext) });
+  await manager.propose('/home/user/models', undefined);
+  assert.equal(manager.status.state, 'confirmed');
+
+  confirmNext = false;
+  await expectCommandError(manager.propose('/home/user/typo-path', undefined), 'E_SCOPE_NOT_CONFIRMED');
+  assert.deepEqual(manager.status, { state: 'confirmed', normalized_path: '/home/user/models' });
+  assert.equal(manager.fs, fakeFs, 'the original grant must survive a rejected re-proposal');
+});
+
 test('concurrent proposals are rejected while a dialog is open', async () => {
   let resolveDialog: ((value: boolean) => void) | null = null;
   const { manager } = makeManager({

@@ -138,7 +138,7 @@ const createProjectParams = z
     force: z
       .boolean()
       .optional()
-      .describe('Required to replace a currently open unsaved project; otherwise the command is rejected.'),
+      .describe('Required when an unsaved project is open; the new project opens in a separate tab.'),
   })
   .strict();
 const createProjectResult = z.object({
@@ -150,6 +150,10 @@ const createProjectResult = z.object({
 const openModelParams = z
   .object({
     path: z.string().describe('Model JSON path inside the confirmed scoped directory (absolute or scope-relative).'),
+    force: z
+      .boolean()
+      .optional()
+      .describe('Required when an unsaved project is open; the model opens in a separate tab.'),
   })
   .strict();
 const openModelResult = z.object({
@@ -301,7 +305,8 @@ const readFileParams = z
   .object({
     path: z.string(),
     encoding: z.enum(['utf8', 'base64']).optional(),
-    max_bytes: z.number().int().positive().optional(),
+    // Bounded so a response can never exceed the transport's frame limit.
+    max_bytes: z.number().int().positive().max(DEFAULTS.maxTextureDataUrlBytes).optional(),
   })
   .strict();
 const readFileResult = z.object({
@@ -466,14 +471,14 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
 export const JAVA_FORMAT_COMMAND_SPECS = {
   create_project: {
     description:
-      'Create a new Minecraft Java block/item project (Blockbench format java_block). Replaces the open project only when force is true.',
+      'Create a new Minecraft Java block/item project (Blockbench format java_block) in a new project tab. When an unsaved project is open, force:true is required.',
     mutates: true,
     params: createProjectParams,
     result: createProjectResult,
   },
   open_model: {
     description:
-      'Open a Java block/item model JSON file from the confirmed scoped directory via the java_block codec. Replaces the current project view.',
+      'Open a Java block/item model JSON file from the confirmed scoped directory via the java_block codec, in a new project tab. When an unsaved project is open, force:true is required.',
     mutates: true,
     params: openModelParams,
     result: openModelResult,
