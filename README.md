@@ -106,7 +106,8 @@ plugin: `get_plugin_status`, `get_project_state`, `create_project`,
 GeckoLib tools (they require the third-party **GeckoLib Models & Animations**
 plugin, see below): `create_geckolib_project`, `open_geckolib_model`,
 `export_geckolib_model`, `export_geckolib_animations`,
-`validate_geckolib_file`.
+`validate_geckolib_file`, `upsert_geckolib_animation`,
+`delete_geckolib_animation`, `get_geckolib_animation`.
 
 While Blockbench (or the plugin) is not running, operation tools return a
 structured `E_PLUGIN_NOT_CONNECTED` error immediately — the adapter never
@@ -133,13 +134,54 @@ every call, so installing or re-enabling GeckoLib takes effect immediately.
   `export_geckolib_animations` writes the animation JSON with GeckoLib's
   keyframe encoding and `geckolib_format_version: 2`. Item display-settings
   JSON export is not supported.
-- `validate_geckolib_file` checks an exported `.geo.json` (and optionally an
-  animation JSON's bone references) against rules derived from GeckoLib
-  runtime behavior — no official schema exists, so diagnostics carry stable
-  `geckolib_*` check ids and the applied profile (`gl4`). `validate_project`
-  additionally runs GeckoLib project checks (bone naming, modid/identifier,
-  Armor bone template, texture size) when a `geckolib_model` project is open.
+- `validate_geckolib_file` checks an exported `.geo.json`, an animation JSON,
+  or both against rules derived from GeckoLib runtime behavior — no official
+  schema exists, so diagnostics carry stable `geckolib_*` check ids and the
+  applied profile (`gl4`). Animation content checks (loop values, easing
+  names, easingArgs, timestamps, keyframe value shapes, effect-keyframe
+  structure) need no geometry; bone cross-checks need both paths.
+  `validate_project` additionally runs GeckoLib project checks (bone naming,
+  modid/identifier, Armor bone template, texture size) when a
+  `geckolib_model` project is open, and validates the open project's
+  animations through the same checks — including animators orphaned by a
+  group rename or delete.
 - Validation never blocks exports; export and validate are independent tools.
+
+### Animation authoring
+
+- `upsert_geckolib_animation` creates or replaces one whole animation clip,
+  keyed by `name`, in a single undo step: loop mode
+  (`once|loop|hold_on_last_frame`), clip `length`, optional `override` and
+  `anim_time_update`, plus per-bone `rotation`/`position`/`scale` keyframes
+  with GeckoLib easing (`easing`, `easingArgs`) and
+  `linear|catmullrom|step` interpolation. Replacing an existing name requires
+  `replace: true`, otherwise the call fails with `E_FILE_EXISTS`.
+  `delete_geckolib_animation` removes a clip by name;
+  `get_geckolib_animation` reads one back in exactly the upsert payload
+  shape; `get_project_state` lists an `animations` summary (name, loop,
+  length).
+- **Time units**: keyframe `time` and clip `length` are seconds (Blockbench's
+  convention, and what `.animation.json` stores).
+- **Axis convention**: payload values use the GeckoLib `.animation.json`
+  convention — exactly what `export_geckolib_animations` writes and
+  `validate_geckolib_file` reads. Relative to the Blockbench UI, rotation X/Y
+  and position X are stored inverted; the plugin applies the same mapping the
+  GeckoLib plugin's own importer uses, so read → edit → upsert round-trips.
+- **Molang**: string values (keyframes, `anim_time_update`) are passed
+  through, never evaluated. Validation only checks value shapes and warns on
+  unbalanced parentheses; a molang expression that fails to compile makes
+  GeckoLib 4 drop the whole animation at load, so test expressions in-game.
+- **Replace clobbers manual edits**: `upsert_geckolib_animation` with
+  `replace: true` overwrites the whole clip, including manual tweaks made in
+  the Blockbench UI since the clip was last read. Every upsert/delete is one
+  undo step, so Ctrl+Z in Blockbench recovers the previous state.
+- **Importing existing `.animation.json` files**: there is no dedicated import
+  tool. An agent can read a file (`read_file`), translate each
+  animation into an upsert payload, and call `upsert_geckolib_animation` —
+  but that workaround drops constructs outside the authoring scope: effect
+  keyframes (sounds, particles, timeline instructions) and bezier
+  interpolation are not representable in the payload (their file validation
+  still works).
 
 ## Troubleshooting
 

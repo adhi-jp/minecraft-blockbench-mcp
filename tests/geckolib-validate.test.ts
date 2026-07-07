@@ -444,6 +444,23 @@ test('malformed effect keyframes are errors, including two-data-points-per-times
   }
 });
 
+test('undefined-valued easing/easingArgs keys are treated as absent (in-memory build objects)', () => {
+  // Animator.buildFile returns keyframes carrying easing/easingArgs keys with
+  // an undefined value when the keyframe has none; JSON export drops them, so
+  // validate_project's in-memory build must not flag them.
+  assert.deepEqual(
+    validateAnimationJson(channelFile('rotation', { '0.0': { vector: [0, 0, 0], easing: undefined } })),
+    [],
+  );
+  assert.deepEqual(
+    validateAnimationJson(
+      channelFile('rotation', { '1.0': { vector: [0, -30, 0], easing: 'easeOutBounce', easingArgs: undefined } }),
+    ),
+    [],
+  );
+  assert.deepEqual(validateAnimationJson(channelFile('position', { vector: [-2, 1, 3], easing: undefined })), []);
+});
+
 test('molang strings are not evaluated; only unbalanced parentheses are warnings', () => {
   for (const balanced of ['math.sin(query.anim_time * 90) * 5', 'query.is_moving ? 1 : 0', '']) {
     assert.deepEqual(

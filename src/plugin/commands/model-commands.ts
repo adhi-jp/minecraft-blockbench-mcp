@@ -2,11 +2,26 @@
 // adapter can request runs here, inside the plugin, through Blockbench APIs.
 // Mutations create undo entries and refresh the viewport.
 import { DEFAULTS } from '../../shared/protocol.js';
-import { validateGeckolibProject } from '../../shared/geckolib-validate.js';
+import {
+  validateGeckolibProject,
+  validateAnimationJson,
+  validateAnimationBoneNames,
+  type GeckolibDiagnostic,
+} from '../../shared/geckolib-validate.js';
+import { blockbenchLoopToGeckolib, type BlockbenchLoopMode } from '../geckolib-animation-mapping.js';
 import { CommandError, type PluginSession } from '../session.js';
 import type { ScopeManager } from '../scope-manager.js';
 import { readFileCommand, writeFilesCommand, writeSingleFile, resolveForIo } from '../file-commands.js';
 import { register, requireProject, projectCounts, detectGeckolibPluginVersion } from './helpers.js';
+
+/** Blockbench renames its Animation global (it shadows the DOM's); read the
+ * project's animation list through the Blockbench namespace. */
+function projectAnimations(): Array<{ name: string; loop: BlockbenchLoopMode; length: number }> {
+  const blockbench = Blockbench as unknown as {
+    Animation?: { all?: Array<{ name: string; loop: BlockbenchLoopMode; length: number }> };
+  };
+  return blockbench.Animation?.all ?? [];
+}
 
 function requireJavaBlockFormat(): void {
   requireProject();
@@ -51,12 +66,22 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
   register(session, 'get_project_state', (params) => {
     if (!Project) return { open: false };
     const includeObjects = params.include_objects ?? true;
+    const animations = projectAnimations();
     const base = {
       open: true,
       format: Format?.id,
       name: Project.name,
       saved: Project.saved,
       counts: projectCounts(),
+      ...(animations.length > 0
+        ? {
+            animations: animations.map((animation) => ({
+              name: animation.name,
+              loop: blockbenchLoopToGeckolib(animation.loop),
+              length: animation.length,
+            })),
+          }
+        : {}),
     };
     if (!includeObjects) return base;
     return {
@@ -392,6 +417,36 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
           detectedPluginVersion: detectGeckolibPluginVersion(),
         }),
       );
+      const animationNames = projectAnimations().map((animation) => animation.name);
+      if (animationNames.length > 0) {
+        // Validate the in-memory animation build with the same shared GL4
+        // checks the file validator uses; cross-checking against current
+        // group names also surfaces animators orphaned by a group rename or
+        // delete. Skipped entirely when the project has no animations (the
+        // GeckoLib-patched Animator.buildFile needs a non-empty name filter).
+        try {
+          const animator = Animator as unknown as {
+            buildFile(pathFilter: string | undefined, nameFilter: string[]): unknown;
+          };
+          const built = animator.buildFile(undefined, animationNames);
+          const contentDiagnostics = validateAnimationJson(built);
+          diagnostics.push(...contentDiagnostics);
+          const diagnosticKey = (diagnostic: GeckolibDiagnostic): string =>
+            `${diagnostic.severity}|${diagnostic.check_id}|${diagnostic.target ?? ''}|${diagnostic.message}`;
+          const reported = new Set(contentDiagnostics.map(diagnosticKey));
+          diagnostics.push(
+            ...validateAnimationBoneNames(built, Group.all.map((group) => group.name)).filter(
+              (diagnostic) => !reported.has(diagnosticKey(diagnostic)),
+            ),
+          );
+        } catch (error) {
+          diagnostics.push({
+            severity: 'warning',
+            message: `GeckoLib animation validation failed to run: ${error instanceof Error ? error.message : String(error)}`,
+            check_id: 'geckolib_animation_build',
+          });
+        }
+      }
     }
     return { diagnostics };
   });

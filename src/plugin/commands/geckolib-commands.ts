@@ -13,14 +13,206 @@ import {
 import { CommandError, type PluginSession } from '../session.js';
 import type { ScopeManager } from '../scope-manager.js';
 import { readFileCommand, writeSingleFile } from '../file-commands.js';
+import {
+  payloadClipToBlockbench,
+  blockbenchClipToPayload,
+  ANIMATION_CHANNELS,
+  type AnimationChannel,
+  type BlockbenchBoneData,
+  type BlockbenchClipData,
+  type BlockbenchKeyframeData,
+  type BlockbenchLoopMode,
+  type InvertValue,
+  type KeyframeInterpolation,
+  type MolangValue,
+  type PayloadClip,
+} from '../geckolib-animation-mapping.js';
 import { register, projectCounts, requireGeckolibPlugin, requireGeckolibFormat } from './helpers.js';
+
+// ---------------------------------------------------------------------------
+// Blockbench animation surface (untyped at runtime; these are the shapes the
+// handlers rely on, verified against Blockbench 5.1.4)
+// ---------------------------------------------------------------------------
+
+interface KeyframeLike {
+  channel: string;
+  time: number;
+  interpolation?: string;
+  easing?: string;
+  easingArgs?: number[];
+  data_points: Array<{ x?: unknown; y?: unknown; z?: unknown }>;
+}
+
+interface BoneAnimatorLike {
+  name?: string;
+  keyframes?: KeyframeLike[];
+  addKeyframe(data: Record<string, unknown>): unknown;
+}
+
+interface AnimationLike {
+  name: string;
+  loop: BlockbenchLoopMode;
+  length: number;
+  override?: boolean;
+  anim_time_update?: string;
+  selected?: boolean;
+  animators: Record<string, unknown>;
+  add(undo: boolean): AnimationLike;
+  remove(undo: boolean, removeFromFile?: boolean): unknown;
+  getBoneAnimator(group: Group): BoneAnimatorLike;
+  select(): unknown;
+}
 
 /** Blockbench renames its Animation global (it shadows the DOM's); handlers
  * reach it through the Blockbench namespace to stay type-safe. */
+function blockbenchAnimationClass(): { all: AnimationLike[]; new (data: Record<string, unknown>): AnimationLike } {
+  const blockbench = Blockbench as unknown as {
+    Animation?: { all?: AnimationLike[] } & (new (data: Record<string, unknown>) => AnimationLike);
+  };
+  const animationClass = blockbench.Animation;
+  if (animationClass === undefined || !Array.isArray(animationClass.all)) {
+    throw new CommandError('E_BLOCKBENCH_ERROR', 'This Blockbench build does not expose the Animation API.');
+  }
+  return animationClass as { all: AnimationLike[]; new (data: Record<string, unknown>): AnimationLike };
+}
+
 function projectAnimationNames(): string[] {
   const blockbench = Blockbench as unknown as { Animation?: { all?: Array<{ name: string }> } };
   const animations = blockbench.Animation?.all ?? [];
   return animations.map((animation) => animation.name);
+}
+
+/** Blockbench's window-global molang inverter, which the GeckoLib plugin's
+ * own importer and exporter use for the axis convention. */
+function requireInvertMolang(): InvertValue {
+  const invert = (globalThis as Record<string, unknown>).invertMolang;
+  if (typeof invert !== 'function') {
+    throw new CommandError(
+      'E_BLOCKBENCH_ERROR',
+      'This Blockbench build does not expose invertMolang; animation values cannot be mapped.',
+    );
+  }
+  return invert as InvertValue;
+}
+
+/** Undo surface with the animations aspect (present at runtime; the generated
+ * Blockbench types cover only a subset of the aspects). */
+function undoSystem(): {
+  initEdit(aspects: unknown): void;
+  finishEdit(action: string, aspects?: unknown): void;
+  cancelEdit(revertChanges: boolean): void;
+} {
+  return Undo as unknown as {
+    initEdit(aspects: unknown): void;
+    finishEdit(action: string, aspects?: unknown): void;
+    cancelEdit(revertChanges: boolean): void;
+  };
+}
+
+function findAnimationByName(name: string): AnimationLike | null {
+  return blockbenchAnimationClass().all.find((animation) => animation.name === name) ?? null;
+}
+
+/** Resolve payload bone names against current groups, case-insensitively like
+ * the GeckoLib plugin's importer. Unknown and ambiguous names abort the
+ * command before any project mutation. */
+function resolvePayloadBones(boneNames: string[]): Map<string, Group> {
+  const unknownBones: string[] = [];
+  const ambiguousBones: string[] = [];
+  const resolved = new Map<string, Group>();
+  // Two payload bone names that fold to the same group (e.g. "body"/"Body")
+  // would both target one animator and silently merge keyframes, defeating
+  // the per-channel duplicate-time check; reject the collision.
+  const groupToPayloadNames = new Map<string, string[]>();
+  for (const boneName of boneNames) {
+    const folded = boneName.toLowerCase();
+    const matches = Group.all.filter((group) => group.name.toLowerCase() === folded);
+    if (matches.length === 0) {
+      unknownBones.push(boneName);
+    } else if (matches.length > 1) {
+      ambiguousBones.push(boneName);
+    } else {
+      resolved.set(boneName, matches[0]);
+      const names = groupToPayloadNames.get(matches[0].uuid) ?? [];
+      names.push(boneName);
+      groupToPayloadNames.set(matches[0].uuid, names);
+    }
+  }
+  const collidingBones = [...groupToPayloadNames.values()].filter((names) => names.length > 1).flat();
+  if (unknownBones.length > 0 || ambiguousBones.length > 0 || collidingBones.length > 0) {
+    const parts: string[] = [];
+    if (unknownBones.length > 0) parts.push(`unknown bones: ${unknownBones.join(', ')}`);
+    if (ambiguousBones.length > 0) {
+      parts.push(`bone names matching more than one group: ${ambiguousBones.join(', ')}`);
+    }
+    if (collidingBones.length > 0) {
+      parts.push(`multiple bone names resolving to one group: ${collidingBones.join(', ')}`);
+    }
+    throw new CommandError('E_INVALID_PARAMS', `The payload references ${parts.join('; ')}.`, {
+      unknown_bones: unknownBones,
+      ambiguous_bones: ambiguousBones,
+      colliding_bones: collidingBones,
+    });
+  }
+  return resolved;
+}
+
+const numericStringPattern = /^-?\d+(\.\d+)?$/;
+
+/** Keyframe axis values come back from Blockbench as numbers or molang-typed
+ * strings; canonicalize plain numeric strings to numbers. */
+function axisValue(value: unknown): MolangValue {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    return numericStringPattern.test(value.trim()) ? Number(value) : value;
+  }
+  return 0;
+}
+
+function isAnimationChannel(channel: string): channel is AnimationChannel {
+  return (ANIMATION_CHANNELS as readonly string[]).includes(channel);
+}
+
+/** Snapshot a live Blockbench animation into plain mapping data. Only bone
+ * rotation/position/scale keyframes are captured; effect keyframes have no
+ * payload representation. */
+function snapshotBlockbenchClip(animation: AnimationLike): BlockbenchClipData {
+  const bones: BlockbenchBoneData[] = [];
+  for (const animator of Object.values(animation.animators)) {
+    if (animator === null || typeof animator !== 'object') continue;
+    const boneAnimator = animator as BoneAnimatorLike;
+    if (typeof boneAnimator.name !== 'string' || !Array.isArray(boneAnimator.keyframes)) continue;
+    const keyframes: BlockbenchKeyframeData[] = [];
+    for (const keyframe of boneAnimator.keyframes) {
+      if (!isAnimationChannel(keyframe.channel)) continue;
+      // The authoring payload has one value per keyframe, so only the first
+      // data point is read; a second data point (a GL4 pre/post
+      // discontinuity, not authorable here) is intentionally not surfaced.
+      const dataPoint = keyframe.data_points[0];
+      if (dataPoint === undefined) continue;
+      keyframes.push({
+        channel: keyframe.channel,
+        time: keyframe.time,
+        interpolation: (keyframe.interpolation ?? 'linear') as KeyframeInterpolation,
+        ...(typeof keyframe.easing === 'string' ? { easing: keyframe.easing } : {}),
+        ...(Array.isArray(keyframe.easingArgs) ? { easingArgs: keyframe.easingArgs } : {}),
+        dataPoint: { x: axisValue(dataPoint.x), y: axisValue(dataPoint.y), z: axisValue(dataPoint.z) },
+      });
+    }
+    if (keyframes.length > 0) {
+      bones.push({ name: boneAnimator.name, keyframes });
+    }
+  }
+  return {
+    name: animation.name,
+    loop: animation.loop,
+    length: animation.length,
+    override: animation.override === true,
+    ...(typeof animation.anim_time_update === 'string' && animation.anim_time_update !== ''
+      ? { animTimeUpdate: animation.anim_time_update }
+      : {}),
+    bones,
+  };
 }
 
 /** Serialize with Blockbench's compileJSON when available (it understands
@@ -179,5 +371,119 @@ export function registerGeckolibCommands(session: PluginSession, scope: ScopeMan
       }
     }
     return { diagnostics, profile: GECKOLIB_VALIDATION_PROFILE };
+  });
+
+  register(session, 'upsert_geckolib_animation', (params) => {
+    requireGeckolibPlugin();
+    requireGeckolibFormat();
+    const { replace, ...clip } = params;
+    const invert = requireInvertMolang();
+    const animationClass = blockbenchAnimationClass();
+    const undo = undoSystem();
+
+    // Everything that can fail is resolved before the first mutation.
+    const resolvedGroups = resolvePayloadBones(Object.keys(clip.bones));
+    const mapped = payloadClipToBlockbench(clip as PayloadClip, invert);
+    const existing = findAnimationByName(clip.name);
+    if (existing !== null && replace !== true) {
+      throw new CommandError(
+        'E_FILE_EXISTS',
+        `An animation named "${clip.name}" already exists. Set replace:true to overwrite it.`,
+        { animation: clip.name },
+      );
+    }
+
+    const wasSelected = existing !== null && existing.selected === true;
+    undo.initEdit({ animations: existing !== null ? [existing] : [] });
+    let created: AnimationLike | null = null;
+    try {
+      // Remove-before-add: Animation.add always runs createUniqueName, so
+      // adding first would silently rename the new clip.
+      if (existing !== null) existing.remove(false);
+      created = new animationClass({
+        name: mapped.name,
+        loop: mapped.loop,
+        length: mapped.length,
+        override: mapped.override,
+        ...(mapped.animTimeUpdate !== undefined ? { anim_time_update: mapped.animTimeUpdate } : {}),
+      }).add(false);
+      if (created.name !== clip.name) {
+        throw new Error(`Blockbench renamed the animation to "${created.name}" while adding it.`);
+      }
+      for (const bone of mapped.bones) {
+        const group = resolvedGroups.get(bone.name);
+        if (group === undefined) continue;
+        const animator = created.getBoneAnimator(group);
+        for (const keyframe of bone.keyframes) {
+          const added = animator.addKeyframe({
+            time: keyframe.time,
+            channel: keyframe.channel,
+            interpolation: keyframe.interpolation,
+            ...(keyframe.easing !== undefined ? { easing: keyframe.easing } : {}),
+            ...(keyframe.easingArgs !== undefined ? { easingArgs: keyframe.easingArgs } : {}),
+            data_points: [keyframe.dataPoint],
+          });
+          if (added === undefined) {
+            throw new Error(`Blockbench rejected a ${keyframe.channel} keyframe at ${keyframe.time}s.`);
+          }
+        }
+      }
+      undo.finishEdit('Upsert GeckoLib animation', { animations: [created] });
+    } catch (error) {
+      // cancelEdit(true) restores the animations captured by initEdit but
+      // does not remove clips created during the edit, so drop the new clip
+      // explicitly before reverting.
+      try {
+        created?.remove(false);
+      } catch {
+        // The revert below still restores the captured state.
+      }
+      undo.cancelEdit(true);
+      throw new CommandError(
+        'E_BLOCKBENCH_ERROR',
+        'Blockbench failed to apply the animation; the previous animation state was restored.',
+        { animation: clip.name, reason: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    if (wasSelected) {
+      created.select();
+    }
+    return { name: clip.name, status: existing !== null ? ('replaced' as const) : ('created' as const) };
+  });
+
+  register(session, 'delete_geckolib_animation', (params) => {
+    requireGeckolibPlugin();
+    requireGeckolibFormat();
+    const animation = findAnimationByName(params.name);
+    if (animation === null) {
+      throw new CommandError('E_NOT_FOUND', `No animation named "${params.name}" exists in the project.`, {
+        animation: params.name,
+      });
+    }
+    const undo = undoSystem();
+    undo.initEdit({ animations: [animation] });
+    try {
+      animation.remove(false);
+    } catch (error) {
+      undo.cancelEdit(true);
+      throw new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench failed to delete the animation.', {
+        animation: params.name,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    undo.finishEdit('Delete GeckoLib animation', { animations: [] });
+    return { deleted: true as const };
+  });
+
+  register(session, 'get_geckolib_animation', (params) => {
+    requireGeckolibPlugin();
+    requireGeckolibFormat();
+    const animation = findAnimationByName(params.name);
+    if (animation === null) {
+      throw new CommandError('E_NOT_FOUND', `No animation named "${params.name}" exists in the project.`, {
+        animation: params.name,
+      });
+    }
+    return blockbenchClipToPayload(snapshotBlockbenchClip(animation), requireInvertMolang());
   });
 }

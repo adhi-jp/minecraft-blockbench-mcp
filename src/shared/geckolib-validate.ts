@@ -392,8 +392,17 @@ function validateVectorValue(value: unknown, target: string, diagnostics: Geckol
   );
 }
 
+/** True when a key is present with a value JSON serialization would keep. An
+ * `undefined` value is dropped by JSON.stringify, so GL4 never sees it in the
+ * loaded file; the in-memory Animator.buildFile object carries such keys
+ * (e.g. easing/easingArgs on keyframes that have none), and treating them as
+ * present would flag clips that export and load cleanly. */
+function hasDefinedValue(record: Record<string, unknown>, key: string): boolean {
+  return key in record && record[key] !== undefined;
+}
+
 function validateEasingProperties(keyframe: Record<string, unknown>, target: string, diagnostics: GeckolibDiagnostic[]): void {
-  if ('easing' in keyframe) {
+  if (hasDefinedValue(keyframe, 'easing')) {
     const easing = keyframe.easing;
     if (typeof easing !== 'string' || !ACCEPTED_EASING_NAMES_FOLDED.has(easing.toLowerCase())) {
       diagnostics.push(
@@ -405,7 +414,7 @@ function validateEasingProperties(keyframe: Record<string, unknown>, target: str
       );
     }
   }
-  if ('easingArgs' in keyframe) {
+  if (hasDefinedValue(keyframe, 'easingArgs')) {
     const easingArgs = keyframe.easingArgs;
     if (!Array.isArray(easingArgs) || !easingArgs.every((entry) => typeof entry === 'number')) {
       diagnostics.push(
@@ -425,7 +434,7 @@ function validateEasingProperties(keyframe: Record<string, unknown>, target: str
 function validateKeyframeValue(value: unknown, target: string, diagnostics: GeckolibDiagnostic[]): void {
   if (isRecord(value)) {
     validateEasingProperties(value, target, diagnostics);
-    if (!('vector' in value) && !('post' in value)) {
+    if (!hasDefinedValue(value, 'vector') && !hasDefinedValue(value, 'post')) {
       diagnostics.push(
         error(
           'geckolib_animation_value_shape',
@@ -436,7 +445,7 @@ function validateKeyframeValue(value: unknown, target: string, diagnostics: Geck
       return;
     }
     for (const key of ['vector', 'pre', 'post'] as const) {
-      if (key in value) validateVectorValue(value[key], target, diagnostics);
+      if (hasDefinedValue(value, key)) validateVectorValue(value[key], target, diagnostics);
     }
     return;
   }
@@ -559,13 +568,14 @@ export function validateAnimationJson(parsed: unknown): GeckolibDiagnostic[] {
               const timestampMap: Record<string, unknown> = {};
               for (const [key, entry] of Object.entries(channelValue)) {
                 if (key === 'easing' || key === 'easingArgs' || key === 'lerp_mode') continue;
+                if (entry === undefined) continue; // JSON drops undefined-valued keys.
                 if (key === 'vector') {
                   validateVectorValue(entry, channelTarget, diagnostics);
                   continue;
                 }
                 timestampMap[key] = entry;
               }
-              if ('vector' in channelValue && Object.keys(timestampMap).length > 0) {
+              if (hasDefinedValue(channelValue, 'vector') && Object.keys(timestampMap).length > 0) {
                 diagnostics.push(
                   error(
                     'geckolib_animation_timestamp',
@@ -624,6 +634,25 @@ export function validateAnimationJson(parsed: unknown): GeckolibDiagnostic[] {
  * references are warnings, not errors.
  */
 export function validateAnimationBoneRefs(animationParsed: unknown, geoParsed: unknown): GeckolibDiagnostic[] {
+  const boneNames = geometryBoneNames(geoParsed);
+  if (boneNames === null && isRecord(animationParsed) && isRecord(animationParsed.animations)) {
+    return [
+      warning(
+        'geckolib_animation_envelope',
+        'Bone references were not cross-checked because the geometry envelope could not be inspected.',
+      ),
+    ];
+  }
+  return validateAnimationBoneNames(animationParsed, boneNames ?? []);
+}
+
+/**
+ * Cross-check a parsed animation JSON against a list of known bone names —
+ * the geometry's bones for file validation, or the open project's group
+ * names for validate_project (where a stale animator after a group rename or
+ * delete shows up as a missing bone).
+ */
+export function validateAnimationBoneNames(animationParsed: unknown, boneNames: string[]): GeckolibDiagnostic[] {
   const diagnostics: GeckolibDiagnostic[] = [];
 
   if (!isRecord(animationParsed) || !isRecord(animationParsed.animations)) {
@@ -633,16 +662,6 @@ export function validateAnimationBoneRefs(animationParsed: unknown, geoParsed: u
     return diagnostics;
   }
 
-  const boneNames = geometryBoneNames(geoParsed);
-  if (boneNames === null) {
-    diagnostics.push(
-      warning(
-        'geckolib_animation_envelope',
-        'Bone references were not cross-checked because the geometry envelope could not be inspected.',
-      ),
-    );
-    return diagnostics;
-  }
   const known = new Set(boneNames);
 
   for (const [animationName, animation] of Object.entries(animationParsed.animations)) {
@@ -665,7 +684,7 @@ export function validateAnimationBoneRefs(animationParsed: unknown, geoParsed: u
         diagnostics.push(
           warning(
             'geckolib_animation_missing_bone',
-            `Animation "${animationName}" animates bone "${boneName}" which the geometry does not define; GeckoLib skips it at runtime (or crashes when crashWhenCantFindBone is set).`,
+            `Animation "${animationName}" animates bone "${boneName}" which no model bone defines; GeckoLib skips it at runtime (or crashes when crashWhenCantFindBone is set).`,
             `${animationName}/${boneName}`,
           ),
         );
