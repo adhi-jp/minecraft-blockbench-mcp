@@ -571,9 +571,32 @@ export function validateAnimationJson(parsed: unknown): GeckolibDiagnostic[] {
             const channelValue = bone[channel];
             const channelTarget = `${boneTarget}/${channel}`;
             if (isRecord(channelValue)) {
-              const channelMax = validateTimestampKeys(channelValue, channelTarget, diagnostics);
+              // GL4's channel walk skips easing/easingArgs/lerp_mode keys and
+              // reads a "vector" key as the keyframe value at time 0 — the
+              // single-keyframe shape the GeckoLib plugin exports. Validate
+              // the easing metadata once, then the remaining timestamp map.
+              validateEasingProperties(channelValue, channelTarget, diagnostics);
+              const timestampMap: Record<string, unknown> = {};
+              for (const [key, entry] of Object.entries(channelValue)) {
+                if (key === 'easing' || key === 'easingArgs' || key === 'lerp_mode') continue;
+                if (key === 'vector') {
+                  validateVectorValue(entry, channelTarget, diagnostics);
+                  continue;
+                }
+                timestampMap[key] = entry;
+              }
+              if ('vector' in channelValue && Object.keys(timestampMap).length > 0) {
+                diagnostics.push(
+                  error(
+                    'geckolib_animation_timestamp',
+                    'A channel cannot mix a single-keyframe "vector" form with timestamped keyframes; GL4 reads the vector as a keyframe at time 0 in file order, corrupting the channel.',
+                    channelTarget,
+                  ),
+                );
+              }
+              const channelMax = validateTimestampKeys(timestampMap, channelTarget, diagnostics);
               if (channelMax > lastKeyframeTime) lastKeyframeTime = channelMax;
-              for (const [timestamp, keyframe] of Object.entries(channelValue)) {
+              for (const [timestamp, keyframe] of Object.entries(timestampMap)) {
                 validateKeyframeValue(keyframe, `${channelTarget}/${timestamp}`, diagnostics);
               }
             } else {

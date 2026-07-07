@@ -385,6 +385,37 @@ test('an empty channel array is an invalid keyframe value', () => {
   assert.equal(diagnostics[0].check_id, 'geckolib_animation_value_shape');
 });
 
+test('a real GeckoLib plugin 4.2.5 animation export validates clean', () => {
+  // Captured from Animator.buildFile on Blockbench 5.1.4 with the GeckoLib
+  // plugin installed; single-keyframe channels export as a channel-level
+  // {vector, easing?, easingArgs?} object without timestamp keys.
+  const exported = loadFixture('plugin-export.animation.json');
+  assert.deepEqual(validateAnimationJson(exported), []);
+  assert.deepEqual(validateAnimationBoneRefs(exported, geoFixture()), []);
+});
+
+test('single-keyframe channel objects validate their vector and easing metadata', () => {
+  assert.deepEqual(
+    validateAnimationJson(channelFile('scale', { vector: [1, 1, 1], easing: 'easeInBack', easingArgs: [1.7] })),
+    [],
+  );
+  const badEasing = validateAnimationJson(channelFile('scale', { vector: [1, 1, 1], easing: 'bouncy' }));
+  assert.equal(badEasing.length, 1);
+  assert.equal(badEasing[0].severity, 'warning');
+  assert.equal(badEasing[0].check_id, 'geckolib_animation_easing_name');
+  assert.equal(badEasing[0].target, 'animation.ghost.test/body/scale');
+  const badVector = validateAnimationJson(channelFile('scale', { vector: [1, 1] }));
+  assert.equal(badVector.length, 1);
+  assert.equal(badVector[0].severity, 'error');
+  assert.equal(badVector[0].check_id, 'geckolib_animation_value_shape');
+  assert.equal(badVector[0].target, 'animation.ghost.test/body/scale');
+  const mixed = validateAnimationJson(channelFile('scale', { vector: [1, 1, 1], '1.0': [2, 2, 2] }));
+  assert.equal(mixed.length, 1);
+  assert.equal(mixed[0].severity, 'error');
+  assert.equal(mixed[0].check_id, 'geckolib_animation_timestamp');
+  assert.equal(mixed[0].target, 'animation.ghost.test/body/scale');
+});
+
 test('malformed effect keyframes are errors, including two-data-points-per-timestamp arrays', () => {
   const cases: Array<[string, Record<string, unknown>, string]> = [
     [
