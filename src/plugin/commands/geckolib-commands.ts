@@ -3,7 +3,7 @@
 // the geckolib_model format, the Bedrock-codec compile hook that pins
 // format_version to 1.12.0, and the Animator.buildFile patch that emits
 // geckolib_format_version 2 with GeckoLib's {vector, easing} keyframes.
-import { GECKOLIB_VALIDATION_PROFILE } from '../../shared/protocol.js';
+import { GECKOLIB_VALIDATION_PROFILE, GECKOLIB_EASING_NAMES } from '../../shared/protocol.js';
 import {
   validateGeoJson,
   validateAnimationJson,
@@ -173,6 +173,24 @@ function isAnimationChannel(channel: string): channel is AnimationChannel {
   return (ANIMATION_CHANNELS as readonly string[]).includes(channel);
 }
 
+const PAYLOAD_INTERPOLATIONS: KeyframeInterpolation[] = ['linear', 'catmullrom', 'step'];
+
+/** Interpolation the get payload can represent; a UI-authored keyframe using
+ * a mode outside the authoring scope (e.g. bezier) reads back as linear so
+ * the returned clip stays re-upsertable (bezier is a dropped construct). */
+function payloadInterpolation(value: string | undefined): KeyframeInterpolation {
+  return value !== undefined && (PAYLOAD_INTERPOLATIONS as string[]).includes(value)
+    ? (value as KeyframeInterpolation)
+    : 'linear';
+}
+
+/** Easing the get payload can represent (the closed plugin whitelist); an
+ * out-of-whitelist easing is dropped so the returned clip stays re-upsertable
+ * (GL4 treats an unknown or absent easing as linear anyway). */
+function payloadEasing(value: unknown): string | undefined {
+  return typeof value === 'string' && (GECKOLIB_EASING_NAMES as readonly string[]).includes(value) ? value : undefined;
+}
+
 /** Snapshot a live Blockbench animation into plain mapping data. Only bone
  * rotation/position/scale keyframes are captured; effect keyframes have no
  * payload representation. */
@@ -190,12 +208,13 @@ function snapshotBlockbenchClip(animation: AnimationLike): BlockbenchClipData {
       // discontinuity, not authorable here) is intentionally not surfaced.
       const dataPoint = keyframe.data_points[0];
       if (dataPoint === undefined) continue;
+      const easing = payloadEasing(keyframe.easing);
       keyframes.push({
         channel: keyframe.channel,
         time: keyframe.time,
-        interpolation: (keyframe.interpolation ?? 'linear') as KeyframeInterpolation,
-        ...(typeof keyframe.easing === 'string' ? { easing: keyframe.easing } : {}),
-        ...(Array.isArray(keyframe.easingArgs) ? { easingArgs: keyframe.easingArgs } : {}),
+        interpolation: payloadInterpolation(keyframe.interpolation),
+        ...(easing !== undefined ? { easing } : {}),
+        ...(easing !== undefined && Array.isArray(keyframe.easingArgs) ? { easingArgs: keyframe.easingArgs } : {}),
         dataPoint: { x: axisValue(dataPoint.x), y: axisValue(dataPoint.y), z: axisValue(dataPoint.z) },
       });
     }
@@ -446,7 +465,14 @@ export function registerGeckolibCommands(session: PluginSession, scope: ScopeMan
       );
     }
     if (wasSelected) {
-      created.select();
+      // Re-selecting the replacement clip is cosmetic UI restoration; the
+      // animation is already committed, so a failure here must not turn a
+      // successful upsert into an error.
+      try {
+        created.select();
+      } catch {
+        // Leaving the selection unchanged is acceptable.
+      }
     }
     return { name: clip.name, status: existing !== null ? ('replaced' as const) : ('created' as const) };
   });

@@ -666,6 +666,54 @@ test('upsert_geckolib_animation creates a clip in one undo step and get_geckolib
   assert.deepEqual(roundTrip.result, IDLE_CLIP_PAYLOAD, 'the clip reads back in the upsert payload shape');
 });
 
+test('get_geckolib_animation normalizes out-of-payload interpolation and easing so the result re-upserts', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+
+  // A UI-authored clip with a bezier keyframe and an easing outside the
+  // authoring whitelist — neither is representable in the payload.
+  const clip = new FakeAnimation({ name: 'animation.ghost.ui', loop: 'once', length: 1 });
+  clip.add(false);
+  const body = FakeGroup.all.find((group) => group.name === 'body') as FakeGroup;
+  const animator = clip.getBoneAnimator(body);
+  animator.addKeyframe({
+    time: 0,
+    channel: 'rotation',
+    interpolation: 'bezier',
+    easing: 'wobble',
+    data_points: [{ x: 0, y: 0, z: 0 }],
+  });
+
+  const result = await harness.bridge.request('get_geckolib_animation', { name: 'animation.ghost.ui' });
+  assert.equal(result.ok, true, JSON.stringify(result.error));
+  const payload = result.result as { bones: { body: { rotation: Array<Record<string, unknown>> } } };
+  assert.deepEqual(
+    payload.bones.body.rotation[0],
+    { time: 0, value: 0 },
+    'bezier interpolation reads back as linear (omitted) and the unknown easing is dropped',
+  );
+  // The normalized payload must be a valid upsert input.
+  const { COMMAND_SPECS } = await import('../src/shared/protocol.js');
+  assert.equal(COMMAND_SPECS.upsert_geckolib_animation.params.safeParse(result.result).success, true);
+});
+
+test('get_project_state omits the animations summary for a non-geckolib project', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+  injectedGlobals.Cube = { all: [] };
+  injectedGlobals.Texture = { all: [] };
+  // A java_block project with animations present must not report them under
+  // the GeckoLib loop terms.
+  injectedGlobals.Format = { id: 'java_block' };
+  new FakeAnimation({ name: 'animation.block.spin', loop: 'loop', length: 1 }).add(false);
+
+  const state = await harness.bridge.request('get_project_state', { include_objects: false });
+  assert.equal(state.ok, true);
+  assert.equal((state.result as { animations?: unknown }).animations, undefined);
+});
+
 test('upsert_geckolib_animation requires replace:true to overwrite and keeps the exact name on replace', async (t) => {
   const harness = await makeHarness();
   t.after(harness.cleanup);

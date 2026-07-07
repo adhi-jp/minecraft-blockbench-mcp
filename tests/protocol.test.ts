@@ -234,6 +234,31 @@ test('upsert_geckolib_animation accepts the full clip payload and rejects out-of
     false,
     'only rotation/position/scale channels exist',
   );
+  for (const badNumber of [Infinity, -Infinity, NaN]) {
+    assert.equal(
+      spec.params.safeParse({ ...validClip, length: badNumber }).success,
+      false,
+      `non-finite length ${badNumber} must be rejected`,
+    );
+    assert.equal(
+      spec.params.safeParse({ ...validClip, bones: { body: { scale: [{ time: 0, value: badNumber }] } } }).success,
+      false,
+      `non-finite keyframe value ${badNumber} must be rejected`,
+    );
+    assert.equal(
+      spec.params.safeParse({ ...validClip, bones: { body: { scale: [{ time: badNumber, value: 0 }] } } }).success,
+      false,
+      `non-finite keyframe time ${badNumber} must be rejected`,
+    );
+    assert.equal(
+      spec.params.safeParse({
+        ...validClip,
+        bones: { body: { scale: [{ time: 0, value: 0, easing: 'easeInBack', easingArgs: [badNumber] }] } },
+      }).success,
+      false,
+      `non-finite easingArgs entry ${badNumber} must be rejected`,
+    );
+  }
 
   const upsertResult = spec.result.safeParse({ name: 'animation.ghost.idle', status: 'created' });
   assert.equal(upsertResult.success, true);

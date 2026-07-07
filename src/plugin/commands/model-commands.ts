@@ -66,7 +66,9 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
   register(session, 'get_project_state', (params) => {
     if (!Project) return { open: false };
     const includeObjects = params.include_objects ?? true;
-    const animations = projectAnimations();
+    // The animations summary reports GeckoLib loop terms, so it is scoped to
+    // geckolib_model projects; other formats keep the prior result shape.
+    const animations = Format?.id === 'geckolib_model' ? projectAnimations() : [];
     const base = {
       open: true,
       format: Format?.id,

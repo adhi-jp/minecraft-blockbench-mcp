@@ -533,15 +533,17 @@ export const GECKOLIB_EASING_NAMES = [
  * `hold_on_last_frame` at export). */
 export const GECKOLIB_LOOP_MODES = ['once', 'loop', 'hold_on_last_frame'] as const;
 
+// Numbers are constrained to finite values: GeckoLib serializes with JSON,
+// and Infinity/NaN would export as null and drop the animation at load.
 const molangNumberSchema = z
-  .union([z.number(), z.string()])
+  .union([z.number().finite(), z.string()])
   .describe('A number or a molang expression string (molang is passed through, never evaluated).');
 
 const geckolibKeyframeSchema = z
   .object({
-    time: z.number().nonnegative().describe('Keyframe time in seconds from clip start.'),
+    time: z.number().finite().nonnegative().describe('Keyframe time in seconds from clip start.'),
     value: z
-      .union([z.number(), z.string(), z.tuple([molangNumberSchema, molangNumberSchema, molangNumberSchema])])
+      .union([z.number().finite(), z.string(), z.tuple([molangNumberSchema, molangNumberSchema, molangNumberSchema])])
       .describe(
         'Keyframe value in the GeckoLib .animation.json convention: a number or molang string (applied to all three axes) or an [x, y, z] array of number|molang-string.',
       ),
@@ -554,7 +556,7 @@ const geckolibKeyframeSchema = z
       .optional()
       .describe('GeckoLib per-keyframe easing name (absent means linear).'),
     easingArgs: z
-      .array(z.number())
+      .array(z.number().finite())
       .optional()
       .describe('Numeric easing arguments; used by the Back/Elastic/Bounce families and step.'),
   })
@@ -590,7 +592,7 @@ const geckolibAnimationClipSchema = z
   .object({
     name: z.string().min(1).describe('Animation name (the clip key), e.g. animation.<entity>.<action>.'),
     loop: z.enum(GECKOLIB_LOOP_MODES).optional().describe('GeckoLib loop mode (default once).'),
-    length: z.number().nonnegative().describe('Clip length in seconds.'),
+    length: z.number().finite().nonnegative().describe('Clip length in seconds.'),
     override: z.boolean().optional().describe('Override lower-priority animations (default false).'),
     anim_time_update: z
       .string()
