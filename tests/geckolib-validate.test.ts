@@ -257,12 +257,14 @@ test('the full-features animation cross-checks cleanly against the geometry fixt
   assert.deepEqual(validateAnimationBoneRefs(fullFeaturesFixture(), geoFixture()), []);
 });
 
-test('the GeckoLib plugin easing whitelist has the 32 surveyed names', () => {
-  assert.equal(GECKOLIB_EASING_NAMES.length, 32);
-  assert.equal(new Set(GECKOLIB_EASING_NAMES).size, 32);
-  assert.ok(GECKOLIB_EASING_NAMES.includes('linear'));
-  assert.ok(GECKOLIB_EASING_NAMES.includes('step'));
-  assert.ok(GECKOLIB_EASING_NAMES.includes('easeInOutBounce'));
+test('the GeckoLib plugin easing whitelist has exactly the 32 surveyed names', () => {
+  const families = ['Quad', 'Cubic', 'Quart', 'Quint', 'Sine', 'Expo', 'Circ', 'Back', 'Elastic', 'Bounce'];
+  const expected = [
+    'linear',
+    'step',
+    ...families.flatMap((family) => [`easeIn${family}`, `easeOut${family}`, `easeInOut${family}`]),
+  ];
+  assert.deepEqual([...GECKOLIB_EASING_NAMES], expected);
 });
 
 test('loop values GL4 cannot resolve are warnings naming the silent play-once fallback', () => {

@@ -99,6 +99,9 @@ const MINIMAL_ARGS: Record<CommandName, Record<string, unknown>> = {
   export_geckolib_model: { path: 'out/ghost.geo.json' },
   export_geckolib_animations: { path: 'out/ghost.animation.json' },
   validate_geckolib_file: { geo_path: 'out/ghost.geo.json' },
+  upsert_geckolib_animation: { name: 'animation.ghost.idle', length: 1, bones: {} },
+  delete_geckolib_animation: { name: 'animation.ghost.idle' },
+  get_geckolib_animation: { name: 'animation.ghost.idle' },
 };
 
 test('with Blockbench closed: initialize, list tools, healthy health, and immediate not-connected precondition errors for every operation tool', async (t) => {
@@ -117,6 +120,22 @@ test('with Blockbench closed: initialize, list tools, healthy health, and immedi
   assert.equal(health.result?.ws_listening, true);
   assert.equal(health.result?.protocol_version, PROTOCOL_VERSION);
   assert.deepEqual(health.result?.setup_errors, []);
+
+  // The at-least-one-path refinement on validate_geckolib_file wraps its
+  // params schema; the advertised tool schema must still name both paths.
+  const validateTool = tools.tools.find((tool) => tool.name === 'validate_geckolib_file');
+  const advertised = (validateTool?.inputSchema ?? {}) as { properties?: Record<string, unknown> };
+  assert.deepEqual(
+    Object.keys(advertised.properties ?? {}).sort(),
+    ['animation_path', 'geo_path'],
+    'validate_geckolib_file must advertise both path parameters in tools/list',
+  );
+
+  // Passing neither path fails with the structured parameter error, not a
+  // transport-level rejection.
+  const neitherPath = parseEnvelope(await client.callTool({ name: 'validate_geckolib_file', arguments: {} }));
+  assert.equal(neitherPath.ok, false);
+  assert.equal(neitherPath.error?.code, 'E_INVALID_PARAMS');
 
   // Every operation tool must fail fast with the structured precondition error.
   for (const command of COMMAND_NAMES) {

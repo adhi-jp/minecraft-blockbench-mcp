@@ -244,6 +244,83 @@ test('validate_geckolib_file validates scoped files end-to-end and reuses scope 
   assert.equal(missing.error?.code, 'E_NOT_FOUND');
 });
 
+test('validate_geckolib_file validates an animation file alone and dedupes envelope errors with geometry', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+
+  injectedGlobals.Formats = { geckolib_model: {} };
+
+  nodeFs.copyFileSync(join(fixturesDir, 'valid.geo.json'), join(harness.scopeDir, 'ghost.geo.json'));
+  nodeFs.copyFileSync(join(fixturesDir, 'valid.animation.json'), join(harness.scopeDir, 'ghost.animation.json'));
+
+  // Animation-only: content checks run with no geometry.
+  const clean = await harness.bridge.request('validate_geckolib_file', { animation_path: 'ghost.animation.json' });
+  assert.equal(clean.ok, true, JSON.stringify(clean.error));
+  assert.deepEqual(clean.result, { diagnostics: [], profile: 'gl4' });
+
+  const broken = JSON.parse(nodeFs.readFileSync(join(fixturesDir, 'valid.animation.json'), 'utf8'));
+  broken.animations['animation.ghost.idle'].loop = 'forever';
+  broken.animations['animation.ghost.idle'].bones.tail = { rotation: { '0.0': [0, 0, 0] } };
+  nodeFs.writeFileSync(join(harness.scopeDir, 'broken.animation.json'), JSON.stringify(broken));
+
+  const animationOnly = await harness.bridge.request('validate_geckolib_file', {
+    animation_path: 'broken.animation.json',
+  });
+  assert.equal(animationOnly.ok, true);
+  const animationOnlyResult = animationOnly.result as { diagnostics: Array<{ check_id: string }> };
+  assert.deepEqual(
+    animationOnlyResult.diagnostics.map((d) => d.check_id),
+    ['geckolib_animation_loop_value'],
+    'content checks run without geometry; bone cross-checks need geo_path',
+  );
+
+  const both = await harness.bridge.request('validate_geckolib_file', {
+    geo_path: 'ghost.geo.json',
+    animation_path: 'broken.animation.json',
+  });
+  assert.equal(both.ok, true);
+  const bothResult = both.result as { diagnostics: Array<{ check_id: string }> };
+  assert.deepEqual(
+    bothResult.diagnostics.map((d) => d.check_id).sort(),
+    ['geckolib_animation_loop_value', 'geckolib_animation_missing_bone'],
+    'geometry adds the bone cross-check without duplicating content diagnostics',
+  );
+
+  // A file whose envelope both passes report identically must yield one copy.
+  nodeFs.writeFileSync(join(harness.scopeDir, 'no-envelope.animation.json'), JSON.stringify({ nope: true }));
+  const envelope = await harness.bridge.request('validate_geckolib_file', {
+    geo_path: 'ghost.geo.json',
+    animation_path: 'no-envelope.animation.json',
+  });
+  assert.equal(envelope.ok, true);
+  const envelopeResult = envelope.result as { diagnostics: Array<{ check_id: string }> };
+  assert.deepEqual(
+    envelopeResult.diagnostics.map((d) => d.check_id),
+    ['geckolib_animation_envelope'],
+    'identical envelope errors from both passes are deduplicated',
+  );
+
+  // Distinct problems with identical wording inside one pass must survive:
+  // two unnamed bones are two diagnostics, not one.
+  const unnamedBones = JSON.parse(nodeFs.readFileSync(join(fixturesDir, 'valid.geo.json'), 'utf8'));
+  unnamedBones['minecraft:geometry'][0].bones.push({ pivot: [0, 0, 0] }, { pivot: [1, 1, 1] });
+  nodeFs.writeFileSync(join(harness.scopeDir, 'unnamed.geo.json'), JSON.stringify(unnamedBones));
+  const unnamed = await harness.bridge.request('validate_geckolib_file', { geo_path: 'unnamed.geo.json' });
+  assert.equal(unnamed.ok, true);
+  const unnamedResult = unnamed.result as { diagnostics: Array<{ message: string }> };
+  assert.equal(
+    unnamedResult.diagnostics.filter((d) => d.message === 'A bone has no string name.').length,
+    2,
+    'within-pass identical diagnostics are preserved',
+  );
+
+  // Neither path: the plugin-side re-validation maps the schema refinement
+  // to the structured parameter error.
+  const neither = await harness.bridge.request('validate_geckolib_file', {});
+  assert.equal(neither.ok, false);
+  assert.equal(neither.error?.code, 'E_INVALID_PARAMS');
+});
+
 test('export_geckolib_animations reports E_NOT_FOUND when the project has no animations', async (t) => {
   const harness = await makeHarness();
   t.after(harness.cleanup);

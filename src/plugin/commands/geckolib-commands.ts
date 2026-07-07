@@ -6,6 +6,7 @@
 import { GECKOLIB_VALIDATION_PROFILE } from '../../shared/protocol.js';
 import {
   validateGeoJson,
+  validateAnimationJson,
   validateAnimationBoneRefs,
   type GeckolibDiagnostic,
 } from '../../shared/geckolib-validate.js';
@@ -153,11 +154,29 @@ export function registerGeckolibCommands(session: PluginSession, scope: ScopeMan
 
   register(session, 'validate_geckolib_file', (params) => {
     requireGeckolibPlugin();
-    const geo = readScopedJson(scope, params.geo_path);
-    const diagnostics: GeckolibDiagnostic[] = validateGeoJson(geo.parsed);
+    // The params schema guarantees at least one path is present.
+    const diagnostics: GeckolibDiagnostic[] = [];
+    const geo = params.geo_path !== undefined ? readScopedJson(scope, params.geo_path) : null;
+    if (geo !== null) {
+      diagnostics.push(...validateGeoJson(geo.parsed));
+    }
     if (params.animation_path !== undefined) {
       const animation = readScopedJson(scope, params.animation_path);
-      diagnostics.push(...validateAnimationBoneRefs(animation.parsed, geo.parsed));
+      const contentDiagnostics = validateAnimationJson(animation.parsed);
+      diagnostics.push(...contentDiagnostics);
+      if (geo !== null) {
+        // The content pass and the bone cross-check report broken animation
+        // envelopes identically; drop only cross-check diagnostics that
+        // duplicate a content diagnostic, never within-pass repeats.
+        const diagnosticKey = (diagnostic: GeckolibDiagnostic): string =>
+          `${diagnostic.severity}|${diagnostic.check_id}|${diagnostic.target ?? ''}|${diagnostic.message}`;
+        const reported = new Set(contentDiagnostics.map(diagnosticKey));
+        diagnostics.push(
+          ...validateAnimationBoneRefs(animation.parsed, geo.parsed).filter(
+            (diagnostic) => !reported.has(diagnosticKey(diagnostic)),
+          ),
+        );
+      }
     }
     return { diagnostics, profile: GECKOLIB_VALIDATION_PROFILE };
   });

@@ -10,9 +10,9 @@
 // schema exists; every diagnostic carries a stable geckolib_* check id so a
 // rule can be traced and re-verified against a newer GeckoLib release.
 
-import { GECKOLIB_VALIDATION_PROFILE } from './protocol.js';
+import { GECKOLIB_VALIDATION_PROFILE, GECKOLIB_EASING_NAMES } from './protocol.js';
 
-export { GECKOLIB_VALIDATION_PROFILE };
+export { GECKOLIB_VALIDATION_PROFILE, GECKOLIB_EASING_NAMES };
 
 /** GeckoLib Blockbench plugin version the rules were surveyed against. */
 export const TESTED_GECKOLIB_PLUGIN_VERSION = '4.2.5';
@@ -238,30 +238,10 @@ export function validateGeoJson(
  * are a warning, not an error). */
 const GL4_LOOP_VALUES = new Set<unknown>([true, false, 'loop', 'true', 'false', 'play_once', 'hold_on_last_frame']);
 
-/** Easing names the GeckoLib Blockbench plugin 4.2.5 whitelists per keyframe:
- * linear, step, and easeIn/easeOut/easeInOut for each of the ten curve
- * families. GL4's EasingType registry matches case-insensitively and also
- * registers the aliases in GL4_EASING_ALIASES; unknown names silently fall
- * back to LINEAR (extensible registry, so this is a warning). */
-const GECKOLIB_EASING_FAMILIES = [
-  'Quad',
-  'Cubic',
-  'Quart',
-  'Quint',
-  'Sine',
-  'Expo',
-  'Circ',
-  'Back',
-  'Elastic',
-  'Bounce',
-] as const;
-
-export const GECKOLIB_EASING_NAMES = [
-  'linear',
-  'step',
-  ...GECKOLIB_EASING_FAMILIES.flatMap((family) => [`easeIn${family}`, `easeOut${family}`, `easeInOut${family}`]),
-] as const;
-
+/** GL4's EasingType registry matches names case-insensitively and registers
+ * these aliases beyond the GeckoLib plugin's authoring whitelist
+ * (GECKOLIB_EASING_NAMES); unknown names silently fall back to LINEAR
+ * (extensible registry, so unknown names are a warning). */
 const GL4_EASING_ALIASES = ['none', 'catmullrom', 'single_step'] as const;
 
 const ACCEPTED_EASING_NAMES_FOLDED = new Set<string>(

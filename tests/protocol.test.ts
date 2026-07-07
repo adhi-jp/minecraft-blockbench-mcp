@@ -23,8 +23,8 @@ test('protocol version constant is a positive integer', () => {
   assert.ok(PROTOCOL_VERSION >= 1);
 });
 
-test('protocol version is 2 after the GeckoLib command group extension', () => {
-  assert.equal(PROTOCOL_VERSION, 2);
+test('protocol version is 3 after the GeckoLib animation authoring extension', () => {
+  assert.equal(PROTOCOL_VERSION, 3);
 });
 
 test('default WebSocket port matches the specified loopback port 39731', () => {
@@ -79,6 +79,9 @@ test('command registry is partitioned into format-neutral, Java-format, and Geck
   assert.ok(geckolib.includes('export_geckolib_model'));
   assert.ok(geckolib.includes('export_geckolib_animations'));
   assert.ok(geckolib.includes('validate_geckolib_file'));
+  assert.ok(geckolib.includes('upsert_geckolib_animation'));
+  assert.ok(geckolib.includes('delete_geckolib_animation'));
+  assert.ok(geckolib.includes('get_geckolib_animation'));
 });
 
 test('create_geckolib_project params enforce GeckoLib naming rules and the model type enum', () => {
@@ -119,7 +122,13 @@ test('validate_geckolib_file result requires check ids and the gl4 profile liter
     spec.params.safeParse({ geo_path: 'model.geo.json', animation_path: 'model.animation.json' }).success,
     true,
   );
-  assert.equal(spec.params.safeParse({}).success, false, 'geo_path is required');
+  assert.equal(spec.params.safeParse({ geo_path: 'model.geo.json' }).success, true, 'geometry-only validation');
+  assert.equal(
+    spec.params.safeParse({ animation_path: 'model.animation.json' }).success,
+    true,
+    'animation-only validation needs no geometry',
+  );
+  assert.equal(spec.params.safeParse({}).success, false, 'at least one path is required');
   const okResult = {
     diagnostics: [
       { severity: 'error', message: 'duplicate bone name', check_id: 'geckolib_duplicate_bone_names' },
@@ -157,6 +166,131 @@ test('GeckoLib open/export params accept valid shapes and reject unknown extra f
       `${command} must reject unknown extra fields`,
     );
   }
+});
+
+test('upsert_geckolib_animation accepts the full clip payload and rejects out-of-contract shapes', () => {
+  const spec = COMMAND_SPECS.upsert_geckolib_animation;
+  const validClip = {
+    name: 'animation.ghost.idle',
+    loop: 'hold_on_last_frame',
+    length: 2,
+    override: false,
+    anim_time_update: 'query.anim_time + query.delta_time',
+    bones: {
+      body: {
+        rotation: [
+          { time: 0, value: [0, 0, 0] },
+          { time: 0.5, value: [-10, -15, 20], easing: 'easeInOutSine' },
+          { time: 1, value: ['-math.sin(query.anim_time * 90) * 5', 0, 0] },
+          { time: 1.5, value: [0, 0, 0], easing: 'easeInBack', easingArgs: [1.7], interpolation: 'catmullrom' },
+        ],
+        position: [{ time: 0, value: 1 }],
+        scale: [{ time: 0, value: 'query.is_baby ? 0.5 : 1' }],
+      },
+    },
+  };
+  assert.equal(spec.params.safeParse(validClip).success, true);
+  assert.equal(spec.params.safeParse({ ...validClip, replace: true }).success, true);
+  assert.equal(spec.params.safeParse({ ...validClip, extra: 1 }).success, false, 'unknown top-level fields');
+  assert.equal(spec.params.safeParse({ ...validClip, loop: 'hold' }).success, false, 'loop uses GeckoLib JSON terms');
+  const { length: _length, ...withoutLength } = validClip;
+  assert.equal(spec.params.safeParse(withoutLength).success, false, 'length in seconds is required');
+  assert.equal(
+    spec.params.safeParse({
+      ...validClip,
+      bones: { body: { rotation: [{ time: 0, value: [0, 0] }] } },
+    }).success,
+    false,
+    'vector values need exactly 3 entries',
+  );
+  assert.equal(
+    spec.params.safeParse({
+      ...validClip,
+      bones: { body: { rotation: [{ time: 0, value: 0, easing: 'easeInOutBanana' }] } },
+    }).success,
+    false,
+    'easing names are the closed plugin whitelist',
+  );
+  assert.equal(
+    spec.params.safeParse({
+      ...validClip,
+      bones: {
+        body: {
+          rotation: [
+            { time: 0.5, value: 0 },
+            { time: 0.5, value: 1 },
+          ],
+        },
+      },
+    }).success,
+    false,
+    'duplicate keyframe times within one channel are rejected',
+  );
+  assert.equal(
+    spec.params.safeParse({
+      ...validClip,
+      bones: { body: { wiggle: [{ time: 0, value: 0 }] } },
+    }).success,
+    false,
+    'only rotation/position/scale channels exist',
+  );
+
+  const upsertResult = spec.result.safeParse({ name: 'animation.ghost.idle', status: 'created' });
+  assert.equal(upsertResult.success, true);
+  assert.equal(spec.result.safeParse({ name: 'animation.ghost.idle', status: 'renamed' }).success, false);
+});
+
+test('get_geckolib_animation returns the upsert payload shape and delete takes only a name', () => {
+  const getSpec = COMMAND_SPECS.get_geckolib_animation;
+  assert.equal(getSpec.params.safeParse({ name: 'animation.ghost.idle' }).success, true);
+  assert.equal(getSpec.params.safeParse({}).success, false);
+  assert.equal(getSpec.params.safeParse({ name: '' }).success, false);
+  assert.equal(
+    getSpec.result.safeParse({
+      name: 'animation.ghost.idle',
+      loop: 'once',
+      length: 1,
+      bones: { body: { rotation: [{ time: 0, value: [0, 0, 0] }] } },
+    }).success,
+    true,
+  );
+  assert.equal(
+    COMMAND_SPECS.upsert_geckolib_animation.params.safeParse({
+      name: 'animation.ghost.idle',
+      loop: 'once',
+      length: 1,
+      bones: { body: { rotation: [{ time: 0, value: [0, 0, 0] }] } },
+    }).success,
+    true,
+    'a get result round-trips as an upsert payload',
+  );
+
+  const deleteSpec = COMMAND_SPECS.delete_geckolib_animation;
+  assert.equal(deleteSpec.params.safeParse({ name: 'animation.ghost.idle' }).success, true);
+  assert.equal(deleteSpec.params.safeParse({ name: '' }).success, false);
+  assert.equal(deleteSpec.params.safeParse({ name: 'animation.ghost.idle', force: true }).success, false);
+  assert.equal(deleteSpec.result.safeParse({ deleted: true }).success, true);
+});
+
+test('get_project_state result accepts the additive animations summary', () => {
+  const spec = COMMAND_SPECS.get_project_state;
+  assert.equal(spec.result.safeParse({ open: false }).success, true);
+  assert.equal(
+    spec.result.safeParse({
+      open: true,
+      format: 'geckolib_model',
+      animations: [{ name: 'animation.ghost.idle', loop: 'hold_on_last_frame', length: 2 }],
+    }).success,
+    true,
+  );
+  assert.equal(
+    spec.result.safeParse({
+      open: true,
+      animations: [{ name: 'animation.ghost.idle', loop: 'hold', length: 2 }],
+    }).success,
+    false,
+    'the summary uses GeckoLib loop terms, not Blockbench hold',
+  );
 });
 
 test('validate_project diagnostics accept an optional target naming the affected object', () => {

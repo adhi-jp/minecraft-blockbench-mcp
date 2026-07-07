@@ -3,7 +3,7 @@
 // adapter (Node) and plugin (browser/Blockbench) TypeScript configurations.
 import { z } from 'zod';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const DEFAULT_WS_PORT = 39731;
 
@@ -133,6 +133,17 @@ const getProjectStateResult = z.object({
   cubes: z.array(z.object({ uuid: z.string(), name: z.string() })).optional(),
   groups: z.array(z.object({ uuid: z.string(), name: z.string() })).optional(),
   textures: z.array(z.object({ uuid: z.string(), name: z.string(), id: z.string().optional() })).optional(),
+  // Loop modes use GeckoLib .animation.json terms (Blockbench `hold` maps to
+  // `hold_on_last_frame`); absent when the project has no animations.
+  animations: z
+    .array(
+      z.object({
+        name: z.string(),
+        loop: z.enum(['once', 'loop', 'hold_on_last_frame']),
+        length: z.number(),
+      }),
+    )
+    .optional(),
 });
 
 const createProjectParams = z
@@ -459,17 +470,158 @@ const geckolibDiagnosticSchema = z.object({
 
 const validateGeckolibFileParams = z
   .object({
-    geo_path: z.string().describe('Bedrock geometry JSON (.geo.json) path inside the confirmed scoped directory.'),
+    geo_path: z
+      .string()
+      .optional()
+      .describe('Bedrock geometry JSON (.geo.json) path inside the confirmed scoped directory.'),
     animation_path: z
       .string()
       .optional()
-      .describe('Optional animation JSON whose bone references are cross-checked against the geometry.'),
+      .describe(
+        'GeckoLib animation JSON path inside the confirmed scoped directory; content checks need no geometry, bone cross-checks also need geo_path.',
+      ),
   })
-  .strict();
+  .strict()
+  .refine((params) => params.geo_path !== undefined || params.animation_path !== undefined, {
+    message: 'At least one of geo_path or animation_path is required.',
+  });
 const validateGeckolibFileResult = z.object({
   diagnostics: z.array(geckolibDiagnosticSchema),
   profile: z.literal(GECKOLIB_VALIDATION_PROFILE),
 });
+
+// Per-keyframe easing names whitelisted by the GeckoLib Blockbench plugin
+// 4.2.5: linear, step, and easeIn/easeOut/easeInOut for each of the ten curve
+// families. This is the closed authoring enum; the validator additionally
+// accepts GL4 registry aliases when reading files.
+export const GECKOLIB_EASING_NAMES = [
+  'linear',
+  'step',
+  'easeInQuad',
+  'easeOutQuad',
+  'easeInOutQuad',
+  'easeInCubic',
+  'easeOutCubic',
+  'easeInOutCubic',
+  'easeInQuart',
+  'easeOutQuart',
+  'easeInOutQuart',
+  'easeInQuint',
+  'easeOutQuint',
+  'easeInOutQuint',
+  'easeInSine',
+  'easeOutSine',
+  'easeInOutSine',
+  'easeInExpo',
+  'easeOutExpo',
+  'easeInOutExpo',
+  'easeInCirc',
+  'easeOutCirc',
+  'easeInOutCirc',
+  'easeInBack',
+  'easeOutBack',
+  'easeInOutBack',
+  'easeInElastic',
+  'easeOutElastic',
+  'easeInOutElastic',
+  'easeInBounce',
+  'easeOutBounce',
+  'easeInOutBounce',
+] as const;
+
+/** Loop modes in GeckoLib .animation.json terms (Blockbench's `hold` maps to
+ * `hold_on_last_frame` at export). */
+export const GECKOLIB_LOOP_MODES = ['once', 'loop', 'hold_on_last_frame'] as const;
+
+const molangNumberSchema = z
+  .union([z.number(), z.string()])
+  .describe('A number or a molang expression string (molang is passed through, never evaluated).');
+
+const geckolibKeyframeSchema = z
+  .object({
+    time: z.number().nonnegative().describe('Keyframe time in seconds from clip start.'),
+    value: z
+      .union([z.number(), z.string(), z.tuple([molangNumberSchema, molangNumberSchema, molangNumberSchema])])
+      .describe(
+        'Keyframe value in the GeckoLib .animation.json convention: a number or molang string (applied to all three axes) or an [x, y, z] array of number|molang-string.',
+      ),
+    interpolation: z
+      .enum(['linear', 'catmullrom', 'step'])
+      .optional()
+      .describe('Interpolation to the next keyframe (default linear).'),
+    easing: z
+      .enum(GECKOLIB_EASING_NAMES)
+      .optional()
+      .describe('GeckoLib per-keyframe easing name (absent means linear).'),
+    easingArgs: z
+      .array(z.number())
+      .optional()
+      .describe('Numeric easing arguments; used by the Back/Elastic/Bounce families and step.'),
+  })
+  .strict();
+
+const geckolibKeyframeListSchema = z.array(geckolibKeyframeSchema).superRefine((keyframes, ctx) => {
+  const seen = new Map<number, number>();
+  keyframes.forEach((keyframe, index) => {
+    const existing = seen.get(keyframe.time);
+    if (existing !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Keyframes ${existing} and ${index} share time ${keyframe.time}; keyframe times must be unique per channel.`,
+        path: [index, 'time'],
+      });
+    } else {
+      seen.set(keyframe.time, index);
+    }
+  });
+});
+
+const geckolibAnimationChannelsSchema = z
+  .object({
+    rotation: geckolibKeyframeListSchema.optional(),
+    position: geckolibKeyframeListSchema.optional(),
+    scale: geckolibKeyframeListSchema.optional(),
+  })
+  .strict();
+
+// Shared clip payload: upsert_geckolib_animation input and
+// get_geckolib_animation output use exactly this shape.
+const geckolibAnimationClipSchema = z
+  .object({
+    name: z.string().min(1).describe('Animation name (the clip key), e.g. animation.<entity>.<action>.'),
+    loop: z.enum(GECKOLIB_LOOP_MODES).optional().describe('GeckoLib loop mode (default once).'),
+    length: z.number().nonnegative().describe('Clip length in seconds.'),
+    override: z.boolean().optional().describe('Override lower-priority animations (default false).'),
+    anim_time_update: z
+      .string()
+      .optional()
+      .describe('Molang expression driving clip time (passed through, never evaluated).'),
+    bones: z
+      .record(geckolibAnimationChannelsSchema)
+      .describe(
+        'Bone name → rotation/position/scale keyframe lists. Bone names must match current group names. Values use the GeckoLib .animation.json convention (what export_geckolib_animations writes): rotation X/Y and position X are stored inverted relative to the Blockbench UI; the handler applies that mapping.',
+      ),
+  })
+  .strict();
+
+const upsertGeckolibAnimationParams = geckolibAnimationClipSchema
+  .extend({
+    replace: z
+      .boolean()
+      .optional()
+      .describe('Must be true to overwrite an existing animation with the same name; applies to this call only.'),
+  })
+  .strict();
+const upsertGeckolibAnimationResult = z.object({
+  name: z.string(),
+  status: z.enum(['created', 'replaced']),
+});
+
+const deleteGeckolibAnimationParams = z.object({ name: z.string().min(1) }).strict();
+const deleteGeckolibAnimationResult = z.object({ deleted: z.literal(true) });
+
+const getGeckolibAnimationParams = z.object({ name: z.string().min(1) }).strict();
+const getGeckolibAnimationResult = geckolibAnimationClipSchema;
 
 // Format-neutral operations work in any Blockbench project format and are the
 // reuse surface for later format adapters.
@@ -633,10 +785,31 @@ export const GECKOLIB_FORMAT_COMMAND_SPECS = {
   },
   validate_geckolib_file: {
     description:
-      'Validate a Bedrock geometry JSON file (and optionally cross-check an animation JSON) inside the confirmed scoped directory against GeckoLib 4 baseline rules; returns structured diagnostics. Read-only.',
+      'Validate a Bedrock geometry JSON file and/or a GeckoLib animation JSON file inside the confirmed scoped directory against GeckoLib 4 baseline rules; animation content checks run without geometry, bone cross-checks need both paths. At least one path is required. Returns structured diagnostics. Read-only.',
     mutates: false,
     params: validateGeckolibFileParams,
     result: validateGeckolibFileResult,
+  },
+  upsert_geckolib_animation: {
+    description:
+      'Create or replace one whole GeckoLib animation clip (keyed by name) on the current geckolib_model project: clip properties plus bone keyframes with easing and molang values, applied atomically in one undo step. Times are seconds; values use the GeckoLib .animation.json convention; molang strings are never evaluated. Overwriting an existing name requires replace:true (fails with E_FILE_EXISTS otherwise); unknown or ambiguous bone names fail with E_INVALID_PARAMS before any project change.',
+    mutates: true,
+    params: upsertGeckolibAnimationParams,
+    result: upsertGeckolibAnimationResult,
+  },
+  delete_geckolib_animation: {
+    description:
+      'Delete one animation clip by name from the current geckolib_model project in one undo step without opening any dialog. Fails with E_NOT_FOUND when no clip has the given name.',
+    mutates: true,
+    params: deleteGeckolibAnimationParams,
+    result: deleteGeckolibAnimationResult,
+  },
+  get_geckolib_animation: {
+    description:
+      'Read one animation clip by name from the current geckolib_model project, returned in exactly the upsert_geckolib_animation payload shape (keyframes sorted by time, linear interpolation omitted, times in seconds, GeckoLib .animation.json value convention). Read-only.',
+    mutates: false,
+    params: getGeckolibAnimationParams,
+    result: getGeckolibAnimationResult,
   },
 } as const satisfies Record<string, CommandSpec>;
 

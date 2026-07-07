@@ -77,11 +77,15 @@ export function buildMcpServer(options: {
 
   for (const [name, spec] of Object.entries(COMMAND_SPECS) as Array<[CommandName, CommandSpec]>) {
     const command = name;
+    // A top-level refinement (ZodEffects) has no .shape, so the SDK would
+    // advertise an empty input schema in tools/list; advertise the inner
+    // object and keep the refined schema for the re-validation below.
+    const advertisedSchema = spec.params instanceof z.ZodEffects ? (spec.params.innerType() as z.ZodTypeAny) : spec.params;
     server.registerTool(
       command,
       {
         description: spec.description,
-        inputSchema: spec.params,
+        inputSchema: advertisedSchema,
       },
       async (args: unknown) => {
         // Re-validate with the strict shared schema so extra fields and shape
