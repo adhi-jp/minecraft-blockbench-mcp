@@ -78,6 +78,8 @@ const MINIMAL_ARGS: Record<CommandName, Record<string, unknown>> = {
   get_elements: {},
   create_cubes: { cubes: [{ from: [0, 0, 0], to: [1, 1, 1] }] },
   update_cube: { uuid: 'u-1', set: { name: 'renamed' } },
+  set_cube_uv: { uuid: 'u-1', box_uv: true },
+  set_texture_resolution: { width: 64, height: 64 },
   delete_cubes: { uuids: ['u-1'] },
   create_group: { name: 'bone' },
   update_group: { uuid: 'g-1', set: { name: 'renamed' } },
@@ -131,6 +133,16 @@ test('with Blockbench closed: initialize, list tools, healthy health, and immedi
     Object.keys(advertised.properties ?? {}).sort(),
     ['animation_path', 'geo_path'],
     'validate_geckolib_file must advertise both path parameters in tools/list',
+  );
+
+  // Every refined params schema must still advertise its fields; a wrapped
+  // (or nested) refinement would otherwise list an empty input schema.
+  const setCubeUvTool = tools.tools.find((tool) => tool.name === 'set_cube_uv');
+  const setCubeUvAdvertised = (setCubeUvTool?.inputSchema ?? {}) as { properties?: Record<string, unknown> };
+  assert.deepEqual(
+    Object.keys(setCubeUvAdvertised.properties ?? {}).sort(),
+    ['box_uv', 'faces', 'mirror_uv', 'uuid', 'uv_offset'],
+    'set_cube_uv must advertise all parameters in tools/list',
   );
 
   // Passing neither path fails with the structured parameter error, not a

@@ -241,6 +241,25 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
 
   register(session, 'create_cubes', (params) => {
     requireProject();
+    // Validate UV fields before starting the undoable edit. The Cube
+    // constructor would silently drop a box_uv the format forbids
+    // (merge_validation), so the gate must live here.
+    for (const cubeSpec of params.cubes) {
+      if (cubeSpec.box_uv !== undefined && cubeSpec.box_uv !== Format?.box_uv && Format?.optional_box_uv !== true) {
+        throw new CommandError(
+          'E_FORMAT_UNSUPPORTED',
+          `The "${Format?.id ?? 'unknown'}" format fixes cubes to ${Format?.box_uv ? 'box' : 'per-face'} UV and does not support per-cube UV modes.`,
+        );
+      }
+      const effectiveBoxUv = cubeSpec.box_uv ?? Project!.box_uv === true;
+      if (cubeSpec.uv_offset !== undefined && !effectiveBoxUv) {
+        throw new CommandError(
+          'E_INVALID_PARAMS',
+          'uv_offset applies to box UV mode, but this cube would be created in per-face UV mode. Pass box_uv:true for the cube.',
+          { cube: cubeSpec.name ?? 'cube' },
+        );
+      }
+    }
     // Resolve group references before starting the undoable edit.
     const groups = params.cubes.map((cube) => (cube.group_uuid !== undefined ? findGroup(cube.group_uuid) : null));
     Undo.initEdit({ elements: [], outliner: true });
@@ -251,7 +270,11 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
         to: cubeSpec.to,
         origin: cubeSpec.origin,
         rotation: cubeSpec.rotation !== undefined ? rotationToVector(cubeSpec.rotation) : undefined,
-        autouv: 1,
+        ...(cubeSpec.box_uv !== undefined ? { box_uv: cubeSpec.box_uv } : {}),
+        ...(cubeSpec.uv_offset !== undefined ? { uv_offset: cubeSpec.uv_offset } : {}),
+        // Explicit UV data must survive later geometry edits, which auto-UV
+        // would otherwise recompute; a bare mode choice keeps auto-UV on.
+        autouv: cubeSpec.uv_offset !== undefined ? 0 : 1,
       }).init();
       if (cubeSpec.rotation?.origin !== undefined) {
         cube.extend({ origin: cubeSpec.rotation.origin });
@@ -287,6 +310,115 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
     Undo.finishEdit('Edit cube');
     Canvas.updateAll();
     return { uuid: cube.uuid, updated: true as const };
+  });
+
+  register(session, 'set_cube_uv', (params) => {
+    requireProject();
+    const cube = findCube(params.uuid);
+    // Mode-specific fields validate against the mode the cube will be in
+    // after an included box_uv switch, so switch + fields work in one call.
+    const targetBoxUv = params.box_uv ?? cube.box_uv;
+    if (params.faces !== undefined && targetBoxUv) {
+      throw new CommandError(
+        'E_INVALID_PARAMS',
+        'faces set per-face UVs, but the cube is in box UV mode. Pass box_uv:false in the same call to switch modes.',
+        { uuid: cube.uuid },
+      );
+    }
+    if ((params.uv_offset !== undefined || params.mirror_uv !== undefined) && !targetBoxUv) {
+      throw new CommandError(
+        'E_INVALID_PARAMS',
+        'uv_offset and mirror_uv apply to box UV mode, but the cube is in per-face UV mode. Pass box_uv:true in the same call to switch modes.',
+        { uuid: cube.uuid },
+      );
+    }
+    const switchMode = params.box_uv !== undefined && params.box_uv !== cube.box_uv;
+    // A per-cube mode may diverge from the format default only when the
+    // format opts into optional box UV; switching back to the default is
+    // always allowed.
+    if (switchMode && Format?.optional_box_uv !== true && params.box_uv !== Format?.box_uv) {
+      throw new CommandError(
+        'E_FORMAT_UNSUPPORTED',
+        `The "${Format?.id ?? 'unknown'}" format fixes cubes to ${Format?.box_uv ? 'box' : 'per-face'} UV and does not support per-cube UV modes.`,
+      );
+    }
+    // Formats without per-face rotation would preview it but lose it at
+    // export, so a non-zero rotation is rejected like the mode switch above.
+    if (
+      params.faces !== undefined &&
+      Format?.uv_rotation !== true &&
+      Object.values(params.faces).some((entry) => entry !== undefined && (entry.rotation ?? 0) !== 0)
+    ) {
+      throw new CommandError(
+        'E_FORMAT_UNSUPPORTED',
+        `The "${Format?.id ?? 'unknown'}" format does not support per-face UV rotation.`,
+      );
+    }
+    Undo.initEdit({ elements: [cube], uv_only: true });
+    if (switchMode) cube.setUVMode(params.box_uv === true);
+    if (params.uv_offset !== undefined) cube.uv_offset = [params.uv_offset[0], params.uv_offset[1]];
+    if (params.mirror_uv !== undefined) cube.mirror_uv = params.mirror_uv;
+    if (params.faces !== undefined) {
+      for (const [direction, entry] of Object.entries(params.faces)) {
+        if (entry === undefined) continue;
+        const face = cube.faces[direction];
+        face.uv = [entry.uv[0], entry.uv[1], entry.uv[2], entry.uv[3]];
+        if (entry.rotation !== undefined) face.rotation = entry.rotation;
+      }
+    }
+    // Explicit UV state must survive later geometry edits, which auto-UV
+    // would otherwise recompute.
+    cube.autouv = 0;
+    Undo.finishEdit('Edit cube UV');
+    Canvas.updateAllUVs();
+    // The 2D UV panel loads from the selection; refresh it only when it is
+    // actually showing the edited cube.
+    if (Cube.selected.includes(cube)) {
+      UVEditor.loadData();
+    }
+    return { uuid: cube.uuid, updated: true as const };
+  });
+
+  register(session, 'set_texture_resolution', (params) => {
+    requireProject();
+    const project = Project!;
+    if (params.rescale_existing_uv === true) {
+      // A non-positive current size would rescale by width/0 = Infinity and
+      // corrupt every UV in the project (areMultiples treats 0 as a
+      // multiple of anything).
+      if (!(project.texture_width > 0) || !(project.texture_height > 0)) {
+        throw new CommandError(
+          'E_INVALID_PARAMS',
+          'The current project resolution is not a positive size, so existing UVs cannot be rescaled. Set the resolution once without rescale_existing_uv first.',
+          { current: [project.texture_width, project.texture_height] },
+        );
+      }
+      // Blockbench extends Math with areMultiples; the extension is absent
+      // from the ambient types.
+      const blockbenchMath = Math as unknown as { areMultiples(a: number, b: number): boolean };
+      // adjustProjectResolution silently skips the UV rescale unless the new
+      // size is square, the width actually changes, and the old and new
+      // widths are integer multiples of one another; a request it would skip
+      // fails here instead, before any mutation.
+      if (
+        params.width !== params.height ||
+        project.texture_width === params.width ||
+        !blockbenchMath.areMultiples(project.texture_width, params.width)
+      ) {
+        throw new CommandError(
+          'E_INVALID_PARAMS',
+          'rescale_existing_uv needs a square target size whose width differs from the current width and is an integer multiple (or divisor) of it.',
+          {
+            current: [project.texture_width, project.texture_height],
+            requested: [params.width, params.height],
+          },
+        );
+      }
+    }
+    // The native utility owns the whole undo-wrapped sequence, including the
+    // per-texture UV size sync on formats that use it.
+    UVSizeUtil.adjustProjectResolution(params.width, params.height, params.rescale_existing_uv === true);
+    return { width: params.width, height: params.height, updated: true as const };
   });
 
   register(session, 'delete_cubes', (params) => {

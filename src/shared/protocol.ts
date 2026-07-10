@@ -83,14 +83,22 @@ export const writeResultSchema = z.object({
 
 export type WriteResult = z.infer<typeof writeResultSchema>;
 
-const vec2 = z.tuple([z.number(), z.number()]);
+// UV vectors reject non-finite values: JSON.stringify turns Infinity/NaN
+// into null, which corrupts exported model files.
+const finiteNumber = z.number().finite();
+
+const vec2 = z.tuple([finiteNumber, finiteNumber]);
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
 const cubeFaceNames = ['north', 'south', 'east', 'west', 'up', 'down'] as const;
 
 // Per-face UV rectangle [x1, y1, x2, y2] in project texture-resolution space.
-const faceUvSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+const faceUvSchema = z.tuple([finiteNumber, finiteNumber, finiteNumber, finiteNumber]);
+
+// Per-face texture rotation in degrees; Blockbench writes accept only
+// quarter turns (read-back can carry other values from imported JSON).
+const faceRotationSchema = z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]);
 
 // ---------------------------------------------------------------------------
 // Command registry
@@ -265,6 +273,10 @@ const createCubesParams = z
             origin: vec3.optional(),
             rotation: cubeRotationSchema.optional(),
             group_uuid: z.string().optional(),
+            box_uv: z.boolean().optional().describe('Per-cube UV mode (default: the project setting).'),
+            uv_offset: vec2
+              .optional()
+              .describe('Box-UV texture offset. Providing UV state disables auto-UV for the cube.'),
           })
           .strict(),
       )
@@ -273,6 +285,68 @@ const createCubesParams = z
   .strict();
 const createCubesResult = z.object({
   cubes: z.array(z.object({ uuid: z.string(), name: z.string() })),
+});
+
+const setCubeUvFaceSchema = z
+  .object({
+    uv: faceUvSchema,
+    rotation: faceRotationSchema.optional().describe('Face texture rotation in degrees (quarter turns).'),
+  })
+  .strict();
+
+const setCubeUvParams = z
+  .object({
+    uuid: z.string(),
+    box_uv: z
+      .boolean()
+      .optional()
+      .describe(
+        'Switch the cube UV mode. A mode differing from the format default needs a format with optional per-cube box UV; otherwise the call fails with E_FORMAT_UNSUPPORTED.',
+      ),
+    uv_offset: vec2.optional().describe('Box-UV texture offset; valid in box UV mode only.'),
+    mirror_uv: z.boolean().optional().describe('Box-UV X mirroring; valid in box UV mode only.'),
+    faces: z
+      .record(z.enum(cubeFaceNames), setCubeUvFaceSchema)
+      .optional()
+      .describe('Per-face UV rectangles plus optional rotation; valid in per-face UV mode only.'),
+  })
+  .strict()
+  // One refinement level only: the adapter advertises the unwrapped inner
+  // object in tools/list, and nesting refinements would hide the schema.
+  .superRefine((params, ctx) => {
+    if (
+      params.box_uv === undefined &&
+      params.uv_offset === undefined &&
+      params.mirror_uv === undefined &&
+      params.faces === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'At least one of box_uv, uv_offset, mirror_uv, or faces is required.',
+      });
+    }
+    if (params.faces !== undefined && Object.keys(params.faces).length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'faces must name at least one face.', path: ['faces'] });
+    }
+  });
+const setCubeUvResult = z.object({ uuid: z.string(), updated: z.literal(true) });
+
+const setTextureResolutionParams = z
+  .object({
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    rescale_existing_uv: z
+      .boolean()
+      .optional()
+      .describe(
+        'Scale existing UV coordinates to the new resolution. Supported only when Blockbench itself can rescale: the new size is square, the width changes, and old/new widths are integer multiples; otherwise the call fails with E_INVALID_PARAMS before changing anything.',
+      ),
+  })
+  .strict();
+const setTextureResolutionResult = z.object({
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  updated: z.literal(true),
 });
 
 const updateCubeParams = z
@@ -740,6 +814,20 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
     mutates: true,
     params: updateCubeParams,
     result: updateCubeResult,
+  },
+  set_cube_uv: {
+    description:
+      'Set one cube\'s UV state: box-UV offset/mirroring, per-face UV rectangles with optional quarter-turn rotation, and the UV mode switch (via the cube setUVMode API, honoring the format\'s optional per-cube box UV). Box fields need box UV mode, faces need per-face mode, mismatches fail with E_INVALID_PARAMS. Explicit UV state disables auto-UV for the cube. One undo step.',
+    mutates: true,
+    params: setCubeUvParams,
+    result: setCubeUvResult,
+  },
+  set_texture_resolution: {
+    description:
+      'Set the project texture resolution (texture_width/texture_height) through the native Blockbench resolution utility, optionally rescaling existing UV coordinates. Resolves the validate_project texture-size mismatch warning. One undo step.',
+    mutates: true,
+    params: setTextureResolutionParams,
+    result: setTextureResolutionResult,
   },
   delete_cubes: {
     description: 'Delete existing cubes addressed by UUID.',

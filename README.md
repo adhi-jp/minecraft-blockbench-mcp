@@ -99,8 +99,11 @@ restricted to one directory per session:
 `health` (adapter status; works with Blockbench closed) plus, relayed to the
 plugin: `get_plugin_status`, `get_project_state`, `get_elements` (cube/group
 read-back: geometry, UV state, per-face texture references, and hierarchy),
-`create_project`, `open_model`, `create_cubes`, `update_cube`,
-`delete_cubes`, `create_group`, `update_group`, `delete_group`,
+`create_project`, `open_model`, `create_cubes` (optionally with per-cube
+`box_uv`/`uv_offset`), `update_cube`, `set_cube_uv` (box-UV offset/mirroring,
+per-face UV rectangles with rotation, UV mode switching),
+`set_texture_resolution` (project texture resolution with optional UV
+rescale), `delete_cubes`, `create_group`, `update_group`, `delete_group`,
 `assign_texture`, `set_display_transform`, `export_model`, `read_file`,
 `write_files`, `save_project`, `capture_screenshot`, `validate_project`,
 `propose_scoped_directory`.

@@ -49,6 +49,11 @@ function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Texture;
   delete injectedGlobals.Codecs;
   delete injectedGlobals.Blockbench;
+  delete injectedGlobals.Undo;
+  delete injectedGlobals.Canvas;
+  delete injectedGlobals.UVSizeUtil;
+  delete injectedGlobals.UVEditor;
+  delete (Math as unknown as Record<string, unknown>).areMultiples;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +89,7 @@ type FakeParent = FakeGroup | 'root';
 
 class FakeCube {
   static all: FakeCube[] = [];
+  static selected: FakeCube[] = [];
   uuid: string;
   name: string;
   from: [number, number, number];
@@ -652,4 +658,404 @@ test('save_project with no open project fails with E_NOT_FOUND', async (t) => {
   const outcome = await harness.bridge.request('save_project', { path: 'ghost.bbmodel' });
   assert.equal(outcome.ok, false);
   assert.equal(outcome.error?.code, 'E_NOT_FOUND');
+});
+
+// ---------------------------------------------------------------------------
+// set_cube_uv / set_texture_resolution / create_cubes UV fields.
+// ---------------------------------------------------------------------------
+
+interface FakeUndo {
+  initCalls: unknown[];
+  finishCalls: Array<{ action: string; aspects: unknown }>;
+  initEdit(aspects: unknown): void;
+  finishEdit(action: string, aspects?: unknown): void;
+}
+
+function makeFakeUndo(): FakeUndo {
+  return {
+    initCalls: [],
+    finishCalls: [],
+    initEdit(aspects) {
+      this.initCalls.push(aspects);
+    },
+    finishEdit(action, aspects) {
+      this.finishCalls.push({ action, aspects });
+    },
+  };
+}
+
+/** Inject a project with one cube for UV command tests. */
+function injectUvProject(
+  options: { boxUv?: boolean; formatBoxUv?: boolean; optionalBoxUv?: boolean; uvRotation?: boolean } = {},
+): {
+  cube: FakeCube & { setUVModeCalls: boolean[]; autouv: number };
+  undo: FakeUndo;
+  uvRefreshes: () => number;
+} {
+  FakeCube.all = [];
+  FakeCube.selected = [];
+  FakeGroup.all = [];
+  FakeTexture.all = [];
+  const cube = new FakeCube({
+    uuid: 'c-uv',
+    name: 'uv_cube',
+    from: [0, 0, 0],
+    to: [4, 4, 4],
+    faces: sixFaces(false),
+  }) as FakeCube & { setUVModeCalls: boolean[]; autouv: number };
+  cube.box_uv = options.boxUv ?? false;
+  cube.autouv = 1;
+  cube.setUVModeCalls = [];
+  (cube as unknown as { setUVMode: (mode: boolean) => void }).setUVMode = (mode: boolean) => {
+    cube.setUVModeCalls.push(mode);
+    cube.box_uv = mode;
+  };
+  const undo = makeFakeUndo();
+  let uvRefreshes = 0;
+  injectedGlobals.Project = { saved: true, name: 'ghost', texture_width: 16, texture_height: 16, box_uv: false };
+  injectedGlobals.Format = {
+    id: 'java_block',
+    box_uv: options.formatBoxUv ?? false,
+    optional_box_uv: options.optionalBoxUv ?? true,
+    uv_rotation: options.uvRotation ?? true,
+  };
+  injectedGlobals.Cube = FakeCube;
+  injectedGlobals.Group = FakeGroup;
+  injectedGlobals.Undo = undo;
+  injectedGlobals.Canvas = { updateAllUVs: () => (uvRefreshes += 1), updateAll: () => {} };
+  return { cube, undo, uvRefreshes: () => uvRefreshes };
+}
+
+test('set_cube_uv writes box-UV state in one undo step, disables auto-UV, and refreshes UVs', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube, undo, uvRefreshes } = injectUvProject({ boxUv: true });
+
+  const outcome = await harness.bridge.request('set_cube_uv', {
+    uuid: 'c-uv',
+    uv_offset: [8, 4],
+    mirror_uv: true,
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(outcome.result, { uuid: 'c-uv', updated: true });
+  assert.deepEqual(cube.uv_offset, [8, 4]);
+  assert.equal(cube.mirror_uv, true);
+  assert.equal(cube.autouv, 0, 'explicit UV state must disable auto-UV');
+  assert.equal(undo.initCalls.length, 1, 'exactly one undo step');
+  assert.equal(undo.finishCalls.length, 1);
+  assert.equal(uvRefreshes() >= 1, true, 'the UV view refreshes');
+});
+
+test('set_cube_uv writes per-face uv and rotation values', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube } = injectUvProject({ boxUv: false });
+
+  const outcome = await harness.bridge.request('set_cube_uv', {
+    uuid: 'c-uv',
+    faces: { north: { uv: [1, 2, 3, 4], rotation: 90 }, up: { uv: [4, 0, 8, 4] } },
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(cube.faces.north.uv, [1, 2, 3, 4]);
+  assert.equal(cube.faces.north.rotation, 90);
+  assert.deepEqual(cube.faces.up.uv, [4, 0, 8, 4]);
+  assert.equal(cube.faces.up.rotation, 0, 'faces without a rotation keep their current one');
+  assert.equal(cube.autouv, 0);
+});
+
+test('set_cube_uv switches the UV mode through setUVMode before writing mode-specific fields', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube } = injectUvProject({ boxUv: false, formatBoxUv: false, optionalBoxUv: true });
+
+  const outcome = await harness.bridge.request('set_cube_uv', {
+    uuid: 'c-uv',
+    box_uv: true,
+    uv_offset: [0, 8],
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(cube.setUVModeCalls, [true], 'the mode switch goes through the setUVMode API');
+  assert.equal(cube.box_uv, true);
+  assert.deepEqual(cube.uv_offset, [0, 8]);
+});
+
+test('set_cube_uv rejects faces on a box-UV cube without an explicit mode switch', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube, undo } = injectUvProject({ boxUv: true });
+
+  const outcome = await harness.bridge.request('set_cube_uv', {
+    uuid: 'c-uv',
+    faces: { north: { uv: [0, 0, 4, 4] } },
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_INVALID_PARAMS');
+  assert.equal(undo.initCalls.length, 0, 'a rejected call must not start an undo entry');
+  assert.equal(cube.autouv, 1, 'a rejected call must not change the cube');
+});
+
+test('set_cube_uv rejects box-UV fields on a per-face cube', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { undo } = injectUvProject({ boxUv: false });
+
+  const outcome = await harness.bridge.request('set_cube_uv', { uuid: 'c-uv', uv_offset: [8, 0] });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_INVALID_PARAMS');
+  assert.equal(undo.initCalls.length, 0);
+});
+
+test('set_cube_uv fails with E_FORMAT_UNSUPPORTED when the format forbids the mode switch', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube, undo } = injectUvProject({ boxUv: false, formatBoxUv: false, optionalBoxUv: false });
+
+  const outcome = await harness.bridge.request('set_cube_uv', { uuid: 'c-uv', box_uv: true, uv_offset: [0, 0] });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_FORMAT_UNSUPPORTED');
+  assert.equal(cube.setUVModeCalls.length, 0);
+  assert.equal(undo.initCalls.length, 0);
+});
+
+test('set_cube_uv allows switching back to the format default even without optional box UV', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube } = injectUvProject({ boxUv: true, formatBoxUv: false, optionalBoxUv: false });
+
+  const outcome = await harness.bridge.request('set_cube_uv', {
+    uuid: 'c-uv',
+    box_uv: false,
+    faces: { north: { uv: [0, 0, 4, 4] } },
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(cube.setUVModeCalls, [false]);
+});
+
+test('set_cube_uv fails with E_NOT_FOUND for an unknown cube UUID', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectUvProject();
+
+  const outcome = await harness.bridge.request('set_cube_uv', { uuid: 'missing', box_uv: true });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_NOT_FOUND');
+});
+
+/** Inject the resolution-change surface: project size, native util spy, and
+ * Blockbench's Math.areMultiples extension. */
+function injectResolutionProject(current: [number, number]): {
+  calls: Array<[number, number, boolean]>;
+} {
+  const calls: Array<[number, number, boolean]> = [];
+  injectedGlobals.Project = {
+    saved: true,
+    name: 'ghost',
+    texture_width: current[0],
+    texture_height: current[1],
+  };
+  injectedGlobals.Format = { id: 'java_block' };
+  injectedGlobals.UVSizeUtil = {
+    adjustProjectResolution: (width: number, height: number, modifyUv: boolean) => {
+      calls.push([width, height, modifyUv]);
+      const project = injectedGlobals.Project as { texture_width: number; texture_height: number };
+      project.texture_width = width;
+      project.texture_height = height;
+    },
+  };
+  (Math as unknown as Record<string, unknown>).areMultiples = (a: number, b: number) => a % b === 0 || b % a === 0;
+  return { calls };
+}
+
+test('set_texture_resolution delegates to the native resolution utility', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const util = injectResolutionProject([16, 16]);
+
+  const outcome = await harness.bridge.request('set_texture_resolution', { width: 32, height: 64 });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(outcome.result, { width: 32, height: 64, updated: true });
+  assert.deepEqual(util.calls, [[32, 64, false]]);
+});
+
+test('set_texture_resolution rescales UVs when the native guard conditions hold', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const util = injectResolutionProject([16, 16]);
+
+  const outcome = await harness.bridge.request('set_texture_resolution', {
+    width: 64,
+    height: 64,
+    rescale_existing_uv: true,
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(util.calls, [[64, 64, true]]);
+});
+
+test('set_texture_resolution rejects rescale requests the native utility would silently skip', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const util = injectResolutionProject([16, 16]);
+
+  // Non-square target, unchanged width, and non-multiple width are all
+  // conditions adjustProjectResolution skips silently; each must fail
+  // before any mutation instead.
+  for (const [width, height] of [
+    [32, 64],
+    [16, 16],
+    [24, 24],
+  ] as Array<[number, number]>) {
+    const outcome = await harness.bridge.request('set_texture_resolution', {
+      width,
+      height,
+      rescale_existing_uv: true,
+    });
+    assert.equal(outcome.ok, false, `${width}x${height} must be rejected`);
+    assert.equal(outcome.error?.code, 'E_INVALID_PARAMS');
+  }
+  assert.deepEqual(util.calls, [], 'no rejected request may reach the native utility');
+});
+
+test('set_texture_resolution with no open project fails with E_NOT_FOUND', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectedGlobals.Project = null;
+
+  const outcome = await harness.bridge.request('set_texture_resolution', { width: 32, height: 32 });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_NOT_FOUND');
+});
+
+/** Constructor-recording cube fake for create_cubes dispatch tests. */
+class FakeConstructedCube {
+  static all: FakeConstructedCube[] = [];
+  static constructed: Array<Record<string, unknown>> = [];
+  uuid: string;
+  name: string;
+  parent: unknown = 'root';
+  constructor(options: Record<string, unknown>) {
+    this.name = String(options.name ?? 'cube');
+    this.uuid = `cc-${FakeConstructedCube.constructed.length + 1}`;
+    FakeConstructedCube.constructed.push(options);
+  }
+  init(): this {
+    FakeConstructedCube.all.push(this);
+    return this;
+  }
+  extend(changes: Record<string, unknown>): this {
+    Object.assign(FakeConstructedCube.constructed[FakeConstructedCube.constructed.length - 1], changes);
+    return this;
+  }
+  addTo(): this {
+    return this;
+  }
+}
+
+function injectCreateCubesProject(format: Record<string, unknown>): void {
+  FakeConstructedCube.all = [];
+  FakeConstructedCube.constructed = [];
+  injectedGlobals.Project = { saved: true, name: 'ghost', box_uv: false };
+  injectedGlobals.Format = format;
+  injectedGlobals.Cube = FakeConstructedCube;
+  injectedGlobals.Group = FakeGroup;
+  injectedGlobals.Undo = makeFakeUndo();
+  injectedGlobals.Canvas = { updateAll: () => {}, updateAllUVs: () => {} };
+}
+
+test('create_cubes passes box_uv and uv_offset through and disables auto-UV only for UV data', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectCreateCubesProject({ id: 'java_block', box_uv: false, optional_box_uv: true });
+
+  const outcome = await harness.bridge.request('create_cubes', {
+    cubes: [
+      { name: 'plain', from: [0, 0, 0], to: [1, 1, 1] },
+      { name: 'boxed', from: [0, 0, 0], to: [2, 2, 2], box_uv: true, uv_offset: [8, 0] },
+      { name: 'restated_default', from: [0, 0, 0], to: [3, 3, 3], box_uv: false },
+    ],
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const [plain, boxed, restated] = FakeConstructedCube.constructed;
+  assert.equal(plain.autouv, 1, 'cubes without UV fields keep auto-UV enabled');
+  assert.equal('box_uv' in plain, false);
+  assert.equal(boxed.box_uv, true);
+  assert.deepEqual(boxed.uv_offset, [8, 0]);
+  assert.equal(boxed.autouv, 0, 'a UV offset disables auto-UV at creation');
+  assert.equal(restated.autouv, 1, 'a bare UV mode choice keeps auto-UV enabled');
+});
+
+test('create_cubes rejects a box_uv the format cannot represent before creating anything', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectCreateCubesProject({ id: 'skin', box_uv: true, optional_box_uv: false });
+  (injectedGlobals.Project as Record<string, unknown>).box_uv = true;
+
+  const outcome = await harness.bridge.request('create_cubes', {
+    cubes: [{ name: 'per_face_wanted', from: [0, 0, 0], to: [1, 1, 1], box_uv: false }],
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_FORMAT_UNSUPPORTED');
+  assert.equal(FakeConstructedCube.constructed.length, 0, 'no cube may be created');
+});
+
+test('create_cubes rejects uv_offset on a cube that would be created in per-face UV mode', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectCreateCubesProject({ id: 'java_block', box_uv: false, optional_box_uv: true });
+
+  const outcome = await harness.bridge.request('create_cubes', {
+    cubes: [{ name: 'inert_offset', from: [0, 0, 0], to: [1, 1, 1], uv_offset: [8, 0] }],
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_INVALID_PARAMS');
+  assert.equal(FakeConstructedCube.constructed.length, 0);
+});
+
+test('set_cube_uv rejects a non-zero face rotation when the format has no per-face rotation', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { undo } = injectUvProject({ boxUv: false, uvRotation: false });
+
+  const rotated = await harness.bridge.request('set_cube_uv', {
+    uuid: 'c-uv',
+    faces: { north: { uv: [0, 0, 4, 4], rotation: 90 } },
+  });
+  assert.equal(rotated.ok, false);
+  assert.equal(rotated.error?.code, 'E_FORMAT_UNSUPPORTED');
+  assert.equal(undo.initCalls.length, 0);
+
+  const unrotated = await harness.bridge.request('set_cube_uv', {
+    uuid: 'c-uv',
+    faces: { north: { uv: [0, 0, 4, 4], rotation: 0 } },
+  });
+  assert.equal(unrotated.ok, true, 'an explicit zero rotation is the default and stays allowed');
+});
+
+test('set_cube_uv refreshes the UV panel only when it shows the edited cube', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube } = injectUvProject({ boxUv: false });
+  let panelLoads = 0;
+  injectedGlobals.UVEditor = { loadData: () => (panelLoads += 1) };
+
+  await harness.bridge.request('set_cube_uv', { uuid: 'c-uv', faces: { north: { uv: [0, 0, 4, 4] } } });
+  assert.equal(panelLoads, 0, 'an unselected cube must not reload the panel');
+
+  FakeCube.selected = [cube];
+  await harness.bridge.request('set_cube_uv', { uuid: 'c-uv', faces: { north: { uv: [0, 0, 8, 8] } } });
+  assert.equal(panelLoads, 1, 'a selected cube reloads the panel');
+});
+
+test('set_texture_resolution rejects a rescale from a non-positive current resolution', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const util = injectResolutionProject([0, 0]);
+
+  const outcome = await harness.bridge.request('set_texture_resolution', {
+    width: 64,
+    height: 64,
+    rescale_existing_uv: true,
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_INVALID_PARAMS');
+  assert.deepEqual(util.calls, [], 'a zero-size project must never reach the native rescale');
 });

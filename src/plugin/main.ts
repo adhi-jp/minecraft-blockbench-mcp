@@ -191,6 +191,9 @@ BBPlugin.register(PLUGIN_ID, {
   icon: 'hub',
   version: PLUGIN_VERSION,
   variant: 'desktop',
+  // The UV commands rely on the UVSizeUtil window global, which older
+  // Blockbench versions do not expose; the README requires 5.1.x anyway.
+  min_version: '5.1.0',
   onload() {
     runtime = setupRuntime();
     runtime.session.start();

@@ -71,6 +71,8 @@ test('command registry is partitioned into format-neutral, Java-format, and Geck
   assert.ok(neutral.includes('get_project_state'));
   assert.ok(neutral.includes('get_elements'));
   assert.ok(neutral.includes('save_project'));
+  assert.ok(neutral.includes('set_cube_uv'));
+  assert.ok(neutral.includes('set_texture_resolution'));
   assert.ok(neutral.includes('propose_scoped_directory'));
   assert.ok(java.includes('create_project'));
   assert.ok(java.includes('open_model'));
@@ -375,6 +377,85 @@ test('save_project params take a path with an explicit per-call overwrite flag a
     spec.result.safeParse({ path: '/scope/ghost.bbmodel', status: 'saved', bytes: 128 }).success,
     false,
     'the write result reuses the created/updated/overwritten status enum',
+  );
+});
+
+test('set_cube_uv params constrain box and per-face fields and require at least one change', () => {
+  const spec = COMMAND_SPECS.set_cube_uv;
+  assert.equal(spec.params.safeParse({ uuid: 'c-1', box_uv: true, uv_offset: [8, 0], mirror_uv: true }).success, true);
+  assert.equal(
+    spec.params.safeParse({
+      uuid: 'c-1',
+      box_uv: false,
+      faces: { north: { uv: [0, 0, 4, 4], rotation: 90 }, up: { uv: [4, 0, 8, 4] } },
+    }).success,
+    true,
+  );
+  assert.equal(spec.params.safeParse({ uuid: 'c-1' }).success, false, 'a change-free call is rejected');
+  assert.equal(spec.params.safeParse({ uuid: 'c-1', faces: {} }).success, false, 'an empty faces object is rejected');
+  assert.equal(
+    spec.params.safeParse({ uuid: 'c-1', faces: { north: { uv: [0, 0, 4, 4], rotation: 45 } } }).success,
+    false,
+    'face rotation writes accept only quarter turns',
+  );
+  assert.equal(
+    spec.params.safeParse({ uuid: 'c-1', faces: { forward: { uv: [0, 0, 4, 4] } } }).success,
+    false,
+    'face keys are the six cardinal directions',
+  );
+  assert.equal(
+    spec.params.safeParse({ uuid: 'c-1', faces: { north: { uv: [0, 0, 4, 4], texture: 't-1' } } }).success,
+    false,
+    'face entries take uv and rotation only',
+  );
+  assert.equal(spec.params.safeParse({ uuid: 'c-1', box_uv: true, extra: 1 }).success, false);
+  assert.equal(
+    spec.params.safeParse({ uuid: 'c-1', faces: { north: { uv: [Infinity, 0, 4, 4] } } }).success,
+    false,
+    'non-finite UV values would export as null and are rejected',
+  );
+  assert.equal(
+    spec.params.safeParse({ uuid: 'c-1', box_uv: true, uv_offset: [NaN, 0] }).success,
+    false,
+    'non-finite UV offsets are rejected',
+  );
+});
+
+test('a get_elements per-face read-back with quarter-turn rotation is valid set_cube_uv faces input', () => {
+  const readBack = { uv: [1, 2, 3, 4] as [number, number, number, number], rotation: 90 };
+  assert.equal(
+    COMMAND_SPECS.set_cube_uv.params.safeParse({ uuid: 'c-1', faces: { north: readBack } }).success,
+    true,
+  );
+});
+
+test('set_texture_resolution params require positive integers and an explicit rescale opt-in', () => {
+  const spec = COMMAND_SPECS.set_texture_resolution;
+  assert.equal(spec.params.safeParse({ width: 64, height: 64 }).success, true);
+  assert.equal(spec.params.safeParse({ width: 64, height: 64, rescale_existing_uv: true }).success, true);
+  assert.equal(spec.params.safeParse({ width: 0, height: 64 }).success, false);
+  assert.equal(spec.params.safeParse({ width: 64, height: -16 }).success, false);
+  assert.equal(spec.params.safeParse({ width: 16.5, height: 16 }).success, false);
+  assert.equal(spec.params.safeParse({ width: 64 }).success, false);
+  assert.equal(spec.params.safeParse({ width: 64, height: 64, modify_uv: true }).success, false);
+  assert.equal(spec.result.safeParse({ width: 64, height: 64, updated: true }).success, true);
+});
+
+test('create_cubes accepts optional per-cube box_uv and uv_offset and stays backward compatible', () => {
+  const spec = COMMAND_SPECS.create_cubes;
+  assert.equal(
+    spec.params.safeParse({ cubes: [{ from: [0, 0, 0], to: [1, 1, 1] }] }).success,
+    true,
+    'the pre-existing payload shape still validates',
+  );
+  assert.equal(
+    spec.params.safeParse({ cubes: [{ from: [0, 0, 0], to: [1, 1, 1], box_uv: true, uv_offset: [8, 0] }] }).success,
+    true,
+  );
+  assert.equal(
+    spec.params.safeParse({ cubes: [{ from: [0, 0, 0], to: [1, 1, 1], uv_offset: [8] }] }).success,
+    false,
+    'uv_offset is a 2D vector',
   );
 });
 
