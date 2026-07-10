@@ -507,16 +507,43 @@ const saveProjectParams = z
   })
   .strict();
 
+/** Native Blockbench camera preset ids. Compass names are model-space: which
+ * side is the "front" of a model depends on the format's forward_direction,
+ * so no front/back/left/right aliases exist. */
+export const SCREENSHOT_ANGLE_PRESETS = [
+  'initial',
+  'top',
+  'bottom',
+  'south',
+  'north',
+  'east',
+  'west',
+  'isometric_right',
+  'isometric_left',
+  'true_isometric_right',
+  'true_isometric_left',
+] as const;
+
 const captureScreenshotParams = z
   .object({
     width: z.number().int().positive().max(DEFAULTS.screenshotMaxSize).optional(),
     height: z.number().int().positive().max(DEFAULTS.screenshotMaxSize).optional(),
+    angle_preset: z
+      .enum(SCREENSHOT_ANGLE_PRESETS)
+      .optional()
+      .describe(
+        'Render from a native Blockbench camera preset through the offscreen preview; the visible viewport camera is never modified. Compass directions are model-space (the model\'s "front" depends on the format\'s forward_direction). Omit to capture the currently visible view.',
+      ),
   })
   .strict();
 const captureScreenshotResult = z.object({
   data_url: z.string(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
+  angle_preset: z
+    .enum(SCREENSHOT_ANGLE_PRESETS)
+    .optional()
+    .describe('Echoes the applied camera preset when one was requested.'),
 });
 
 const validateProjectParams = z.object({}).strict();
@@ -881,10 +908,14 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
     result: writeResultSchema,
   },
   capture_screenshot: {
-    description: 'Capture a bounded screenshot of the model preview as a data URL. Read-only.',
+    description:
+      'Capture a bounded screenshot of the model preview as a data URL, optionally from a named camera preset rendered offscreen (the visible viewport camera is never modified; "front" depends on the format\'s forward_direction). Preset renders share the offscreen preview that Blockbench\'s own screenshot dialog and recorder use; captures are serialized and fail while a recording is running. Read-only.',
     mutates: false,
     params: captureScreenshotParams,
     result: captureScreenshotResult,
+    // Captures queue behind each other on the shared offscreen preview, so a
+    // burst of requests needs more than the default request timeout.
+    timeoutMs: 60_000,
   },
   validate_project: {
     description: 'Run Blockbench validation checks and return structured diagnostics. Read-only.',

@@ -53,6 +53,10 @@ function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Canvas;
   delete injectedGlobals.UVSizeUtil;
   delete injectedGlobals.UVEditor;
+  delete injectedGlobals.Preview;
+  delete injectedGlobals.Screencam;
+  delete injectedGlobals.DefaultCameraPresets;
+  delete injectedGlobals.document;
   delete (Math as unknown as Record<string, unknown>).areMultiples;
 }
 
@@ -1058,4 +1062,234 @@ test('set_texture_resolution rejects a rescale from a non-positive current resol
   assert.equal(outcome.ok, false);
   assert.equal(outcome.error?.code, 'E_INVALID_PARAMS');
   assert.deepEqual(util.calls, [], 'a zero-size project must never reach the native rescale');
+});
+
+// ---------------------------------------------------------------------------
+// capture_screenshot angle presets: offscreen rendering and serialization.
+// ---------------------------------------------------------------------------
+
+interface FakePreview {
+  id: string;
+  isOrtho: boolean;
+  camera: { zoom: number; projectionUpdates: number; updateProjectionMatrix(): void };
+  presetsLoaded: Array<Record<string, unknown>>;
+  resizes: Array<[number, number]>;
+  loadAnglePreset(preset: Record<string, unknown>): void;
+  resize(width: number, height: number): void;
+}
+
+function makeFakePreview(id: string): FakePreview {
+  const camera = {
+    zoom: 1,
+    projectionUpdates: 0,
+    updateProjectionMatrix() {
+      this.projectionUpdates += 1;
+    },
+  };
+  return {
+    id,
+    isOrtho: false,
+    camera,
+    presetsLoaded: [],
+    resizes: [],
+    loadAnglePreset(preset) {
+      this.presetsLoaded.push(preset);
+    },
+    resize(width, height) {
+      this.resizes.push([width, height]);
+    },
+  };
+}
+
+/** Inject the screenshot surface: a visible selected preview, the offscreen
+ * NoAAPreview singleton, native preset ids, and a screenshotPreview stub whose
+ * callback timing is controllable for the serialization test. */
+function injectScreenshotProject(options: { captureDelayMs?: number; failFirstCapture?: boolean } = {}): {
+  visible: FakePreview;
+  offscreen: FakePreview;
+  captures: Array<{ preview: string; options: Record<string, unknown> }>;
+  events: string[];
+} {
+  const visible = makeFakePreview('visible');
+  const offscreen = makeFakePreview('offscreen');
+  const captures: Array<{ preview: string; options: Record<string, unknown> }> = [];
+  const events: string[] = [];
+  let sequence = 0;
+  let failNext = options.failFirstCapture === true;
+  injectedGlobals.Project = { saved: true, name: 'ghost' };
+  injectedGlobals.Format = { id: 'java_block' };
+  injectedGlobals.Preview = { selected: visible };
+  injectedGlobals.DefaultCameraPresets = [
+    { id: 'initial', projection: 'perspective', position: [-40, 32, -40] },
+    { id: 'top', projection: 'orthographic', position: [0, 64, 0], zoom: 0.5, locked_angle: 'top' },
+    { id: 'south', projection: 'orthographic', position: [0, 0, 64], zoom: 0.5, locked_angle: 'south' },
+  ];
+  injectedGlobals.Screencam = {
+    NoAAPreview: offscreen,
+    screenshotPreview: (
+      preview: FakePreview,
+      captureOptions: Record<string, unknown>,
+      cb: (dataUrl: string) => void,
+    ) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('render exploded');
+      }
+      sequence += 1;
+      const id = sequence;
+      events.push(`start:${id}`);
+      captures.push({ preview: preview.id, options: captureOptions });
+      const finish = () => {
+        events.push(`end:${id}`);
+        cb(`data:image/png;base64,capture-${id}`);
+      };
+      if (options.captureDelayMs !== undefined) {
+        setTimeout(finish, options.captureDelayMs);
+      } else {
+        finish();
+      }
+    },
+  };
+  return { visible, offscreen, captures, events };
+}
+
+test('capture_screenshot with a preset renders through the offscreen preview and echoes the preset', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { visible, offscreen, captures } = injectScreenshotProject();
+
+  const outcome = await harness.bridge.request('capture_screenshot', { angle_preset: 'top', width: 320, height: 240 });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const result = outcome.result as { data_url: string; width: number; height: number; angle_preset?: string };
+  assert.equal(result.angle_preset, 'top', 'the applied preset is echoed');
+  assert.equal(result.width, 320);
+  assert.equal(result.height, 240);
+  assert.equal(captures.length, 1);
+  assert.equal(captures[0].preview, 'offscreen', 'the preset render must target the offscreen preview');
+  assert.deepEqual(
+    captures[0].options,
+    { width: 320, height: 240, crop: false },
+    'the capture options pass through unchanged',
+  );
+  assert.equal(offscreen.presetsLoaded.length, 1);
+  assert.equal((offscreen.presetsLoaded[0] as { id?: string }).id, 'top');
+  assert.deepEqual(offscreen.resizes, [[320, 240]]);
+  assert.equal(visible.presetsLoaded.length, 0, 'the visible viewport camera is never touched');
+  assert.equal(visible.resizes.length, 0);
+});
+
+test('capture_screenshot resets the residual orthographic zoom that locked-angle presets skip', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { offscreen } = injectScreenshotProject();
+  offscreen.isOrtho = true;
+  offscreen.camera.zoom = 4; // residual zoom from an earlier render
+
+  const outcome = await harness.bridge.request('capture_screenshot', { angle_preset: 'top' });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.equal(offscreen.camera.zoom, 0.5, 'the preset zoom replaces the residual zoom');
+  assert.ok(offscreen.camera.projectionUpdates >= 1, 'the projection matrix refreshes after the zoom reset');
+});
+
+test('capture_screenshot fails cleanly for a preset missing from the runtime preset list', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectScreenshotProject(); // the fake preset list carries no west entry
+
+  const outcome = await harness.bridge.request('capture_screenshot', { angle_preset: 'west' });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_BLOCKBENCH_ERROR');
+});
+
+test('capture_screenshot with a preset is rejected while a Blockbench recording is running', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { captures } = injectScreenshotProject();
+  injectedGlobals.document = {
+    getElementById: (id: string) => (id === 'gif_recording_frame' ? {} : null),
+  };
+
+  const outcome = await harness.bridge.request('capture_screenshot', { angle_preset: 'top' });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_BLOCKBENCH_ERROR');
+  assert.match(outcome.error?.message ?? '', /recording/);
+  assert.equal(captures.length, 0, 'no render may start during a recording');
+
+  const plain = await harness.bridge.request('capture_screenshot', {});
+  assert.equal(plain.ok, true, 'the no-preset path does not depend on the recorder state');
+});
+
+test('a failed capture does not wedge the screenshot queue', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectScreenshotProject({ failFirstCapture: true });
+
+  const failed = await harness.bridge.request('capture_screenshot', { angle_preset: 'top' });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.error?.code, 'E_BLOCKBENCH_ERROR');
+
+  const next = await harness.bridge.request('capture_screenshot', { angle_preset: 'south' });
+  assert.equal(next.ok, true, 'the queue must keep serving after a failed capture');
+});
+
+test('capture_screenshot without a preset shoots the selected preview exactly as before', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { visible, offscreen, captures } = injectScreenshotProject();
+
+  const outcome = await harness.bridge.request('capture_screenshot', { width: 64 });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const result = outcome.result as Record<string, unknown>;
+  assert.equal(captures[0].preview, 'visible');
+  assert.deepEqual(
+    captures[0].options,
+    { width: 64, height: 512, crop: false },
+    'width/height defaults and the crop flag pass through as before',
+  );
+  assert.equal('angle_preset' in result, false, 'the no-preset result shape is unchanged');
+  assert.equal(visible.presetsLoaded.length, 0);
+  assert.equal(offscreen.presetsLoaded.length, 0);
+  assert.equal(visible.resizes.length, 0, 'the no-preset path never resizes any preview');
+  assert.equal(offscreen.resizes.length, 0);
+});
+
+test('concurrent capture_screenshot calls are serialized on the shared offscreen preview', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { events } = injectScreenshotProject({ captureDelayMs: 40 });
+
+  const [first, second] = await Promise.all([
+    harness.bridge.request('capture_screenshot', { angle_preset: 'top' }),
+    harness.bridge.request('capture_screenshot', { angle_preset: 'south' }),
+  ]);
+  assert.equal(first.ok, true, JSON.stringify(first.error));
+  assert.equal(second.ok, true, JSON.stringify(second.error));
+  assert.deepEqual(
+    events,
+    ['start:1', 'end:1', 'start:2', 'end:2'],
+    'the second capture must not start until the first finished',
+  );
+});
+
+test('capture_screenshot with a preset and no open project fails with E_NOT_FOUND', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectScreenshotProject();
+  injectedGlobals.Project = null;
+
+  const outcome = await harness.bridge.request('capture_screenshot', { angle_preset: 'top' });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_NOT_FOUND');
+});
+
+test('PROBE: capture_screenshot succeeds after a previous failed capture', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectScreenshotProject();
+  injectedGlobals.Project = null;
+  const failed = await harness.bridge.request('capture_screenshot', { angle_preset: 'top' });
+  assert.equal(failed.ok, false);
+  injectedGlobals.Project = { saved: true, name: 'ghost' };
+  const outcome = await harness.bridge.request('capture_screenshot', { angle_preset: 'top' });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
 });

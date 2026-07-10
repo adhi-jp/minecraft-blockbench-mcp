@@ -105,8 +105,11 @@ per-face UV rectangles with rotation, UV mode switching),
 `set_texture_resolution` (project texture resolution with optional UV
 rescale), `delete_cubes`, `create_group`, `update_group`, `delete_group`,
 `assign_texture`, `set_display_transform`, `export_model`, `read_file`,
-`write_files`, `save_project`, `capture_screenshot`, `validate_project`,
-`propose_scoped_directory`.
+`write_files`, `save_project`, `capture_screenshot` (optionally from a native
+camera preset — `initial`, `top`, `bottom`, `north`, `south`, `east`, `west`,
+and the isometric variants — rendered offscreen so the visible viewport
+camera never moves; which side is a model's "front" depends on the format's
+`forward_direction`), `validate_project`, `propose_scoped_directory`.
 
 `save_project` writes the open project of any format as a `.bbmodel` into the
 scoped directory through `Codecs.project.compile()`; other installed plugins

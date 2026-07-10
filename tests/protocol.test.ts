@@ -7,6 +7,7 @@ import {
   ERROR_CODES,
   COMMAND_SPECS,
   COMMAND_NAMES,
+  SCREENSHOT_ANGLE_PRESETS,
   FORMAT_NEUTRAL_COMMAND_SPECS,
   JAVA_FORMAT_COMMAND_SPECS,
   GECKOLIB_FORMAT_COMMAND_SPECS,
@@ -456,6 +457,33 @@ test('create_cubes accepts optional per-cube box_uv and uv_offset and stays back
     spec.params.safeParse({ cubes: [{ from: [0, 0, 0], to: [1, 1, 1], uv_offset: [8] }] }).success,
     false,
     'uv_offset is a 2D vector',
+  );
+});
+
+test('capture_screenshot accepts the native camera preset ids and echoes the applied one', () => {
+  const spec = COMMAND_SPECS.capture_screenshot;
+  assert.equal(spec.params.safeParse({}).success, true, 'the pre-existing no-preset payload still validates');
+  assert.equal(spec.params.safeParse({ width: 512, height: 512 }).success, true);
+  assert.equal(SCREENSHOT_ANGLE_PRESETS.length, 11, 'Blockbench ships eleven native presets');
+  for (const preset of SCREENSHOT_ANGLE_PRESETS) {
+    assert.equal(spec.params.safeParse({ angle_preset: preset }).success, true, `${preset} is a native preset id`);
+  }
+  for (const rejected of ['front', 'back', 'left', 'right', 'view', '']) {
+    assert.equal(
+      spec.params.safeParse({ angle_preset: rejected }).success,
+      false,
+      `${JSON.stringify(rejected)} is not a native preset id`,
+    );
+  }
+  assert.equal(
+    spec.result.safeParse({ data_url: 'data:image/png;base64,x', width: 512, height: 512 }).success,
+    true,
+    'the no-preset result shape is unchanged',
+  );
+  assert.equal(
+    spec.result.safeParse({ data_url: 'data:image/png;base64,x', width: 512, height: 512, angle_preset: 'top' })
+      .success,
+    true,
   );
 });
 
