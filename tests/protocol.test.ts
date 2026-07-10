@@ -23,8 +23,8 @@ test('protocol version constant is a positive integer', () => {
   assert.ok(PROTOCOL_VERSION >= 1);
 });
 
-test('protocol version is 3 after the GeckoLib animation authoring extension', () => {
-  assert.equal(PROTOCOL_VERSION, 3);
+test('protocol version is 4 after adding the element read-back surface', () => {
+  assert.equal(PROTOCOL_VERSION, 4);
 });
 
 test('default WebSocket port matches the specified loopback port 39731', () => {
@@ -69,6 +69,7 @@ test('command registry is partitioned into format-neutral, Java-format, and Geck
     assert.ok(!geckolib.includes(name), `${name} must belong to exactly one group`);
   }
   assert.ok(neutral.includes('get_project_state'));
+  assert.ok(neutral.includes('get_elements'));
   assert.ok(neutral.includes('propose_scoped_directory'));
   assert.ok(java.includes('create_project'));
   assert.ok(java.includes('open_model'));
@@ -295,6 +296,62 @@ test('get_geckolib_animation returns the upsert payload shape and delete takes o
   assert.equal(deleteSpec.params.safeParse({ name: '' }).success, false);
   assert.equal(deleteSpec.params.safeParse({ name: 'animation.ghost.idle', force: true }).success, false);
   assert.equal(deleteSpec.result.safeParse({ deleted: true }).success, true);
+});
+
+test('get_elements params take an optional non-empty uuid filter and reject unknown fields', () => {
+  const spec = COMMAND_SPECS.get_elements;
+  assert.equal(spec.params.safeParse({}).success, true, 'omitting uuids reads every element');
+  assert.equal(spec.params.safeParse({ uuids: ['c-1', 'g-1'] }).success, true);
+  assert.equal(spec.params.safeParse({ uuids: [] }).success, false, 'an empty filter is rejected');
+  assert.equal(spec.params.safeParse({ uuids: 'c-1' }).success, false, 'the filter must be an array');
+  assert.equal(spec.params.safeParse({ extra: true }).success, false);
+});
+
+test('get_elements result carries full cube/group read-back whose values feed the write commands', () => {
+  const spec = COMMAND_SPECS.get_elements;
+  const cube = {
+    uuid: 'c-1',
+    name: 'body',
+    from: [0, 0, 0],
+    to: [4, 6, 4],
+    origin: [2, 0, 2],
+    rotation: [0, 45, 0],
+    visibility: true,
+    box_uv: true,
+    uv_offset: [8, 0],
+    mirror_uv: false,
+    faces: {
+      north: { uv: [0, 0, 4, 6], rotation: 90, texture_uuid: 't-1' },
+      up: { uv: [4, 0, 8, 4], rotation: 0, texture_uuid: null },
+    },
+    parent_uuid: 'g-1',
+  };
+  const group = { uuid: 'g-1', name: 'bone', origin: [0, 0, 0], parent_uuid: null, children: ['c-1'] };
+  assert.equal(spec.result.safeParse({ cubes: [cube], groups: [group] }).success, true);
+  assert.equal(
+    spec.result.safeParse({
+      cubes: [{ ...cube, faces: { north: { uv: [0, 0, 4, 6], rotation: 45, texture_uuid: null } } }],
+      groups: [],
+    }).success,
+    true,
+    'imported model JSON can carry non-quarter-turn face rotations and must still read back',
+  );
+  assert.equal(
+    spec.result.safeParse({
+      cubes: [{ ...cube, faces: { forward: { uv: [0, 0, 4, 6], rotation: 0, texture_uuid: null } } }],
+      groups: [],
+    }).success,
+    false,
+    'face keys are the six cardinal directions',
+  );
+  // A read-back cube's overlapping fields must be valid update_cube input verbatim.
+  assert.equal(
+    COMMAND_SPECS.update_cube.params.safeParse({
+      uuid: cube.uuid,
+      set: { name: cube.name, from: cube.from, to: cube.to, origin: cube.origin, visibility: cube.visibility },
+    }).success,
+    true,
+  );
 });
 
 test('get_project_state result accepts the additive animations summary', () => {

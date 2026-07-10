@@ -75,6 +75,7 @@ function parseEnvelope(toolResult: unknown): Envelope {
 const MINIMAL_ARGS: Record<CommandName, Record<string, unknown>> = {
   get_plugin_status: {},
   get_project_state: {},
+  get_elements: {},
   create_cubes: { cubes: [{ from: [0, 0, 0], to: [1, 1, 1] }] },
   update_cube: { uuid: 'u-1', set: { name: 'renamed' } },
   delete_cubes: { uuids: ['u-1'] },

@@ -97,11 +97,13 @@ restricted to one directory per session:
 ## Tools
 
 `health` (adapter status; works with Blockbench closed) plus, relayed to the
-plugin: `get_plugin_status`, `get_project_state`, `create_project`,
-`open_model`, `create_cubes`, `update_cube`, `delete_cubes`, `create_group`,
-`update_group`, `delete_group`, `assign_texture`, `set_display_transform`,
-`export_model`, `read_file`, `write_files`, `capture_screenshot`,
-`validate_project`, `propose_scoped_directory`.
+plugin: `get_plugin_status`, `get_project_state`, `get_elements` (cube/group
+read-back: geometry, UV state, per-face texture references, and hierarchy),
+`create_project`, `open_model`, `create_cubes`, `update_cube`,
+`delete_cubes`, `create_group`, `update_group`, `delete_group`,
+`assign_texture`, `set_display_transform`, `export_model`, `read_file`,
+`write_files`, `capture_screenshot`, `validate_project`,
+`propose_scoped_directory`.
 
 GeckoLib tools (they require the third-party **GeckoLib Models & Animations**
 plugin, see below): `create_geckolib_project`, `open_geckolib_model`,

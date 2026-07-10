@@ -1,7 +1,7 @@
 // Blockbench command handlers: every Blockbench mutation or inspection the
 // adapter can request runs here, inside the plugin, through Blockbench APIs.
 // Mutations create undo entries and refresh the viewport.
-import { DEFAULTS } from '../../shared/protocol.js';
+import { DEFAULTS, type CubeReadback, type GroupReadback } from '../../shared/protocol.js';
 import {
   validateGeckolibProject,
   validateAnimationJson,
@@ -49,6 +49,65 @@ function findGroup(uuid: string): Group {
   return group;
 }
 
+/** Parent group UUID for a cube or group, or null at the outliner root
+ * (Blockbench stores the literal 'root' there). */
+function parentUuidOf(node: Cube | Group): string | null {
+  const parent: unknown = node.parent;
+  return parent instanceof Group ? parent.uuid : null;
+}
+
+type FaceReadback = NonNullable<CubeReadback['faces'][keyof CubeReadback['faces']]>;
+
+function faceReadback(face: CubeFace): FaceReadback {
+  // The generated CubeFace ambient type declares `texture: boolean`; at
+  // runtime it stores a texture UUID string, false (no texture), or null
+  // (face disabled). The stored reference is reported as-is: resolving it
+  // through getTexture() would follow the current texture selection in
+  // single-texture formats and make read-back non-deterministic.
+  const stored = (face as unknown as { texture: unknown }).texture;
+  return {
+    uv: [face.uv[0], face.uv[1], face.uv[2], face.uv[3]],
+    rotation: face.rotation ?? 0,
+    texture_uuid: typeof stored === 'string' ? stored : null,
+  };
+}
+
+function cubeReadback(cube: Cube): CubeReadback {
+  const faces: CubeReadback['faces'] = {};
+  for (const [direction, face] of Object.entries(cube.faces)) {
+    faces[direction as keyof CubeReadback['faces']] = faceReadback(face);
+  }
+  return {
+    uuid: cube.uuid,
+    name: cube.name,
+    from: [cube.from[0], cube.from[1], cube.from[2]],
+    to: [cube.to[0], cube.to[1], cube.to[2]],
+    origin: [cube.origin[0], cube.origin[1], cube.origin[2]],
+    rotation: [cube.rotation[0], cube.rotation[1], cube.rotation[2]],
+    visibility: cube.visibility,
+    box_uv: cube.box_uv,
+    uv_offset: [cube.uv_offset[0], cube.uv_offset[1]],
+    mirror_uv: cube.mirror_uv,
+    faces,
+    parent_uuid: parentUuidOf(cube),
+  };
+}
+
+function groupReadback(group: Group): GroupReadback {
+  return {
+    uuid: group.uuid,
+    name: group.name,
+    origin: [group.origin[0], group.origin[1], group.origin[2]],
+    parent_uuid: parentUuidOf(group),
+    // Non-cube/non-group children (meshes, locators, ...) are outside the
+    // read-back surface; their UUIDs must not leak into the hierarchy, or
+    // the uuids filter would reject values this command itself returned.
+    children: group.children
+      .filter((child): child is Cube | Group => child instanceof Cube || child instanceof Group)
+      .map((child) => child.uuid),
+  };
+}
+
 type RotationParam = { axis: 'x' | 'y' | 'z'; angle: number; origin?: [number, number, number] | undefined };
 
 function rotationToVector(rotation: RotationParam): [number, number, number] {
@@ -92,6 +151,25 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
       groups: Group.all.map((group) => ({ uuid: group.uuid, name: group.name })),
       textures: Texture.all.map((texture) => ({ uuid: texture.uuid, name: texture.name, id: texture.id })),
     };
+  });
+
+  register(session, 'get_elements', (params) => {
+    requireProject();
+    let cubes = Cube.all;
+    let groups = Group.all;
+    if (params.uuids !== undefined) {
+      const wanted = new Set(params.uuids);
+      cubes = cubes.filter((cube) => wanted.has(cube.uuid));
+      groups = groups.filter((group) => wanted.has(group.uuid));
+      const found = new Set<string>([...cubes.map((cube) => cube.uuid), ...groups.map((group) => group.uuid)]);
+      const missing = params.uuids.filter((uuid) => !found.has(uuid));
+      if (missing.length > 0) {
+        throw new CommandError('E_NOT_FOUND', 'No cube or group exists for some of the requested UUIDs.', {
+          uuids: missing,
+        });
+      }
+    }
+    return { cubes: cubes.map(cubeReadback), groups: groups.map(groupReadback) };
   });
 
   register(session, 'create_project', (params) => {

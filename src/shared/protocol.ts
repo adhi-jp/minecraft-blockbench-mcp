@@ -3,7 +3,7 @@
 // adapter (Node) and plugin (browser/Blockbench) TypeScript configurations.
 import { z } from 'zod';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export const DEFAULT_WS_PORT = 39731;
 
@@ -83,9 +83,14 @@ export const writeResultSchema = z.object({
 
 export type WriteResult = z.infer<typeof writeResultSchema>;
 
+const vec2 = z.tuple([z.number(), z.number()]);
+
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
 const cubeFaceNames = ['north', 'south', 'east', 'west', 'up', 'down'] as const;
+
+// Per-face UV rectangle [x1, y1, x2, y2] in project texture-resolution space.
+const faceUvSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
 // ---------------------------------------------------------------------------
 // Command registry
@@ -145,6 +150,66 @@ const getProjectStateResult = z.object({
     )
     .optional(),
 });
+
+const getElementsParams = z
+  .object({
+    uuids: z
+      .array(z.string())
+      .min(1)
+      .optional()
+      .describe(
+        'Cube/group UUIDs to read back; any unknown UUID fails with E_NOT_FOUND and returns nothing. Omit to return every element.',
+      ),
+  })
+  .strict();
+
+// Read-back state of one cube face. texture_uuid is the face's stored
+// texture reference; null covers both "no texture assigned" and "face
+// disabled" (Blockbench stores false/null there). Single-texture formats can
+// render a default texture that no face references explicitly.
+const cubeFaceReadbackSchema = z.object({
+  uv: faceUvSchema,
+  rotation: z
+    .number()
+    .describe('Face texture rotation in degrees: 0/90/180/270 in UI-authored models; imported JSON may carry other values.'),
+  texture_uuid: z.string().nullable(),
+});
+
+const cubeReadbackSchema = z.object({
+  uuid: z.string(),
+  name: z.string(),
+  from: vec3,
+  to: vec3,
+  origin: vec3,
+  // Rotation is the stored per-axis degree vector. update_cube writes take a
+  // single axis/angle pair instead, so this field is read-back only.
+  rotation: vec3,
+  visibility: z.boolean(),
+  box_uv: z.boolean(),
+  uv_offset: vec2,
+  mirror_uv: z.boolean(),
+  faces: z.record(z.enum(cubeFaceNames), cubeFaceReadbackSchema),
+  parent_uuid: z.string().nullable(),
+});
+
+const groupReadbackSchema = z.object({
+  uuid: z.string(),
+  name: z.string(),
+  origin: vec3,
+  parent_uuid: z.string().nullable(),
+  // Direct cube/group children in outliner order. Other element types
+  // (meshes, locators, ...) are outside this read-back surface and their
+  // UUIDs never appear here.
+  children: z.array(z.string()),
+});
+
+const getElementsResult = z.object({
+  cubes: z.array(cubeReadbackSchema),
+  groups: z.array(groupReadbackSchema),
+});
+
+export type CubeReadback = z.infer<typeof cubeReadbackSchema>;
+export type GroupReadback = z.infer<typeof groupReadbackSchema>;
 
 const createProjectParams = z
   .object({
@@ -640,6 +705,13 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
     mutates: false,
     params: getProjectStateParams,
     result: getProjectStateResult,
+  },
+  get_elements: {
+    description:
+      'Read back cube and group state: geometry (from/to/origin/rotation), visibility, UV state (box_uv, uv_offset, mirror_uv, per-face uv/rotation/texture reference), and parent/child hierarchy. Cube name/from/to/origin/visibility values are valid update_cube input verbatim; cube rotation reads back as the stored per-axis degree vector. Mesh and locator elements are not returned. Responses share the 16 MiB message limit; pass uuids to bound the response on large projects. Read-only.',
+    mutates: false,
+    params: getElementsParams,
+    result: getElementsResult,
   },
   create_cubes: {
     description: 'Create new cube elements. Always creates new objects and returns their UUIDs.',
