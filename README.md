@@ -102,8 +102,16 @@ read-back: geometry, UV state, per-face texture references, and hierarchy),
 `create_project`, `open_model`, `create_cubes`, `update_cube`,
 `delete_cubes`, `create_group`, `update_group`, `delete_group`,
 `assign_texture`, `set_display_transform`, `export_model`, `read_file`,
-`write_files`, `capture_screenshot`, `validate_project`,
+`write_files`, `save_project`, `capture_screenshot`, `validate_project`,
 `propose_scoped_directory`.
+
+`save_project` writes the open project of any format as a `.bbmodel` into the
+scoped directory through `Codecs.project.compile()`; other installed plugins
+listening to the codec's compile hooks may adjust the saved output
+(format-owner behavior). A fresh project adopts the destination as its save
+path and is marked saved; saving to a path that differs from the project's
+current save path deliberately leaves the user's Ctrl+S target and the
+unsaved indicator untouched.
 
 GeckoLib tools (they require the third-party **GeckoLib Models & Animations**
 plugin, see below): `create_geckolib_project`, `open_geckolib_model`,

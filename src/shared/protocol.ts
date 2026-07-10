@@ -417,6 +417,22 @@ const writeFilesParams = z
   .strict();
 const writeFilesResult = z.object({ results: z.array(writeResultSchema) });
 
+const saveProjectParams = z
+  .object({
+    path: z
+      .string()
+      // The saved file becomes the project's Ctrl+S target on a fresh save,
+      // so a non-.bbmodel destination would let later native saves clobber
+      // an unrelated file.
+      .regex(/\.bbmodel$/i, 'The save_project destination must end in .bbmodel.')
+      .describe('Destination ending in .bbmodel inside the confirmed scoped directory (absolute or scope-relative).'),
+    overwrite: z
+      .boolean()
+      .optional()
+      .describe('Required to replace an existing file at the destination; applies to this write only.'),
+  })
+  .strict();
+
 const captureScreenshotParams = z
   .object({
     width: z.number().int().positive().max(DEFAULTS.screenshotMaxSize).optional(),
@@ -768,6 +784,13 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
     mutates: true,
     params: writeFilesParams,
     result: writeFilesResult,
+  },
+  save_project: {
+    description:
+      'Save the open project of any format as a .bbmodel file inside the confirmed scoped directory. Compiles through the project codec, whose compile hooks other installed plugins may use to adjust the output. A project without a save path adopts the destination and is marked saved; saving to a path that differs from the current save path leaves the save target and unsaved indicator untouched. Overwrite must be explicitly flagged.',
+    mutates: true,
+    params: saveProjectParams,
+    result: writeResultSchema,
   },
   capture_screenshot: {
     description: 'Capture a bounded screenshot of the model preview as a data URL. Read-only.',

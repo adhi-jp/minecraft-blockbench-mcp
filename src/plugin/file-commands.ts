@@ -125,7 +125,9 @@ export function writeFilesCommand(scope: ScopeManager, files: WriteFileEntry[]):
     } catch (error) {
       throw new CommandError(
         'E_BLOCKBENCH_ERROR',
-        `Writing failed at ${path} after preflight passed; earlier files in the batch were already written.`,
+        results.length === 0
+          ? `Writing failed at ${path} after preflight passed; nothing was written.`
+          : `Writing failed at ${path} after preflight passed; earlier files in the batch were already written.`,
         {
           failed_path: path,
           reason: error instanceof Error ? error.message : String(error),
@@ -146,4 +148,25 @@ export function writeSingleFile(
 ): WriteResult {
   const { results } = writeFilesCommand(scope, [{ path, content, encoding: 'utf8', overwrite }]);
   return results[0];
+}
+
+/** Preflight one destination (containment, symlinks, overwrite conflict) and
+ * return the resolved path without writing anything. Lets commands that must
+ * mutate state between preflight and write (save_project's save_path swap)
+ * fail closed before the first mutation. Throws the concrete blocker code. */
+export function resolveSingleWriteDestination(
+  scope: ScopeManager,
+  path: string,
+  overwrite: boolean | undefined,
+): string {
+  const { blockers, resolvedPaths } = preflightWrites(
+    scope.confirmedPath,
+    [{ path, overwrite }],
+    (candidate) => scope.fs.existsSync(candidate),
+    makeListDir(scope.fs),
+  );
+  if (blockers.length > 0) {
+    throw new CommandError(blockers[0].code, blockers[0].message, { path: blockers[0].path, blockers });
+  }
+  return resolvedPaths[0];
 }

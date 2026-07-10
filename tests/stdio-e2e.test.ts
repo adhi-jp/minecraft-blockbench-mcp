@@ -88,6 +88,7 @@ const MINIMAL_ARGS: Record<CommandName, Record<string, unknown>> = {
   },
   read_file: { path: 'model.json' },
   write_files: { files: [{ path: 'model.json', content: '{}' }] },
+  save_project: { path: 'model.bbmodel' },
   capture_screenshot: {},
   validate_project: {},
   propose_scoped_directory: { path: '/tmp/blockbench-mcp-e2e' },

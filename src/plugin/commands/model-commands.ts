@@ -11,7 +11,14 @@ import {
 import { blockbenchLoopToGeckolib, type BlockbenchLoopMode } from '../geckolib-animation-mapping.js';
 import { CommandError, type PluginSession } from '../session.js';
 import type { ScopeManager } from '../scope-manager.js';
-import { readFileCommand, writeFilesCommand, writeSingleFile, resolveForIo } from '../file-commands.js';
+import { normalizePath } from '../../shared/scope.js';
+import {
+  readFileCommand,
+  writeFilesCommand,
+  writeSingleFile,
+  resolveForIo,
+  resolveSingleWriteDestination,
+} from '../file-commands.js';
 import { register, requireProject, projectCounts, detectGeckolibPluginVersion } from './helpers.js';
 
 /** Blockbench renames its Animation global (it shadows the DOM's); read the
@@ -425,6 +432,62 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
   register(session, 'read_file', (params) => readFileCommand(scope, params));
 
   register(session, 'write_files', (params) => writeFilesCommand(scope, params.files));
+
+  register(session, 'save_project', (params) => {
+    requireProject();
+    // The full write preflight (containment, symlinks, overwrite conflict)
+    // runs before any Project state change so a blocked save leaves the
+    // project untouched.
+    const destination = resolveSingleWriteDestination(scope, params.path, params.overwrite);
+    const project = Project!;
+    const originalSavePath = project.save_path;
+    // A fresh project adopts the destination as its save path; a re-save to
+    // the current save path keeps it. Blockbench stores save_path with
+    // OS-native separators, so the comparison goes through the shared path
+    // normalizer or a Windows re-save would misread as divergent. A divergent
+    // destination must not move the user's own save target (Ctrl+S) or clear
+    // the dirty flag, so its swap is temporary.
+    const adoptDestination = !originalSavePath || normalizePath(originalSavePath) === destination;
+    let succeeded = false;
+    // Relative texture paths in the compiled model are computed against
+    // Project.save_path (the codec's handleAssetPath), so the swap must
+    // happen before compile. Never afterSave(): it would also rewrite
+    // Project.name and the recent-projects list.
+    project.save_path = destination;
+    try {
+      let content: string;
+      try {
+        const compiled: unknown = Codecs.project.compile();
+        if (typeof compiled !== 'string') {
+          throw new Error(`the compile result is ${typeof compiled}, expected a string`);
+        }
+        content = compiled;
+      } catch (error) {
+        // The codec sets the compiling_bbmodel flag and only clears it after
+        // its compile hooks ran; a throwing hook would otherwise leave the
+        // flag stuck and corrupt every later face-texture serialization.
+        Blockbench.removeFlag('compiling_bbmodel');
+        throw new CommandError('E_BLOCKBENCH_ERROR', 'The project codec failed to compile the project.', {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const result = writeSingleFile(scope, params.path, content, params.overwrite);
+      succeeded = true;
+      return result;
+    } finally {
+      if (succeeded && adoptDestination) {
+        try {
+          project.saved = true;
+        } catch {
+          // The saved setter dispatches saved_state_changed to third-party
+          // listeners; a throwing listener must not turn the already
+          // completed save into an error response.
+        }
+      } else {
+        project.save_path = originalSavePath;
+      }
+    }
+  });
 
   register(session, 'capture_screenshot', async (params) => {
     requireProject();

@@ -70,6 +70,7 @@ test('command registry is partitioned into format-neutral, Java-format, and Geck
   }
   assert.ok(neutral.includes('get_project_state'));
   assert.ok(neutral.includes('get_elements'));
+  assert.ok(neutral.includes('save_project'));
   assert.ok(neutral.includes('propose_scoped_directory'));
   assert.ok(java.includes('create_project'));
   assert.ok(java.includes('open_model'));
@@ -351,6 +352,29 @@ test('get_elements result carries full cube/group read-back whose values feed th
       set: { name: cube.name, from: cube.from, to: cube.to, origin: cube.origin, visibility: cube.visibility },
     }).success,
     true,
+  );
+});
+
+test('save_project params take a path with an explicit per-call overwrite flag and report a write result', () => {
+  const spec = COMMAND_SPECS.save_project;
+  assert.equal(spec.params.safeParse({ path: 'ghost.bbmodel' }).success, true);
+  assert.equal(spec.params.safeParse({ path: 'out/ghost.bbmodel', overwrite: true }).success, true);
+  assert.equal(spec.params.safeParse({ path: 'ghost.BBMODEL' }).success, true, 'the extension check ignores case');
+  assert.equal(spec.params.safeParse({}).success, false, 'the destination path is required');
+  assert.equal(
+    spec.params.safeParse({ path: 'textures/model.json' }).success,
+    false,
+    'a non-.bbmodel destination would hijack the Ctrl+S target and is rejected',
+  );
+  assert.equal(spec.params.safeParse({ path: 'ghost.bbmodel', force: true }).success, false);
+  assert.equal(
+    spec.result.safeParse({ path: '/scope/ghost.bbmodel', status: 'created', bytes: 128 }).success,
+    true,
+  );
+  assert.equal(
+    spec.result.safeParse({ path: '/scope/ghost.bbmodel', status: 'saved', bytes: 128 }).success,
+    false,
+    'the write result reuses the created/updated/overwritten status enum',
   );
 });
 
