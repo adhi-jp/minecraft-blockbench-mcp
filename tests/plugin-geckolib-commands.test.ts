@@ -43,6 +43,7 @@ const GECKOLIB_COMMANDS = [
   'upsert_geckolib_animation',
   'delete_geckolib_animation',
   'get_geckolib_animation',
+  'capture_geckolib_animation_frame',
 ] as const;
 
 const MINIMAL_GECKOLIB_ARGS: Record<(typeof GECKOLIB_COMMANDS)[number], Record<string, unknown>> = {
@@ -54,6 +55,7 @@ const MINIMAL_GECKOLIB_ARGS: Record<(typeof GECKOLIB_COMMANDS)[number], Record<s
   upsert_geckolib_animation: { name: 'animation.ghost.idle', length: 1, bones: {} },
   delete_geckolib_animation: { name: 'animation.ghost.idle' },
   get_geckolib_animation: { name: 'animation.ghost.idle' },
+  capture_geckolib_animation_frame: { animation: 'animation.ghost.idle', time: 0 },
 };
 
 const injectedGlobals = globalThis as Record<string, unknown>;
@@ -71,6 +73,11 @@ function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Cube;
   delete injectedGlobals.Texture;
   delete injectedGlobals.invertMolang;
+  delete injectedGlobals.Timeline;
+  delete injectedGlobals.Preview;
+  delete injectedGlobals.Screencam;
+  delete injectedGlobals.DefaultCameraPresets;
+  delete injectedGlobals.document;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,13 +151,15 @@ class FakeBoneAnimator {
 
 class FakeAnimation {
   static all: FakeAnimation[] = [];
+  static selected: FakeAnimation | null = null;
   name = '';
   loop = 'once';
   length = 0;
   override = false;
   anim_time_update = '';
   selected = false;
-  animators: Record<string, FakeBoneAnimator> = {};
+  playing = false;
+  animators: Record<string, unknown> = {};
   constructor(data?: Record<string, unknown>) {
     Object.assign(this, data);
     if (!['once', 'loop', 'hold'].includes(this.loop)) this.loop = 'once';
@@ -169,6 +178,7 @@ class FakeAnimation {
   remove(_undo: boolean): FakeAnimation {
     const index = FakeAnimation.all.indexOf(this);
     if (index >= 0) FakeAnimation.all.splice(index, 1);
+    if (FakeAnimation.selected === this) FakeAnimation.selected = null;
     this.selected = false;
     return this;
   }
@@ -181,6 +191,7 @@ class FakeAnimation {
   select(): FakeAnimation {
     for (const animation of FakeAnimation.all) animation.selected = false;
     this.selected = true;
+    FakeAnimation.selected = this;
     return this;
   }
 }
@@ -229,6 +240,7 @@ function fakeInvertMolang(value: number | string): number | string {
 /** Inject a fake animated geckolib_model project (bones body/head). */
 function injectAnimationGlobals(): FakeUndo {
   FakeAnimation.all = [];
+  FakeAnimation.selected = null;
   FakeGroup.all = [new FakeGroup('body'), new FakeGroup('head')];
   const undo = makeFakeUndo();
   injectedGlobals.Formats = { geckolib_model: {} };
@@ -609,6 +621,121 @@ test('get_plugin_status reports the shared protocol constant, geckolib capabilit
   assert.equal(result.geckolib_plugin_version, '4.2.5');
 });
 
+
+interface FakePreview {
+  id: string;
+  isOrtho: boolean;
+  camera: { zoom: number; projectionUpdates: number; updateProjectionMatrix(): void };
+  presetsLoaded: Array<Record<string, unknown>>;
+  resizes: Array<[number, number]>;
+  loadAnglePreset(preset: Record<string, unknown>): void;
+  resize(width: number, height: number): void;
+}
+
+function makeFakePreview(id: string): FakePreview {
+  const camera = {
+    zoom: 1,
+    projectionUpdates: 0,
+    updateProjectionMatrix() {
+      this.projectionUpdates += 1;
+    },
+  };
+  return {
+    id,
+    isOrtho: false,
+    camera,
+    presetsLoaded: [],
+    resizes: [],
+    loadAnglePreset(preset) {
+      this.presetsLoaded.push(preset);
+    },
+    resize(width, height) {
+      this.resizes.push([width, height]);
+    },
+  };
+}
+
+function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; failFirstCapture?: boolean } = {}): {
+  visible: FakePreview;
+  offscreen: FakePreview;
+  captures: Array<{ preview: string; options: Record<string, unknown> }>;
+  events: string[];
+  previewStates: Array<{ time: number; playing: string[]; muted: boolean[] }>;
+  defaultPoseCalls: number;
+} {
+  const visible = makeFakePreview('visible');
+  const offscreen = makeFakePreview('offscreen');
+  const captures: Array<{ preview: string; options: Record<string, unknown> }> = [];
+  const events: string[] = [];
+  const previewStates: Array<{ time: number; playing: string[]; muted: boolean[] }> = [];
+  let sequence = 0;
+  let failNext = options.failFirstCapture === true;
+  let defaultPoseCalls = 0;
+  injectedGlobals.Timeline = {
+    time: 0,
+    playing: false,
+    setTime(seconds: number) {
+      this.time = Math.min(Math.max(seconds, 0), 1000);
+      events.push(`time:${this.time}`);
+    },
+  };
+  injectedGlobals.Animator = {
+    preview(inLoop?: boolean) {
+      events.push(`preview:${inLoop === true ? 'loop' : 'still'}:${(injectedGlobals.Timeline as { time: number }).time}`);
+      previewStates.push({
+        time: (injectedGlobals.Timeline as { time: number }).time,
+        playing: FakeAnimation.all.filter((animation) => animation.playing).map((animation) => animation.name),
+        muted: FakeAnimation.all.flatMap((animation) =>
+          Object.values(animation.animators)
+            .map((animator) => (animator as { muted?: { particle?: boolean; timeline?: boolean } }).muted)
+            .filter((muted): muted is { particle?: boolean; timeline?: boolean } => muted !== undefined)
+            .map((muted) => muted.particle === true && muted.timeline === true),
+        ),
+      });
+    },
+    showDefaultPose() {
+      defaultPoseCalls += 1;
+      events.push('default-pose');
+    },
+  };
+  injectedGlobals.Preview = { selected: visible };
+  injectedGlobals.DefaultCameraPresets = [
+    { id: 'top', projection: 'orthographic', position: [0, 64, 0], zoom: 0.5, locked_angle: 'top' },
+    { id: 'south', projection: 'orthographic', position: [0, 0, 64], zoom: 0.5, locked_angle: 'south' },
+  ];
+  injectedGlobals.Screencam = {
+    NoAAPreview: offscreen,
+    screenshotPreview: (
+      preview: FakePreview,
+      captureOptions: Record<string, unknown>,
+      cb: (dataUrl: string) => void,
+    ) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('render exploded');
+      }
+      sequence += 1;
+      const id = sequence;
+      events.push(`start:${id}`);
+      captures.push({ preview: preview.id, options: captureOptions });
+      const finish = () => {
+        events.push(`end:${id}`);
+        cb(`data:image/png;base64,pose-${id}`);
+      };
+      if (options.captureDelayMs !== undefined) {
+        setTimeout(finish, options.captureDelayMs);
+      } else {
+        finish();
+      }
+    },
+  };
+  return { visible, offscreen, captures, events, previewStates, get defaultPoseCalls() { return defaultPoseCalls; } };
+}
+
+function addFakeAnimation(name: string, loop: string, length: number): FakeAnimation {
+  return new FakeAnimation({ name, loop, length }).add(false);
+}
+
 // ---------------------------------------------------------------------------
 // Animation authoring commands against the fake animation runtime
 // ---------------------------------------------------------------------------
@@ -977,4 +1104,193 @@ test('validate_project runs the shared animation checks on the in-memory build a
   assert.equal(failureDiagnostics[0].severity, 'warning');
   assert.equal(failureDiagnostics[0].check_id, 'geckolib_animation_build');
   assert.match(failureDiagnostics[0].message, /injected build failure/);
+});
+
+test('capture_geckolib_animation_frame poses one animation, renders, and restores animation state', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+  const surface = injectAnimationScreenshotSurface();
+  const idle = addFakeAnimation('animation.ghost.idle', 'once', 2);
+  const walk = addFakeAnimation('animation.ghost.walk', 'loop', 1);
+  const body = FakeGroup.all.find((group) => group.name === 'body') as FakeGroup;
+  const effectAnimator = { muted: { sound: false, particle: false, timeline: false } };
+  idle.animators.effects = effectAnimator;
+  walk.playing = true;
+  walk.select();
+  const timeline = injectedGlobals.Timeline as { time: number; playing: boolean; setTime(seconds: number): void };
+  timeline.setTime(0.75);
+
+  const outcome = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.idle',
+    time: 1.25,
+    width: 320,
+    height: 240,
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(outcome.result, {
+    data_url: 'data:image/png;base64,pose-1',
+    width: 320,
+    height: 240,
+    animation: 'animation.ghost.idle',
+    time: 1.25,
+    rendered_time: 1.25,
+  });
+  assert.deepEqual(surface.captures, [{ preview: 'visible', options: { width: 320, height: 240, crop: false } }]);
+  assert.deepEqual(
+    surface.previewStates[0],
+    { time: 1.25, playing: ['animation.ghost.idle'], muted: [true] },
+    'the still preview uses only the target animation with effect channels muted',
+  );
+  assert.equal(FakeAnimation.selected, walk, 'the previous selected animation is restored');
+  assert.equal(walk.selected, true);
+  assert.equal(idle.selected, false);
+  assert.equal(walk.playing, true, 'previous playing flags are restored');
+  assert.equal(idle.playing, false);
+  assert.equal(timeline.time, 0.75, 'the previous timeline time is restored');
+  assert.equal(effectAnimator.muted.particle, false, 'effect mute flags are restored');
+  assert.equal(effectAnimator.muted.timeline, false);
+  assert.equal(effectAnimator.muted.sound, false);
+  assert.equal(body.name, 'body', 'existing fake runtime remains usable after the capture');
+});
+
+test('capture_geckolib_animation_frame uses preset screenshots without touching the visible preview', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+  const { visible, offscreen, captures } = injectAnimationScreenshotSurface();
+  addFakeAnimation('animation.ghost.idle', 'once', 1);
+
+  const outcome = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.idle',
+    time: 0.5,
+    angle_preset: 'top',
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const result = outcome.result as { angle_preset?: string; rendered_time?: number };
+  assert.equal(result.angle_preset, 'top');
+  assert.equal(result.rendered_time, 0.5);
+  assert.equal(captures[0].preview, 'offscreen');
+  assert.equal(offscreen.presetsLoaded.length, 1);
+  assert.equal((offscreen.presetsLoaded[0] as { id?: string }).id, 'top');
+  assert.equal(visible.presetsLoaded.length, 0, 'the visible camera is not moved for preset renders');
+});
+
+test('capture_geckolib_animation_frame applies loop timing rules before Timeline.setTime', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+  injectAnimationScreenshotSurface();
+  addFakeAnimation('animation.ghost.loop', 'loop', 2);
+  addFakeAnimation('animation.ghost.hold', 'hold', 2);
+  addFakeAnimation('animation.ghost.once', 'once', 2);
+  const timeline = injectedGlobals.Timeline as { time: number };
+
+  const looped = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.loop',
+    time: 5.25,
+  });
+  assert.equal(looped.ok, true, JSON.stringify(looped.error));
+  assert.equal((looped.result as { rendered_time: number }).rendered_time, 1.25);
+
+  const held = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.hold',
+    time: 5.25,
+  });
+  assert.equal(held.ok, true, JSON.stringify(held.error));
+  assert.equal((held.result as { rendered_time: number }).rendered_time, 2);
+
+  timeline.time = 0.4;
+  const once = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.once',
+    time: 2.1,
+  });
+  assert.equal(once.ok, false);
+  assert.equal(once.error?.code, 'E_INVALID_PARAMS');
+  assert.equal(timeline.time, 0.4, 'out-of-range once mode rejects before Timeline.setTime mutates time');
+});
+
+test('capture_geckolib_animation_frame rejects active playback and missing animations before posing', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+  const surface = injectAnimationScreenshotSurface();
+  addFakeAnimation('animation.ghost.idle', 'once', 1);
+  const timeline = injectedGlobals.Timeline as { playing: boolean };
+  timeline.playing = true;
+
+  const active = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.idle',
+    time: 0,
+  });
+  assert.equal(active.ok, false);
+  assert.equal(active.error?.code, 'E_BLOCKBENCH_ERROR');
+  assert.match(active.error?.message ?? '', /playback/i);
+  assert.equal(surface.captures.length, 0, 'no screenshot starts while playback is active');
+
+  timeline.playing = false;
+  const missing = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.missing',
+    time: 0,
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error?.code, 'E_NOT_FOUND');
+  assert.equal(surface.captures.length, 0, 'missing animation does not pose or render');
+});
+
+test('capture_geckolib_animation_frame restores state after screenshot failure and the queue keeps serving', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+  injectAnimationScreenshotSurface({ failFirstCapture: true });
+  const idle = addFakeAnimation('animation.ghost.idle', 'once', 1);
+  const walk = addFakeAnimation('animation.ghost.walk', 'loop', 1);
+  walk.playing = true;
+  walk.select();
+  const timeline = injectedGlobals.Timeline as { time: number; setTime(seconds: number): void };
+  timeline.setTime(0.2);
+
+  const failed = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.idle',
+    time: 0.5,
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.error?.code, 'E_BLOCKBENCH_ERROR');
+  assert.equal(FakeAnimation.selected, walk);
+  assert.equal(walk.playing, true);
+  assert.equal(idle.playing, false);
+  assert.equal(timeline.time, 0.2);
+
+  const next = await harness.bridge.request('capture_geckolib_animation_frame', {
+    animation: 'animation.ghost.idle',
+    time: 0.25,
+  });
+  assert.equal(next.ok, true, JSON.stringify(next.error));
+  assert.equal((next.result as { rendered_time: number }).rendered_time, 0.25);
+});
+
+test('concurrent GeckoLib animation frame captures serialize the full pose-render-restore section', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectAnimationGlobals();
+  const surface = injectAnimationScreenshotSurface({ captureDelayMs: 40 });
+  const idle = addFakeAnimation('animation.ghost.idle', 'loop', 2);
+  const walk = addFakeAnimation('animation.ghost.walk', 'loop', 2);
+  walk.playing = true;
+  walk.select();
+
+  const [first, second] = await Promise.all([
+    harness.bridge.request('capture_geckolib_animation_frame', { animation: 'animation.ghost.idle', time: 0.25 }),
+    harness.bridge.request('capture_geckolib_animation_frame', { animation: 'animation.ghost.walk', time: 1.25 }),
+  ]);
+  assert.equal(first.ok, true, JSON.stringify(first.error));
+  assert.equal(second.ok, true, JSON.stringify(second.error));
+  assert.deepEqual(
+    surface.events.filter((event) => event.startsWith('preview:') || event.startsWith('start:') || event.startsWith('end:')),
+    ['preview:still:0.25', 'start:1', 'end:1', 'preview:still:0', 'preview:still:1.25', 'start:2', 'end:2', 'preview:still:0'],
+    'each request restores the previous pose before the next request poses and renders',
+  );
+  assert.equal(FakeAnimation.selected, walk);
+  assert.equal(idle.playing, false);
+  assert.equal(walk.playing, true);
 });

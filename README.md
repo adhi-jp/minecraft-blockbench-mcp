@@ -123,7 +123,8 @@ GeckoLib tools (they require the third-party **GeckoLib Models & Animations**
 plugin, see below): `create_geckolib_project`, `open_geckolib_model`,
 `export_geckolib_model`, `export_geckolib_animations`,
 `validate_geckolib_file`, `upsert_geckolib_animation`,
-`delete_geckolib_animation`, `get_geckolib_animation`.
+`delete_geckolib_animation`, `get_geckolib_animation`,
+`capture_geckolib_animation_frame`.
 
 While Blockbench (or the plugin) is not running, operation tools return a
 structured `E_PLUGIN_NOT_CONNECTED` error immediately — the adapter never
@@ -191,6 +192,20 @@ every call, so installing or re-enabling GeckoLib takes effect immediately.
   `replace: true` overwrites the whole clip, including manual tweaks made in
   the Blockbench UI since the clip was last read. Every upsert/delete is one
   undo step, so Ctrl+Z in Blockbench recovers the previous state.
+- **Still-frame screenshots**: `capture_geckolib_animation_frame` poses a named
+  animation at a still timestamp and returns `{ data_url, width, height,
+  animation, time, rendered_time, angle_preset? }`. It accepts the same
+  optional `width`, `height`, and native `angle_preset` values as
+  `capture_screenshot`; preset renders use the offscreen preview so the visible
+  camera does not move. The command is read-only for project/files: it
+  temporarily marks only the target animation as playing, calls Blockbench's
+  still preview, renders the screenshot, then restores the previous selected
+  animation, playing flags, timeline time/playback flag, effect mute flags, and
+  default/current pose after success or failure. Timeline playback must already
+  be stopped. If the requested time is beyond the clip length, `loop` wraps,
+  `hold_on_last_frame` clamps to the last frame, and `once` fails with
+  `E_INVALID_PARAMS` before moving the timeline. Sound, particle, and timeline
+  effect channels are muted during the still preview.
 - **Importing existing `.animation.json` files**: there is no dedicated import
   tool. An agent can read a file (`read_file`), translate each
   animation into an upsert payload, and call `upsert_geckolib_animation` —

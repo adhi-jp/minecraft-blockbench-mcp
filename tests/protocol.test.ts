@@ -24,8 +24,8 @@ test('protocol version constant is a positive integer', () => {
   assert.ok(PROTOCOL_VERSION >= 1);
 });
 
-test('protocol version is 4 after adding the element read-back surface', () => {
-  assert.equal(PROTOCOL_VERSION, 4);
+test('protocol version is 5 after adding GeckoLib animation frame screenshots', () => {
+  assert.equal(PROTOCOL_VERSION, 5);
 });
 
 test('default WebSocket port matches the specified loopback port 39731', () => {
@@ -87,6 +87,7 @@ test('command registry is partitioned into format-neutral, Java-format, and Geck
   assert.ok(geckolib.includes('upsert_geckolib_animation'));
   assert.ok(geckolib.includes('delete_geckolib_animation'));
   assert.ok(geckolib.includes('get_geckolib_animation'));
+  assert.ok(geckolib.includes('capture_geckolib_animation_frame'));
 });
 
 test('create_geckolib_project params enforce GeckoLib naming rules and the model type enum', () => {
@@ -483,6 +484,44 @@ test('capture_screenshot accepts the native camera preset ids and echoes the app
   assert.equal(
     spec.result.safeParse({ data_url: 'data:image/png;base64,x', width: 512, height: 512, angle_preset: 'top' })
       .success,
+    true,
+  );
+});
+
+test('capture_geckolib_animation_frame validates timing, dimensions, presets, and metadata', () => {
+  const spec = COMMAND_SPECS.capture_geckolib_animation_frame;
+  assert.equal(spec.mutates, false);
+  assert.equal(
+    spec.params.safeParse({ animation: 'animation.ghost.idle', time: 0.25 }).success,
+    true,
+    'animation and nonnegative time are the minimal payload',
+  );
+  assert.equal(
+    spec.params.safeParse({ animation: 'animation.ghost.idle', time: 0.25, width: 128, height: 256 }).success,
+    true,
+  );
+  for (const preset of SCREENSHOT_ANGLE_PRESETS) {
+    assert.equal(
+      spec.params.safeParse({ animation: 'animation.ghost.idle', time: 0, angle_preset: preset }).success,
+      true,
+      `${preset} is shared with capture_screenshot`,
+    );
+  }
+  assert.equal(spec.params.safeParse({ animation: 'animation.ghost.idle', time: -0.1 }).success, false);
+  assert.equal(spec.params.safeParse({ animation: 'animation.ghost.idle', time: Number.NaN }).success, false);
+  assert.equal(spec.params.safeParse({ animation: '', time: 0 }).success, false);
+  assert.equal(spec.params.safeParse({ animation: 'animation.ghost.idle', time: 0, angle_preset: 'front' }).success, false);
+  assert.equal(spec.params.safeParse({ animation: 'animation.ghost.idle', time: 0, extra: true }).success, false);
+  assert.equal(
+    spec.result.safeParse({
+      data_url: 'data:image/png;base64,x',
+      width: 512,
+      height: 512,
+      animation: 'animation.ghost.idle',
+      time: 1.5,
+      rendered_time: 0.5,
+      angle_preset: 'top',
+    }).success,
     true,
   );
 });

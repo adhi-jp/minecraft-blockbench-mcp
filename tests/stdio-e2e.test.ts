@@ -106,6 +106,7 @@ const MINIMAL_ARGS: Record<CommandName, Record<string, unknown>> = {
   upsert_geckolib_animation: { name: 'animation.ghost.idle', length: 1, bones: {} },
   delete_geckolib_animation: { name: 'animation.ghost.idle' },
   get_geckolib_animation: { name: 'animation.ghost.idle' },
+  capture_geckolib_animation_frame: { animation: 'animation.ghost.idle', time: 0 },
 };
 
 test('with Blockbench closed: initialize, list tools, healthy health, and immediate not-connected precondition errors for every operation tool', async (t) => {

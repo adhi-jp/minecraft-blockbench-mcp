@@ -28,6 +28,7 @@ import {
   type PayloadClip,
 } from '../geckolib-animation-mapping.js';
 import { register, projectCounts, requireGeckolibPlugin, requireGeckolibFormat } from './helpers.js';
+import { captureScreenshotFromPreview, enqueueScreenshot } from './screenshot-helper.js';
 
 // ---------------------------------------------------------------------------
 // Blockbench animation surface (untyped at runtime; these are the shapes the
@@ -56,6 +57,7 @@ interface AnimationLike {
   override?: boolean;
   anim_time_update?: string;
   selected?: boolean;
+  playing?: boolean;
   animators: Record<string, unknown>;
   add(undo: boolean): AnimationLike;
   remove(undo: boolean, removeFromFile?: boolean): unknown;
@@ -65,7 +67,13 @@ interface AnimationLike {
 
 /** Blockbench renames its Animation global (it shadows the DOM's); handlers
  * reach it through the Blockbench namespace to stay type-safe. */
-function blockbenchAnimationClass(): { all: AnimationLike[]; new (data: Record<string, unknown>): AnimationLike } {
+type AnimationClassLike = {
+  all: AnimationLike[];
+  selected?: AnimationLike | null;
+  new (data: Record<string, unknown>): AnimationLike;
+};
+
+function blockbenchAnimationClass(): AnimationClassLike {
   const blockbench = Blockbench as unknown as {
     Animation?: { all?: AnimationLike[] } & (new (data: Record<string, unknown>) => AnimationLike);
   };
@@ -73,7 +81,7 @@ function blockbenchAnimationClass(): { all: AnimationLike[]; new (data: Record<s
   if (animationClass === undefined || !Array.isArray(animationClass.all)) {
     throw new CommandError('E_BLOCKBENCH_ERROR', 'This Blockbench build does not expose the Animation API.');
   }
-  return animationClass as { all: AnimationLike[]; new (data: Record<string, unknown>): AnimationLike };
+  return animationClass as AnimationClassLike;
 }
 
 function projectAnimationNames(): string[] {
@@ -111,6 +119,159 @@ function undoSystem(): {
 
 function findAnimationByName(name: string): AnimationLike | null {
   return blockbenchAnimationClass().all.find((animation) => animation.name === name) ?? null;
+}
+
+
+interface TimelineLike {
+  time: number;
+  playing?: boolean;
+  setTime(seconds: number, editing?: boolean): void;
+}
+
+interface AnimatorLike {
+  preview(inLoop?: boolean): void;
+  showDefaultPose?(noMatrixUpdate?: boolean): void;
+}
+
+interface EffectMuteSnapshot {
+  muted: Record<string, unknown>;
+  values: Record<string, unknown>;
+}
+
+interface AnimationStateSnapshot {
+  animationClass: AnimationClassLike;
+  selectedAnimation: AnimationLike | null;
+  selectedFlags: Array<[AnimationLike, boolean | undefined]>;
+  playingFlags: Array<[AnimationLike, boolean | undefined]>;
+  timelineTime: number;
+  timelinePlaying: boolean | undefined;
+  effectMutes: EffectMuteSnapshot[];
+}
+
+function timelineApi(): TimelineLike {
+  const timeline = (globalThis as Record<string, unknown>).Timeline as TimelineLike | undefined;
+  if (timeline === undefined || typeof timeline.setTime !== 'function' || typeof timeline.time !== 'number') {
+    throw new CommandError('E_BLOCKBENCH_ERROR', 'This Blockbench build does not expose the Timeline API.');
+  }
+  return timeline;
+}
+
+function animatorApi(): AnimatorLike {
+  const animator = (globalThis as Record<string, unknown>).Animator as AnimatorLike | undefined;
+  if (animator === undefined || typeof animator.preview !== 'function') {
+    throw new CommandError('E_BLOCKBENCH_ERROR', 'This Blockbench build does not expose the Animator preview API.');
+  }
+  return animator;
+}
+
+function effectMuteSnapshots(animations: AnimationLike[]): EffectMuteSnapshot[] {
+  const snapshots: EffectMuteSnapshot[] = [];
+  for (const animation of animations) {
+    for (const animator of Object.values(animation.animators)) {
+      if (animator === null || typeof animator !== 'object') continue;
+      const muted = (animator as { muted?: unknown }).muted;
+      if (muted === null || typeof muted !== 'object') continue;
+      const mutedRecord = muted as Record<string, unknown>;
+      const values: Record<string, unknown> = {};
+      for (const channel of ['particle', 'timeline', 'sound']) {
+        values[channel] = mutedRecord[channel];
+      }
+      snapshots.push({ muted: mutedRecord, values });
+    }
+  }
+  return snapshots;
+}
+
+function setEffectMutes(snapshots: EffectMuteSnapshot[], muted: boolean): void {
+  for (const snapshot of snapshots) {
+    snapshot.muted.particle = muted;
+    snapshot.muted.timeline = muted;
+    snapshot.muted.sound = muted;
+  }
+}
+
+function restoreEffectMutes(snapshots: EffectMuteSnapshot[]): void {
+  for (const snapshot of snapshots) {
+    for (const [channel, value] of Object.entries(snapshot.values)) {
+      if (value === undefined) {
+        delete snapshot.muted[channel];
+      } else {
+        snapshot.muted[channel] = value;
+      }
+    }
+  }
+}
+
+function snapshotAnimationState(animationClass: AnimationClassLike, timeline: TimelineLike): AnimationStateSnapshot {
+  const animations = animationClass.all;
+  const selectedAnimation = animationClass.selected ?? animations.find((animation) => animation.selected === true) ?? null;
+  return {
+    animationClass,
+    selectedAnimation,
+    selectedFlags: animations.map((animation) => [animation, animation.selected]),
+    playingFlags: animations.map((animation) => [animation, animation.playing]),
+    timelineTime: timeline.time,
+    timelinePlaying: timeline.playing,
+    effectMutes: effectMuteSnapshots(animations),
+  };
+}
+
+function restoreAnimationState(snapshot: AnimationStateSnapshot, timeline: TimelineLike, animator: AnimatorLike): void {
+  let restoreError: unknown;
+  try {
+    for (const [animation, selected] of snapshot.selectedFlags) {
+      if (selected === undefined) {
+        delete animation.selected;
+      } else {
+        animation.selected = selected;
+      }
+    }
+    for (const [animation, playing] of snapshot.playingFlags) {
+      if (playing === undefined) {
+        delete animation.playing;
+      } else {
+        animation.playing = playing;
+      }
+    }
+    snapshot.animationClass.selected = snapshot.selectedAnimation;
+    timeline.playing = snapshot.timelinePlaying;
+    timeline.setTime(snapshot.timelineTime);
+    setEffectMutes(snapshot.effectMutes, true);
+    if (snapshot.playingFlags.some(([, playing]) => playing === true)) {
+      animator.preview(false);
+    } else if (typeof animator.showDefaultPose === 'function') {
+      animator.showDefaultPose(true);
+    } else {
+      animator.preview(false);
+    }
+  } catch (error) {
+    restoreError = error;
+  } finally {
+    restoreEffectMutes(snapshot.effectMutes);
+  }
+  if (restoreError !== undefined) {
+    throw new CommandError('E_BLOCKBENCH_ERROR', 'Failed to restore the previous animation preview state.', {
+      reason: restoreError instanceof Error ? restoreError.message : String(restoreError),
+    });
+  }
+}
+
+function renderedAnimationTime(animation: AnimationLike, requestedTime: number): number {
+  const length = Math.max(0, Number.isFinite(animation.length) ? animation.length : 0);
+  if (animation.loop === 'loop') {
+    return length > 0 ? requestedTime % length : 0;
+  }
+  if (animation.loop === 'hold') {
+    return Math.min(requestedTime, length);
+  }
+  if (requestedTime > length) {
+    throw new CommandError(
+      'E_INVALID_PARAMS',
+      `Animation "${animation.name}" uses once loop mode and cannot be captured past its ${length}s length.`,
+      { animation: animation.name, time: requestedTime, length },
+    );
+  }
+  return requestedTime;
 }
 
 /** Resolve payload bone names against current groups, case-insensitively like
@@ -475,6 +636,55 @@ export function registerGeckolibCommands(session: PluginSession, scope: ScopeMan
       }
     }
     return { name: clip.name, status: existing !== null ? ('replaced' as const) : ('created' as const) };
+  });
+
+
+  register(session, 'capture_geckolib_animation_frame', (params) => {
+    // Call-time guards keep an already-invalid request from waiting behind the
+    // screenshot queue, while the queued critical section rechecks current
+    // state before touching global animation/timeline objects.
+    requireGeckolibPlugin();
+    requireGeckolibFormat();
+    return enqueueScreenshot(async () => {
+      requireGeckolibPlugin();
+      requireGeckolibFormat();
+      const animationClass = blockbenchAnimationClass();
+      const timeline = timelineApi();
+      const animator = animatorApi();
+      const animation = findAnimationByName(params.animation);
+      if (animation === null) {
+        throw new CommandError('E_NOT_FOUND', `No animation named "${params.animation}" exists in the project.`, {
+          animation: params.animation,
+        });
+      }
+      if (timeline.playing === true) {
+        throw new CommandError(
+          'E_BLOCKBENCH_ERROR',
+          'Timeline playback is active; stop playback before capturing a still animation frame.',
+        );
+      }
+      const renderedTime = renderedAnimationTime(animation, params.time);
+      const snapshot = snapshotAnimationState(animationClass, timeline);
+      try {
+        for (const candidate of animationClass.all) {
+          candidate.playing = candidate === animation;
+          candidate.selected = candidate === animation;
+        }
+        animationClass.selected = animation;
+        timeline.setTime(renderedTime);
+        setEffectMutes(snapshot.effectMutes, true);
+        animator.preview(false);
+        const screenshot = await captureScreenshotFromPreview(params);
+        return {
+          ...screenshot,
+          animation: params.animation,
+          time: params.time,
+          rendered_time: renderedTime,
+        };
+      } finally {
+        restoreAnimationState(snapshot, timeline, animator);
+      }
+    });
   });
 
   register(session, 'delete_geckolib_animation', (params) => {

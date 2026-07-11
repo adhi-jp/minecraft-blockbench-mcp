@@ -3,7 +3,7 @@
 // adapter (Node) and plugin (browser/Blockbench) TypeScript configurations.
 import { z } from 'zod';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export const DEFAULT_WS_PORT = 39731;
 
@@ -546,6 +546,34 @@ const captureScreenshotResult = z.object({
     .describe('Echoes the applied camera preset when one was requested.'),
 });
 
+
+const captureGeckolibAnimationFrameParams = z
+  .object({
+    animation: z.string().min(1).describe('Name of the GeckoLib animation clip to pose and capture.'),
+    time: z.number().finite().nonnegative().describe('Timestamp in seconds to render within the named clip.'),
+    width: z.number().int().positive().max(DEFAULTS.screenshotMaxSize).optional(),
+    height: z.number().int().positive().max(DEFAULTS.screenshotMaxSize).optional(),
+    angle_preset: z
+      .enum(SCREENSHOT_ANGLE_PRESETS)
+      .optional()
+      .describe(
+        'Render the posed GeckoLib model from a native Blockbench camera preset through the offscreen preview; omit to capture the currently visible view.',
+      ),
+  })
+  .strict();
+const captureGeckolibAnimationFrameResult = z.object({
+  data_url: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  animation: z.string(),
+  time: z.number().nonnegative(),
+  rendered_time: z.number().nonnegative(),
+  angle_preset: z
+    .enum(SCREENSHOT_ANGLE_PRESETS)
+    .optional()
+    .describe('Echoes the applied camera preset when one was requested.'),
+});
+
 const validateProjectParams = z.object({}).strict();
 const validateProjectResult = z.object({
   diagnostics: z.array(
@@ -1026,6 +1054,16 @@ export const GECKOLIB_FORMAT_COMMAND_SPECS = {
     mutates: false,
     params: getGeckolibAnimationParams,
     result: getGeckolibAnimationResult,
+  },
+  capture_geckolib_animation_frame: {
+    description:
+      'Capture a bounded screenshot of one named GeckoLib animation posed at a still timestamp. The command temporarily sets only that animation playing for preview, applies GeckoLib loop timing (loop wraps, hold clamps, once rejects out-of-range time), renders through the existing screenshot path, rejects active timeline playback, suppresses effect keyframes during the still preview, and restores animation/timeline state after success or failure. Read-only.',
+    mutates: false,
+    params: captureGeckolibAnimationFrameParams,
+    result: captureGeckolibAnimationFrameResult,
+    // Animation-pose captures queue behind regular screenshot captures on the
+    // shared preview and global animation timeline state.
+    timeoutMs: 60_000,
   },
 } as const satisfies Record<string, CommandSpec>;
 
