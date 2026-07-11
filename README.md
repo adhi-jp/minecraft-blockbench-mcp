@@ -214,6 +214,77 @@ every call, so installing or re-enabling GeckoLib takes effect immediately.
   interpolation are not representable in the payload (their file validation
   still works).
 
+
+## GeckoLib live smoke
+
+`npm run smoke:geckolib-live` is a developer-run smoke helper for the
+`capture_geckolib_animation_frame` path. It drives a real Blockbench + GeckoLib
+runtime through the stdio MCP adapter, writes PNG/report/checklist artifacts,
+and stops at a human visual review handoff. A successful script run means the
+automated sanity checks passed and the artifacts are ready to inspect; it does
+not prove visual correctness by itself.
+
+Prerequisites:
+
+1. Run `npm run build` so `dist/adapter/cli.js` and
+   `dist/plugin/minecraft_blockbench_mcp.js` match the current checkout.
+2. Load or reload `dist/plugin/minecraft_blockbench_mcp.js` in Blockbench.
+3. Install and enable the **GeckoLib Models & Animations** Blockbench plugin.
+4. Configure the Blockbench MCP plugin with the same port and shared secret the
+   helper will use, then reconnect it.
+5. Ensure no other adapter process is already using the selected port.
+
+Recommended run command:
+
+```sh
+BLOCKBENCH_MCP_SECRET=<your-secret> npm run smoke:geckolib-live
+```
+
+Useful options after `--`:
+
+```sh
+BLOCKBENCH_MCP_SECRET=<your-secret> npm run smoke:geckolib-live -- --port 39731 --out ./smoke-output
+```
+
+- `--out <dir>` chooses a parent directory; the helper always creates a unique
+  `geckolib-live-smoke-*` run subdirectory and refuses to overwrite an existing
+  run directory. Without `--out`, the parent is the system temporary directory.
+- `--port <port>` changes the adapter listener. If you change it, set the
+  Blockbench MCP plugin to the same port and reconnect before running the
+  helper.
+- `--secret <secret>` exists only as a less-safe convenience. Prefer
+  `BLOCKBENCH_MCP_SECRET` because command-line secrets can leak through shell
+  history, process listings, copied commands, or npm logs. The helper must not
+  write the shared secret, raw argv, or raw environment dumps into reports.
+
+Before fixture commands run, the helper prints a notice that it will create and
+leave a new unsaved GeckoLib project tab for manual inspection. It does not
+open, save, or overwrite existing project files, and it does not use scoped
+directory writes. After the run, inspect `frame-0.png` and `frame-1.png`, record
+notes in `review-checklist.md`, then close or discard the smoke project tab
+manually.
+
+Generated artifacts:
+
+- `frame-0.png` / `frame-1.png` — still-frame screenshots captured at distinct
+  animation timestamps.
+- `smoke-report.json` — sanitized runtime metadata, command outcomes, frame
+  hashes, automated sanity checks, and `human_review_required: true`.
+- `review-checklist.md` — human review steps for visible pose differences,
+  playback/effect side effects, Blockbench usability, and reviewer notes.
+
+Common failures:
+
+| Symptom | Remediation |
+| --- | --- |
+| Missing `dist/adapter/cli.js` | Run `npm run build` before the smoke helper. |
+| Missing secret | Set `BLOCKBENCH_MCP_SECRET` to the same secret configured in the Blockbench MCP plugin. |
+| Port conflict / `E_PORT_IN_USE` | Do not kill unknown processes from the helper. Close the adapter you started, or use `--port <free-port>` and configure the Blockbench plugin to the same port. |
+| Plugin disconnected / stale protocol | Rebuild, reload or reinstall `dist/plugin/minecraft_blockbench_mcp.js`, verify matching port/secret settings, reconnect Blockbench, and rerun. Some stale-plugin protocol failures are only observable as a disconnected-plugin precondition. |
+| GeckoLib unavailable | Install or enable the GeckoLib Models & Animations plugin in Blockbench and rerun. |
+| Required tool absent | Rebuild and reload the current Blockbench MCP plugin bundle. |
+| Automated frame hashes match | Treat the smoke artifacts as not ready for visual review; inspect the generated report and adjust/fix the runtime path before claiming a live-smoke pass. |
+
 ## Troubleshooting
 
 | Symptom | Check |

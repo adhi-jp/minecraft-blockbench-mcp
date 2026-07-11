@@ -13,6 +13,7 @@
     "build:adapter": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist/adapter', { recursive: true, force: true }); rmSync('dist/shared', { recursive: true, force: true });\" && tsc -p tsconfig.adapter.json",
     "build:plugin": "node scripts/build-plugin.mjs",
     "test": "node --test --import tsx tests/*.test.ts",
+    "smoke:geckolib-live": "node scripts/smoke-geckolib-animation-frame.mjs",
     "dev": "tsx src/adapter/cli.ts"
   },
   "engines": {
