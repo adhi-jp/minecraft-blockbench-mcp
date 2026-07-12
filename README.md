@@ -1,4 +1,4 @@
-# minecraft-blockbench-mcp
+# @adhisang/minecraft-blockbench-mcp
 
 MCP integration for [Blockbench](https://www.blockbench.net/): a Claude Code-launched
 **stdio MCP adapter** plus a **Blockbench desktop plugin**, connected over a
@@ -18,7 +18,39 @@ The adapter is only a compatibility shim: it never edits model files itself.
 Every operation is executed (or rejected) by the plugin inside Blockbench,
 with undo entries and viewport refreshes.
 
-## Prerequisites
+## Package installation
+
+The npm package contains both the stdio adapter and the compiled Blockbench
+desktop plugin. Install it in a persistent directory so Blockbench can continue
+loading the same plugin file after npm exits:
+
+```sh
+mkdir minecraft-blockbench-mcp
+cd minecraft-blockbench-mcp
+npm init -y
+npm install @adhisang/minecraft-blockbench-mcp
+```
+
+The two package entry points are then:
+
+- Adapter: `node_modules/@adhisang/minecraft-blockbench-mcp/dist/adapter/cli.js`
+- Blockbench plugin: `node_modules/@adhisang/minecraft-blockbench-mcp/dist/plugin/minecraft_blockbench_mcp.js`
+
+Use absolute paths when registering the adapter and loading the plugin. To
+upgrade both components together, run `npm update @adhisang/minecraft-blockbench-mcp`
+in the installation directory, then reload the plugin in Blockbench.
+
+For adapter-only experiments, the package also exposes the
+`minecraft-blockbench-mcp` executable and can be started with:
+
+```sh
+npx -y @adhisang/minecraft-blockbench-mcp
+```
+
+The adapter does not install or launch Blockbench and does not automatically
+load the desktop plugin.
+
+## Development prerequisites
 
 - Node.js >= 22
 - Blockbench 5.1.x **desktop** (this repository expects its source checkout at
@@ -30,7 +62,7 @@ cd external/blockbench
 npm run generate-types
 ```
 
-## Build
+## Development build
 
 ```sh
 npm install
@@ -48,6 +80,10 @@ plugin refuses to connect until the same secret is entered in its settings.
 Pick any random string (for example `openssl rand -hex 16`).
 
 ### 2. Register the adapter in Claude Code
+
+For an npm installation, replace the example adapter path below with the
+absolute path under the persistent installation directory described in
+[Package installation](#package-installation).
 
 ```sh
 claude mcp add blockbench -e BLOCKBENCH_MCP_SECRET=<your-secret> -- node /path/to/minecraft-blockbench-mcp/dist/adapter/cli.js

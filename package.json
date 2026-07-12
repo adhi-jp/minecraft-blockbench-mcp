@@ -1,25 +1,51 @@
 {
-  "name": "minecraft-blockbench-mcp",
+  "name": "@adhisang/minecraft-blockbench-mcp",
   "version": "0.1.0",
   "description": "MCP integration for Blockbench: a Claude Code-launched stdio MCP adapter plus a Blockbench desktop plugin for AI-assisted Minecraft Java block/item model editing.",
-  "private": true,
   "type": "module",
   "bin": {
     "minecraft-blockbench-mcp": "dist/adapter/cli.js"
   },
+  "files": [
+    "dist/**/*.js",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "check": "tsc -p tsconfig.adapter.json --noEmit && tsc -p tsconfig.plugin.json --noEmit",
     "build": "npm run build:adapter && npm run build:plugin",
     "build:adapter": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist/adapter', { recursive: true, force: true }); rmSync('dist/shared', { recursive: true, force: true });\" && tsc -p tsconfig.adapter.json",
     "build:plugin": "node scripts/build-plugin.mjs",
+    "prepack": "npm run build",
+    "start": "node dist/adapter/cli.js",
     "test": "node --test --import tsx tests/*.test.ts",
+    "test:package": "node scripts/verify-package.mjs",
+    "test:coverage": "node --test --import tsx --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=70 --test-coverage-functions=80 tests/*.test.ts",
+    "test:coverage:lcov": "node --input-type=module -e \"import { mkdirSync } from 'node:fs'; mkdirSync('coverage', { recursive: true });\" && node --test --import tsx --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-coverage-lines=80 --test-coverage-branches=70 --test-coverage-functions=80 tests/*.test.ts",
     "smoke:geckolib-live": "node scripts/smoke-geckolib-animation-frame.mjs",
     "dev": "tsx src/adapter/cli.ts"
   },
   "engines": {
     "node": ">=22"
   },
+  "keywords": [
+    "blockbench",
+    "mcp",
+    "mcp-server",
+    "minecraft",
+    "model-context-protocol"
+  ],
   "license": "MIT",
+  "author": "adhi-jp",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adhi-jp/minecraft-blockbench-mcp.git"
+  },
+  "bugs": "https://github.com/adhi-jp/minecraft-blockbench-mcp/issues",
+  "homepage": "https://github.com/adhi-jp/minecraft-blockbench-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ws": "^8.18.0",
