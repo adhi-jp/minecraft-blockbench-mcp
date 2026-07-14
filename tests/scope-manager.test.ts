@@ -136,3 +136,66 @@ test('concurrent proposals are rejected while a dialog is open', async () => {
   await first;
   assert.equal(manager.status.state, 'confirmed');
 });
+
+test('revoking while confirmation is pending prevents stale approval from restoring access', async () => {
+  let resolveDialog!: (value: boolean) => void;
+  const { manager, events, memoValue } = makeManager({
+    confirm: () => new Promise<boolean>((resolve) => { resolveDialog = resolve; }),
+  });
+  const proposal = manager.propose('/home/user/models', undefined);
+  manager.revoke();
+  resolveDialog(true);
+  await expectCommandError(proposal, 'E_SCOPE_REVOKED');
+  assert.equal(manager.status.state, 'revoked');
+  assert.equal(memoValue(), null);
+  assert.deepEqual(events.map((event) => event.state), ['proposed', 'revoked']);
+});
+
+test('disposing while native permission acquisition is pending prevents a stale grant', async () => {
+  let releaseAcquire!: () => void;
+  const acquireStarted = new Promise<void>((resolve) => { releaseAcquire = resolve; });
+  const { manager, events, memoValue } = makeManager({
+    acquire: () => {
+      manager.dispose();
+      releaseAcquire();
+      return fakeFs;
+    },
+  });
+  const proposal = manager.propose('/home/user/models', undefined);
+  await acquireStarted;
+  await expectCommandError(proposal, 'E_SCOPE_REVOKED');
+  assert.equal(manager.status.state, 'revoked');
+  assert.equal(memoValue(), null);
+  assert.deepEqual(events.map((event) => event.state), ['proposed']);
+});
+
+test('confirmation exceptions restore the prior confirmed scope and clear the proposal guard', async () => {
+  let call = 0;
+  const { manager } = makeManager({
+    confirm: async () => {
+      call += 1;
+      if (call === 2) throw new Error('dialog unavailable');
+      return true;
+    },
+  });
+  await manager.propose('/home/user/models', undefined);
+  await expectCommandError(manager.propose('/home/user/other', undefined), 'E_BLOCKBENCH_ERROR');
+  assert.deepEqual(manager.status, { state: 'confirmed', normalized_path: '/home/user/models' });
+  await manager.propose('/home/user/final', undefined);
+  assert.equal(manager.confirmedPath, '/home/user/final');
+});
+
+test('native permission exceptions restore an unsuperseded prior scope', async () => {
+  let throwOnAcquire = false;
+  const { manager } = makeManager({
+    acquire: () => {
+      if (throwOnAcquire) throw new Error('native permission failed');
+      return fakeFs;
+    },
+  });
+  await manager.propose('/home/user/models', undefined);
+  throwOnAcquire = true;
+  await expectCommandError(manager.propose('/home/user/other', undefined), 'E_BLOCKBENCH_ERROR');
+  assert.deepEqual(manager.status, { state: 'confirmed', normalized_path: '/home/user/models' });
+  assert.equal(manager.fs, fakeFs);
+});

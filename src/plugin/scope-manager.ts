@@ -43,6 +43,7 @@ export class ScopeManager {
   #normalizedPath: string | null = null;
   #fs: ScopedFsLike | null = null;
   #proposalInFlight = false;
+  #generation = 0;
 
   constructor(options: ScopeManagerOptions) {
     this.#options = options;
@@ -110,10 +111,12 @@ export class ScopeManager {
       });
     }
     this.#proposalInFlight = true;
+    const proposalGeneration = ++this.#generation;
     // Snapshot the current grant: a rejected re-proposal must not tear down
     // an already-confirmed scope.
     const previous = { state: this.#state, path: this.#normalizedPath, fs: this.#fs };
     const restorePrevious = () => {
+      if (this.#generation !== proposalGeneration) return false;
       if (previous.state === 'confirmed' && previous.fs !== null) {
         this.#state = 'confirmed';
         this.#normalizedPath = previous.path;
@@ -124,12 +127,14 @@ export class ScopeManager {
         this.#fs = null;
       }
       this.#emit();
+      return true;
     };
     this.#state = 'proposed';
     this.#normalizedPath = normalized;
     this.#emit();
     try {
       const confirmed = await this.#options.confirmDialog(normalized, reason);
+      if (this.#generation !== proposalGeneration) throw this.#supersededProposalError(normalized);
       if (!confirmed) {
         restorePrevious();
         throw new CommandError('E_SCOPE_NOT_CONFIRMED', 'The Blockbench user rejected the proposed scoped directory.', {
@@ -137,7 +142,14 @@ export class ScopeManager {
           proposed_path: normalized,
         });
       }
-      const fs = this.#options.acquireScopedFs(normalized);
+      let fs: ScopedFsLike | null;
+      try {
+        fs = this.#options.acquireScopedFs(normalized);
+      } catch (error) {
+        restorePrevious();
+        throw this.#dependencyError('native_permission_exception', normalized, error);
+      }
+      if (this.#generation !== proposalGeneration) throw this.#supersededProposalError(normalized);
       if (fs === null) {
         restorePrevious();
         throw new CommandError(
@@ -152,6 +164,10 @@ export class ScopeManager {
       this.#options.memo.set(normalized);
       this.#emit();
       return { state: 'confirmed', normalized_path: normalized };
+    } catch (error) {
+      if (error instanceof CommandError) throw error;
+      restorePrevious();
+      throw this.#dependencyError('confirmation_exception', normalized, error);
     } finally {
       this.#proposalInFlight = false;
     }
@@ -159,7 +175,9 @@ export class ScopeManager {
 
   /** In-session revocation by the Blockbench user. */
   revoke(): void {
+    this.#generation += 1;
     this.#fs = null;
+    this.#options.memo.set(null);
     if (this.#state === 'confirmed' || this.#state === 'proposed') {
       this.#state = 'revoked';
       this.#emit();
@@ -168,6 +186,23 @@ export class ScopeManager {
 
   /** Called on plugin unload: drop the handle without emitting further events. */
   dispose(): void {
+    this.#generation += 1;
     this.#fs = null;
+    this.#state = 'revoked';
+  }
+
+  #supersededProposalError(path: string): CommandError {
+    return new CommandError('E_SCOPE_REVOKED', 'The scoped-directory proposal was cancelled by a newer scope transition.', {
+      reason: 'proposal_superseded',
+      proposed_path: path,
+    });
+  }
+
+  #dependencyError(reason: string, path: string, error: unknown): CommandError {
+    return new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench could not complete the scoped-directory proposal.', {
+      reason,
+      proposed_path: path,
+      cause: error instanceof Error ? error.name : 'unknown_error',
+    });
   }
 }
