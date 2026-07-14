@@ -72,6 +72,8 @@ export class WsBridge {
   #heartbeatTimer: NodeJS.Timeout | null = null;
   #heartbeatMisses = 0;
   #listening = false;
+  #sockets = new Set<WebSocket>();
+  #handshakeTimers = new Map<WebSocket, NodeJS.Timeout>();
 
   constructor(options: BridgeOptions) {
     this.#options = options;
@@ -139,6 +141,9 @@ export class WsBridge {
     this.#server = null;
     this.#listening = false;
     if (server !== null) {
+      for (const timer of this.#handshakeTimers.values()) clearTimeout(timer);
+      this.#handshakeTimers.clear();
+      for (const socket of this.#sockets) socket.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }
@@ -163,17 +168,26 @@ export class WsBridge {
         });
       }, timeout);
       this.#pending.set(id, { resolve, timer });
-      active.send(JSON.stringify({ type: 'request', id, command, params }));
+      try {
+        active.send(JSON.stringify({ type: 'request', id, command, params }));
+      } catch {
+        clearTimeout(timer);
+        this.#pending.delete(id);
+        resolve({ ok: false, error: makeError('E_PLUGIN_NOT_CONNECTED', 'Plugin disconnected before the request could be sent.') });
+        this.#detachActive('request send failed');
+      }
     });
   }
 
   #handleConnection(socket: WebSocket): void {
+    this.#sockets.add(socket);
     let authenticated = false;
     const handshakeTimer = setTimeout(() => {
       if (!authenticated) {
         socket.close(CLOSE_CODES.handshakeTimeout, 'handshake_timeout');
       }
     }, this.#options.handshakeTimeoutMs);
+    this.#handshakeTimers.set(socket, handshakeTimer);
 
     socket.on('message', (data: RawData) => {
       if (!authenticated) {
@@ -216,14 +230,14 @@ export class WsBridge {
           capabilities: hello.capabilities,
           scope: null,
         };
-        socket.send(
+        if (!this.#send(socket,
           JSON.stringify({
             type: 'hello_ack',
             protocol_version: PROTOCOL_VERSION,
             heartbeat_interval_ms: this.#options.heartbeatIntervalMs,
             capabilities: ['java_block', 'geckolib_model'],
           }),
-        );
+        )) return;
         this.#startHeartbeat(socket);
         this.#options.log(
           `Plugin session authenticated (plugin ${hello.plugin_version}, Blockbench ${hello.blockbench_version}).`,
@@ -239,6 +253,8 @@ export class WsBridge {
 
     socket.on('close', () => {
       clearTimeout(handshakeTimer);
+      this.#handshakeTimers.delete(socket);
+      this.#sockets.delete(socket);
       if (socket === this.#active) {
         this.#detachActive('connection closed');
       }
@@ -337,6 +353,18 @@ export class WsBridge {
     }
     if (active !== null) {
       this.#options.log(`Plugin session ended (${reason}).`);
+    }
+  }
+
+  #send(socket: WebSocket, data: string): boolean {
+    if (socket.readyState !== WebSocket.OPEN) return false;
+    try {
+      socket.send(data);
+      return true;
+    } catch {
+      socket.terminate();
+      if (socket === this.#active) this.#detachActive('socket send failed');
+      return false;
     }
   }
 }

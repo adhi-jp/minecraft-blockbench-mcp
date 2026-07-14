@@ -15,6 +15,7 @@ export const DEFAULTS = {
   scopeProposalTimeoutMs: 120_000,
   heartbeatIntervalMs: 15_000,
   heartbeatMissLimit: 2,
+  handshakeTimeoutMs: 5_000,
   maxMessageBytes: 16 * 1024 * 1024,
   screenshotDefaultSize: 512,
   screenshotMaxSize: 1920,

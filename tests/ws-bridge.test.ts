@@ -306,6 +306,18 @@ test('responses with stale correlation ids are ignored', async (t) => {
   assert.equal(bridge.connected, true, 'a stale response must not break the session');
 });
 
+test('stop terminates a silent unauthenticated socket without waiting for its handshake deadline', async () => {
+  const { bridge, port } = await startBridge({ handshakeTimeoutMs: 5_000 });
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  await once(socket, 'open');
+  const closed = once(socket, 'close');
+  const started = Date.now();
+  await bridge.stop();
+  await closed;
+  assert.ok(Date.now() - started < 500, 'shutdown should not wait for the handshake timeout');
+  assert.equal(socket.readyState, WebSocket.CLOSED);
+});
+
 test('requests without a connected plugin fail immediately with E_PLUGIN_NOT_CONNECTED', async (t) => {
   const { bridge } = await startBridge();
   t.after(() => bridge.stop());

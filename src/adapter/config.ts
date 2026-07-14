@@ -28,7 +28,7 @@ export const CONFIG_DEFAULTS: AdapterConfig = {
   requestTimeoutMs: DEFAULTS.requestTimeoutMs,
   heartbeatIntervalMs: DEFAULTS.heartbeatIntervalMs,
   heartbeatMissLimit: DEFAULTS.heartbeatMissLimit,
-  handshakeTimeoutMs: 5_000,
+  handshakeTimeoutMs: DEFAULTS.handshakeTimeoutMs,
   maxMessageBytes: DEFAULTS.maxMessageBytes,
 };
 

@@ -3,6 +3,7 @@
 // the Blockbench renderer and inside Node tests.
 import {
   PROTOCOL_VERSION,
+  DEFAULTS,
   adapterToPluginMessageSchema,
   makeError,
   type ErrorCode,
@@ -70,6 +71,7 @@ export interface SessionOptions {
   /** Reconnect backoff bounds; the delay doubles per attempt up to max. */
   backoffInitialMs?: number;
   backoffMaxMs?: number;
+  authenticationTimeoutMs?: number;
   onStatusChange?: (status: SessionStatus, detail?: string) => void;
   onLog?: (line: string) => void;
 }
@@ -83,6 +85,7 @@ export class PluginSession {
   #status: SessionStatus = 'idle';
   #stopped = false;
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
+  #authenticationTimer: ReturnType<typeof setTimeout> | null = null;
   #backoffMs: number;
 
   constructor(options: SessionOptions) {
@@ -111,6 +114,7 @@ export class PluginSession {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = null;
     }
+    this.#clearAuthenticationTimer();
     const socket = this.#socket;
     this.#socket = null;
     if (socket !== null) {
@@ -137,6 +141,7 @@ export class PluginSession {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = null;
     }
+    this.#clearAuthenticationTimer();
     if (this.#status === 'connected' || this.#status === 'authenticating' || this.#status === 'connecting') {
       // Drop the current socket first; its close handler is detached so it
       // won't schedule a competing retry.
@@ -162,7 +167,7 @@ export class PluginSession {
   sendEvent(event: string, data?: unknown): void {
     const socket = this.#socket;
     if (this.#status === 'connected' && socket !== null && socket.readyState === WS_OPEN) {
-      socket.send(JSON.stringify({ type: 'event', event, data }));
+      this.#safeSend(socket, JSON.stringify({ type: 'event', event, data }));
     }
   }
 
@@ -197,7 +202,12 @@ export class PluginSession {
 
     socket.onopen = () => {
       this.#setStatus('authenticating');
-      socket.send(
+      this.#authenticationTimer = setTimeout(() => {
+        if (this.#socket !== socket || this.#status !== 'authenticating') return;
+        this.#log('Plugin authentication timed out; reconnecting.');
+        this.#closeSocket(socket, 4408, 'authentication_timeout');
+      }, this.#options.authenticationTimeoutMs ?? DEFAULTS.handshakeTimeoutMs);
+      this.#safeSend(socket,
         JSON.stringify({
           type: 'hello',
           protocol_version: PROTOCOL_VERSION,
@@ -215,6 +225,7 @@ export class PluginSession {
 
     socket.onclose = (event: { code: number }) => {
       if (this.#socket !== socket) return;
+      this.#clearAuthenticationTimer();
       this.#socket = null;
       const authFailure = AUTH_CLOSE_CODES.has(event.code);
       if (authFailure) {
@@ -243,6 +254,7 @@ export class PluginSession {
   }
 
   async #handleMessage(socket: WebSocketLike, raw: string): Promise<void> {
+    if (socket !== this.#socket) return;
     let json: unknown;
     try {
       json = JSON.parse(raw);
@@ -258,6 +270,7 @@ export class PluginSession {
     const message = parsed.data;
 
     if (message.type === 'hello_ack') {
+      this.#clearAuthenticationTimer();
       this.#backoffMs = this.#options.backoffInitialMs ?? 1_000;
       this.#setStatus('connected');
       this.#log('Authenticated with the MCP adapter.');
@@ -292,7 +305,37 @@ export class PluginSession {
       }
     }
     if (socket.readyState === WS_OPEN) {
-      socket.send(JSON.stringify(response));
+      this.#safeSend(socket, JSON.stringify(response));
+    }
+  }
+
+  #clearAuthenticationTimer(): void {
+    if (this.#authenticationTimer !== null) {
+      clearTimeout(this.#authenticationTimer);
+      this.#authenticationTimer = null;
+    }
+  }
+
+  #safeSend(socket: WebSocketLike, data: string): boolean {
+    if (socket !== this.#socket || socket.readyState !== WS_OPEN) return false;
+    try {
+      socket.send(data);
+      return true;
+    } catch (error) {
+      this.#log(`WebSocket send failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.#closeSocket(socket, 1011, 'send_failed');
+      return false;
+    }
+  }
+
+  #closeSocket(socket: WebSocketLike, code: number, reason: string): void {
+    if (socket !== this.#socket) return;
+    this.#clearAuthenticationTimer();
+    try {
+      socket.close(code, reason);
+    } catch {
+      this.#socket = null;
+      this.#scheduleRetry(false);
     }
   }
 }

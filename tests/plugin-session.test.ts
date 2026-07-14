@@ -248,3 +248,134 @@ test('scope_changed events reach the adapter cache through sendEvent', async (t)
   await waitFor(() => bridge.pluginInfo?.scope?.state === 'confirmed');
   assert.equal(bridge.pluginInfo?.scope?.normalized_path, '/home/user/scope');
 });
+
+class FakeSocket implements WebSocketLike {
+  readyState = 0;
+  onopen: ((event: unknown) => void) | null = null;
+  onmessage: ((event: unknown) => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
+  onerror: ((event: unknown) => void) | null = null;
+  sent: string[] = [];
+  throwOnSend = false;
+
+  send(data: string): void {
+    if (this.throwOnSend) throw new Error('socket closed during send');
+    this.sent.push(data);
+  }
+
+  close(code = 1000): void {
+    this.readyState = 3;
+    this.onclose?.({ code });
+  }
+
+  open(): void {
+    this.readyState = 1;
+    this.onopen?.({});
+  }
+
+  message(value: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(value) });
+  }
+}
+
+test('a synchronous hello send failure is contained and enters retry lifecycle', async () => {
+  const socket = new FakeSocket();
+  socket.throwOnSend = true;
+  const { session, statuses } = makeSession(0, {
+    createWebSocket: () => socket,
+    backoffInitialMs: 10,
+    backoffMaxMs: 10,
+  });
+  session.start();
+  assert.doesNotThrow(() => socket.open());
+  await waitFor(() => statuses.includes('waiting_retry'));
+  session.stop();
+});
+
+test('sendEvent contains a close-at-send failure', async () => {
+  const socket = new FakeSocket();
+  const { session, statuses } = makeSession(0, {
+    createWebSocket: () => socket,
+    backoffInitialMs: 10,
+    backoffMaxMs: 10,
+  });
+  session.registerHandler('get_project_state', () => ({ open: false }));
+  session.start();
+  socket.open();
+  socket.message({ type: 'hello_ack', protocol_version: 5, heartbeat_interval_ms: 100, capabilities: [] });
+  socket.throwOnSend = true;
+  assert.doesNotThrow(() => session.sendEvent('scope_changed', { state: 'revoked' }));
+  await waitFor(() => statuses.includes('waiting_retry'));
+  session.stop();
+});
+
+test('command response sending contains a close-at-send failure after the handler completes', async () => {
+  const socket = new FakeSocket();
+  const { session, statuses } = makeSession(0, {
+    createWebSocket: () => socket,
+    backoffInitialMs: 10,
+    backoffMaxMs: 10,
+  });
+  session.registerHandler('get_project_state', () => {
+    socket.throwOnSend = true;
+    return { open: false };
+  });
+  session.start();
+  socket.open();
+  socket.message({ type: 'hello_ack', protocol_version: 5, heartbeat_interval_ms: 100, capabilities: [] });
+  socket.message({ type: 'request', id: 'request-1', command: 'get_project_state', params: {} });
+  await waitFor(() => statuses.includes('waiting_retry'));
+  session.stop();
+});
+
+test('an acknowledgement from a replaced socket cannot authenticate the current session', () => {
+  const sockets: FakeSocket[] = [];
+  const { session } = makeSession(0, {
+    createWebSocket: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+  });
+  session.start();
+  const stale = sockets[0]!;
+  stale.open();
+  session.reconnectNow();
+  stale.message({ type: 'hello_ack', protocol_version: 5, heartbeat_interval_ms: 100, capabilities: [] });
+  assert.equal(session.status, 'connecting');
+  session.stop();
+});
+
+test('missing hello acknowledgement closes the socket and schedules retry', async () => {
+  const sockets: FakeSocket[] = [];
+  const { session, statuses } = makeSession(0, {
+    createWebSocket: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    authenticationTimeoutMs: 20,
+    backoffInitialMs: 10,
+    backoffMaxMs: 10,
+  });
+  session.start();
+  sockets[0]!.open();
+  await waitFor(() => statuses.includes('waiting_retry'));
+  assert.equal(sockets[0]!.readyState, 3);
+  session.stop();
+});
+
+test('hello acknowledgement cancels the authentication deadline', async () => {
+  const socket = new FakeSocket();
+  const { session } = makeSession(0, {
+    createWebSocket: () => socket,
+    authenticationTimeoutMs: 20,
+  });
+  session.start();
+  socket.open();
+  socket.message({ type: 'hello_ack', protocol_version: 5, heartbeat_interval_ms: 100, capabilities: [] });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(session.status, 'connected');
+  assert.equal(socket.readyState, 1);
+  session.stop();
+});
