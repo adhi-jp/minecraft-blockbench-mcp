@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import {
   PROTOCOL_VERSION,
+  COMMAND_SPECS,
   pluginToAdapterMessageSchema,
   scopeStatusSchema,
   makeError,
@@ -63,6 +64,15 @@ function secretsMatch(expected: string, provided: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+export function listenerSetupIssue(error: NodeJS.ErrnoException, port: number): SetupIssue {
+  return error.code === 'EADDRINUSE'
+    ? { code: 'E_PORT_IN_USE', message: `WebSocket port 127.0.0.1:${port} is already in use.` }
+    : {
+        code: 'E_LISTENER_FAILED',
+        message: `WebSocket listener failed to start on 127.0.0.1:${port} (${error.code ?? 'unknown error'}).`,
+      };
+}
+
 export class WsBridge {
   readonly #options: BridgeOptions;
   #server: WebSocketServer | null = null;
@@ -110,16 +120,7 @@ export class WsBridge {
         maxPayload: this.#options.maxMessageBytes,
       });
       const onListenError = (error: NodeJS.ErrnoException) => {
-        const issue: SetupIssue =
-          error.code === 'EADDRINUSE'
-            ? {
-                code: 'E_PORT_IN_USE',
-                message: `WebSocket port 127.0.0.1:${this.#options.port} is already in use.`,
-              }
-            : {
-                code: 'E_PORT_IN_USE',
-                message: `WebSocket listener failed to start on 127.0.0.1:${this.#options.port}: ${error.code ?? error.message}`,
-              };
+        const issue = listenerSetupIssue(error, this.#options.port);
         resolve({ ok: false, issue });
       };
       server.once('error', onListenError);
@@ -162,9 +163,17 @@ export class WsBridge {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
+        const spec = command in COMMAND_SPECS ? COMMAND_SPECS[command as keyof typeof COMMAND_SPECS] : undefined;
+        const details = spec?.mutates
+          ? {
+              execution_state: 'unknown',
+              retry: 'Do not retry automatically; the plugin may have completed the command.',
+              reconciliation: this.#reconciliationFor(command),
+            }
+          : undefined;
         resolve({
           ok: false,
-          error: makeError('E_TIMEOUT', `The plugin did not answer within ${timeout} ms (command ${command}).`),
+          error: makeError('E_TIMEOUT', `The plugin did not answer within ${timeout} ms (command ${command}).`, details),
         });
       }, timeout);
       this.#pending.set(id, { resolve, timer });
@@ -366,5 +375,21 @@ export class WsBridge {
       if (socket === this.#active) this.#detachActive('socket send failed');
       return false;
     }
+  }
+
+  #reconciliationFor(command: string): { command?: string; manual_check?: string } {
+    if (command === 'propose_scoped_directory') return { command: 'get_plugin_status' };
+    if (new Set([
+      'write_files',
+      'save_project',
+      'open_model',
+      'open_geckolib_model',
+      'export_model',
+      'export_geckolib_model',
+      'export_geckolib_animations',
+    ]).has(command)) {
+      return { command: 'read_file', manual_check: 'Inspect the target path in Blockbench or on disk before retrying.' };
+    }
+    return { command: 'get_project_state', manual_check: 'Read back the affected objects before retrying the mutation.' };
   }
 }

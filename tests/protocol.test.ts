@@ -39,6 +39,7 @@ test('error code table is stable and free of duplicates', () => {
     'E_AUTH_FAILED',
     'E_SESSION_EXISTS',
     'E_PORT_IN_USE',
+    'E_LISTENER_FAILED',
     'E_PROTOCOL_MISMATCH',
     'E_TIMEOUT',
     'E_INVALID_PARAMS',

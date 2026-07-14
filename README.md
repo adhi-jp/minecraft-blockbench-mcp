@@ -327,6 +327,7 @@ Common failures:
 | --- | --- |
 | `health` reports `E_SECRET_MISSING` | Configure `--secret` / `BLOCKBENCH_MCP_SECRET` for the adapter. |
 | `health` reports `E_PORT_IN_USE` | Another process (possibly an orphaned adapter) holds the port; change `--port` on both sides or free it. |
+| `health` reports `E_LISTENER_FAILED` | The operating system or runtime could not create the loopback listener; check local network permissions and platform policy, then restart the adapter. |
 | Plugin shows “rejected the connection” | Port or secret mismatch between adapter and plugin settings. |
 | Plugin loads but nothing happens | Open the Blockbench devtools console (`Ctrl+Shift+I`); Blockbench logs plugin load errors there without any UI notice. |
 | File tools fail with `E_SCOPE_*` codes | The scoped directory is unconfirmed, expired (reload), or revoked — run `propose_scoped_directory` again. |

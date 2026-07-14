@@ -4,7 +4,7 @@ import { once } from 'node:events';
 
 import WebSocket from 'ws';
 
-import { WsBridge, CLOSE_CODES } from '../src/adapter/ws-bridge.js';
+import { WsBridge, CLOSE_CODES, listenerSetupIssue } from '../src/adapter/ws-bridge.js';
 import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
 
 const SECRET = 'test-secret-abc123';
@@ -106,6 +106,15 @@ test('port conflicts are reported as E_PORT_IN_USE without throwing', async (t) 
   assert.equal(started.ok, false);
   if (!started.ok) assert.equal(started.issue.code, 'E_PORT_IN_USE');
   await second.stop();
+});
+
+test('listener failures other than address conflicts use a truthful setup error', () => {
+  const issue = listenerSetupIssue(Object.assign(new Error('secret path details'), { code: 'EPERM' }), 39731);
+  assert.deepEqual(issue, {
+    code: 'E_LISTENER_FAILED',
+    message: 'WebSocket listener failed to start on 127.0.0.1:39731 (EPERM).',
+  });
+  assert.ok(!issue.message.includes('secret path details'));
 });
 
 test('a valid hello authenticates, receives hello_ack with capabilities, and takes the session lock', async (t) => {
@@ -293,6 +302,35 @@ test('an unanswered request times out with E_TIMEOUT', async (t) => {
   const outcome = await bridge.request('validate_project', {});
   assert.equal(outcome.ok, false);
   assert.equal(outcome.error?.code, 'E_TIMEOUT');
+  assert.equal(outcome.error?.details, undefined);
+});
+
+test('a mutating timeout reports unknown execution outcome and reconciliation guidance', async (t) => {
+  const { bridge, port } = await startBridge({ requestTimeoutMs: 30 });
+  t.after(() => bridge.stop());
+  const { socket } = await connectAuthenticated(port);
+  t.after(() => socket.close());
+
+  let requestId = '';
+  socket.on('message', (data) => {
+    const frame = JSON.parse(String(data));
+    if (frame.type === 'request') requestId = frame.id;
+  });
+  const outcome = await bridge.request('create_cubes', {});
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_TIMEOUT');
+  assert.deepEqual(outcome.error?.details, {
+    execution_state: 'unknown',
+    retry: 'Do not retry automatically; the plugin may have completed the command.',
+    reconciliation: {
+      command: 'get_project_state',
+      manual_check: 'Read back the affected objects before retrying the mutation.',
+    },
+  });
+  assert.notEqual(requestId, '');
+  socket.send(JSON.stringify({ type: 'response', id: requestId, ok: true, result: { uuids: ['late'] } }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(bridge.connected, true, 'late completion must be discarded without resolving the caller again');
 });
 
 test('responses with stale correlation ids are ignored', async (t) => {
