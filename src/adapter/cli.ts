@@ -3,6 +3,7 @@
 // that supports local stdio servers). stdout carries MCP JSON-RPC frames;
 // all logging goes to stderr and never includes the shared secret.
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -10,6 +11,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import { WsBridge } from './ws-bridge.js';
 import { buildMcpServer } from './mcp-server.js';
+import { resolveDefaultConfigPath } from '../shared/config-path.js';
 import { routeCli } from '../setup/route.js';
 
 function logLine(line: string): void {
@@ -26,8 +28,25 @@ export async function main(): Promise<void> {
     return;
   }
 
-  const { config, issues } = loadConfig(process.argv.slice(2), process.env, (path) =>
-    readFileSync(path, 'utf8'),
+  const implicitDefaultPath = resolveDefaultConfigPath({
+    platform: process.platform,
+    xdgConfigHome: process.env.XDG_CONFIG_HOME,
+    home: process.env.HOME ?? homedir(),
+    appData: process.env.APPDATA,
+    userProfile: process.env.USERPROFILE ?? homedir(),
+  });
+  const { config, issues, configSource } = loadConfig(
+    process.argv.slice(2),
+    process.env,
+    (path) => readFileSync(path, 'utf8'),
+    implicitDefaultPath,
+  );
+  logLine(
+    configSource.kind === 'none'
+      ? 'Config source: no config file (CLI/env/defaults only).'
+      : configSource.kind === 'explicit-failed'
+        ? `Config source: ${configSource.path} (explicit, failed to load — see the setup issue below).`
+        : `Config source: ${configSource.path} (${configSource.kind === 'default' ? 'default location' : 'explicit'}).`,
   );
   for (const issue of issues) {
     logLine(`Setup issue (${issue.code}): ${issue.message}`);

@@ -20,6 +20,11 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const cliPath = join(projectRoot, 'dist', 'adapter', 'cli.js');
 let nextPort = 40200;
 
+// The adapter resolves an implicit per-user default config file; point every
+// spawned child at an empty config home so a developer machine with a real
+// `minecraft-blockbench-mcp setup` state cannot leak into these tests.
+const emptyConfigHome = mkdtempSync(join(tmpdir(), 'bbmcp-empty-config-home-'));
+
 async function startClient(options: {
   port: number;
   secret?: string | undefined;
@@ -31,6 +36,10 @@ async function startClient(options: {
   }
   delete env.BLOCKBENCH_MCP_SECRET;
   delete env.BLOCKBENCH_MCP_CONFIG;
+  env.XDG_CONFIG_HOME = emptyConfigHome;
+  env.HOME = emptyConfigHome;
+  env.APPDATA = emptyConfigHome;
+  env.USERPROFILE = emptyConfigHome;
   if (options.secret !== undefined) env.BLOCKBENCH_MCP_SECRET = options.secret;
   if (options.configPath !== undefined) env.BLOCKBENCH_MCP_CONFIG = options.configPath;
   env.BLOCKBENCH_MCP_PORT = String(options.port);
@@ -228,7 +237,7 @@ test('port already in use: MCP still serves, health reports E_PORT_IN_USE, tools
 
 test('missing secret: MCP still serves and health reports E_SECRET_MISSING', async (t) => {
   const port = nextPort++;
-  const { client, close } = await startClient({ port });
+  const { client, close, stderrText } = await startClient({ port });
   t.after(close);
 
   const health = parseEnvelope(await client.callTool({ name: 'health', arguments: {} }));
@@ -236,6 +245,7 @@ test('missing secret: MCP still serves and health reports E_SECRET_MISSING', asy
   assert.equal(health.result?.ws_listening, false);
   const codes = (health.result?.setup_errors as Array<{ code: string }>).map((issue) => issue.code);
   assert.ok(codes.includes('E_SECRET_MISSING'));
+  assert.ok(stderrText().includes('Config source: no config file'), 'a bare spawn must not resolve any config file');
 });
 
 test('with a fake plugin attached: responses are plugin-generated, health shows plugin info, and the secret never leaks into MCP responses', async (t) => {

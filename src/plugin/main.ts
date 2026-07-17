@@ -3,7 +3,9 @@
 // WebSocket session core to Blockbench. Command handlers attach to the
 // session via registerHandler.
 import { DEFAULT_WS_PORT, PROTOCOL_VERSION } from '../shared/protocol.js';
+import { defaultConfigPathFromUserData } from '../shared/config-path.js';
 import { PluginSession } from './session.js';
+import { RendezvousSource, type RendezvousFsLike, type RendezvousSnapshot } from './rendezvous.js';
 import { ScopeManager, type ScopedFsLike } from './scope-manager.js';
 import { registerModelCommands } from './commands/model-commands.js';
 import { registerGeckolibCommands } from './commands/geckolib-commands.js';
@@ -13,6 +15,7 @@ const PLUGIN_ID = 'minecraft_blockbench_mcp';
 const PLUGIN_VERSION = '0.1.0';
 const SETTING_PORT = `${PLUGIN_ID}_port`;
 const SETTING_SECRET = `${PLUGIN_ID}_secret`;
+const SETTING_CONFIG_PATH = `${PLUGIN_ID}_config_path`;
 const MEMO_KEY = `${PLUGIN_ID}.last_confirmed_scope`;
 
 interface PluginRuntime {
@@ -72,10 +75,52 @@ function acquireScopedFs(normalizedPath: string): ScopedFsLike | null {
   return fs === undefined ? null : (fs as unknown as ScopedFsLike);
 }
 
+function acquireRendezvousFs(scopeDirectory: string, allowPrompt: boolean): RendezvousFsLike | null {
+  const options: { scope: string; message: string; show_permission_dialog?: boolean } = {
+    scope: scopeDirectory,
+    message: 'Used to read the MCP connection settings (port and shared secret) that "minecraft-blockbench-mcp setup" wrote.',
+  };
+  if (!allowPrompt) options.show_permission_dialog = false;
+  const fs = requireNativeModule('fs', options as Parameters<typeof requireNativeModule>[1] & { scope: string });
+  return fs === undefined || fs === null ? null : (fs as unknown as RendezvousFsLike);
+}
+
 function setupRuntime(): PluginRuntime {
   // Changing the port or secret reconnects immediately instead of waiting out
-  // the current backoff window.
-  const reconnectOnChange = () => runtime?.session.reconnectNow();
+  // the current backoff window. Dropping the snapshot first guarantees the
+  // immediate reconnect sees the changed values even mid-handshake.
+  let connectSnapshot: RendezvousSnapshot | null = null;
+  const reconnectOnChange = () => {
+    connectSnapshot = null;
+    runtime?.session.reconnectNow();
+  };
+
+  const rendezvous = new RendezvousSource({
+    acquireFs: acquireRendezvousFs,
+    defaultPath: () => {
+      const userData = typeof SystemInfo !== 'undefined' ? SystemInfo.user_data_directory : undefined;
+      return typeof userData === 'string' && userData !== '' ? defaultConfigPathFromUserData(userData) : null;
+    },
+    explicitPath: () => {
+      const raw = Settings.get(SETTING_CONFIG_PATH);
+      return typeof raw === 'string' ? raw.trim() : '';
+    },
+    settingsSecret: currentSecret,
+    settingsPort: currentPort,
+  });
+
+  const configPathSetting = new Setting(SETTING_CONFIG_PATH, {
+    name: 'MCP Config File Path',
+    description:
+      'Path of the config file written by "minecraft-blockbench-mcp setup". Leave empty to auto-detect the per-user default location; set it explicitly when Blockbench and the adapter run on different systems (e.g. Windows Blockbench with a WSL adapter).',
+    category: 'general',
+    type: 'text',
+    value: '',
+    onChange: () => {
+      rendezvous.noteConfigPathChanged();
+      reconnectOnChange();
+    },
+  });
   const settings: Setting[] = [
     new Setting(SETTING_PORT, {
       name: 'MCP Adapter Port',
@@ -93,12 +138,23 @@ function setupRuntime(): PluginRuntime {
       value: '',
       onChange: reconnectOnChange,
     }),
+    configPathSetting,
   ];
 
+  // One rendezvous snapshot per connect attempt: the session calls secret()
+  // as its gate (status is not yet 'authenticating'), then url(), then
+  // secret() again inside the hello (status 'authenticating'). Refreshing only
+  // outside the authenticating phase gives url and both secret reads one
+  // coherent port/secret pair even while the file is being rotated.
   const session = new PluginSession({
     createWebSocket: (url) => new WebSocket(url),
-    url: () => `ws://127.0.0.1:${currentPort()}`,
-    secret: currentSecret,
+    url: () => `ws://127.0.0.1:${(connectSnapshot ??= rendezvous.snapshot()).port}`,
+    secret: () => {
+      if (session.status !== 'authenticating' || connectSnapshot === null) {
+        connectSnapshot = rendezvous.snapshot();
+      }
+      return connectSnapshot.secret;
+    },
     pluginVersion: PLUGIN_VERSION,
     blockbenchVersion: () => Blockbench.version,
     capabilities: currentCapabilities,
@@ -161,9 +217,29 @@ function setupRuntime(): PluginRuntime {
           title: 'Minecraft Blockbench MCP',
           message:
             `Session: ${runtime?.session.status ?? 'unknown'}\n\n` +
+            `Config source: ${rendezvous.describe()}\n\n` +
             `Scoped directory: ${scopeStatus.state}` +
             (scopeStatus.normalized_path !== undefined ? ` (${scopeStatus.normalized_path})` : ''),
         });
+      },
+    }),
+    new Action(`${PLUGIN_ID}_locate_config`, {
+      name: 'Locate MCP Config File',
+      description: 'Pick the config file written by "minecraft-blockbench-mcp setup" so the plugin reads the connection settings from it.',
+      icon: 'folder_open',
+      click() {
+        Filesystem.importFile(
+          {
+            title: 'Locate MCP Config File',
+            type: 'MCP Config',
+            extensions: ['json'],
+            readtype: 'none',
+          },
+          (files) => {
+            const path = files?.[0]?.path;
+            if (typeof path === 'string' && path !== '') configPathSetting.set(path);
+          },
+        );
       },
     }),
     new Action(`${PLUGIN_ID}_revoke_scope`, {

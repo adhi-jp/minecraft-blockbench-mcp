@@ -92,6 +92,14 @@ try {
   const env = { ...process.env };
   delete env.BLOCKBENCH_MCP_SECRET;
   delete env.BLOCKBENCH_MCP_CONFIG;
+  // The adapter resolves an implicit per-user default config file; isolate the
+  // probe from any real `setup` state on this machine.
+  const emptyConfigHome = join(workDir, 'empty-config-home');
+  mkdirSync(emptyConfigHome, { recursive: true });
+  env.XDG_CONFIG_HOME = emptyConfigHome;
+  env.HOME = emptyConfigHome;
+  env.APPDATA = emptyConfigHome;
+  env.USERPROFILE = emptyConfigHome;
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cliPath],

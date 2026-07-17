@@ -97,6 +97,17 @@ existing `blockbench` registration — never done silently), `--rotate-secret`,
 report the moment the plugin connects), `--uninstall` (remove the registration
 and config file; the Blockbench-side plugin stays installed).
 
+The plugin reads that same config file directly. When Blockbench runs on the
+same system, load the plugin and approve the one-time file-access permission
+("Always allow for this plugin") — no port or secret needs to be typed, and a
+later `setup --rotate-secret` is picked up automatically. When Blockbench runs
+on Windows against a WSL adapter, set the plugin's "MCP Config File Path"
+setting to the Windows-notation path that `setup` prints (or pick the file via
+**Tools → Locate MCP Config File**). Entering "MCP Adapter Port" and "MCP
+Shared Secret" manually keeps working and takes precedence over the file. The
+adapter itself also picks the config file up automatically when started with
+no `--config`/`BLOCKBENCH_MCP_CONFIG` at all.
+
 Re-running `setup` with nothing to change is a no-op. `minecraft-blockbench-mcp
 doctor` diagnoses the current state without changing anything: it prints the
 resolved config file, the Claude Code registration, and one of four adapter
@@ -366,6 +377,7 @@ Common failures:
 | `health` reports `E_LISTENER_FAILED` | The operating system or runtime could not create the loopback listener; check local network permissions and platform policy, then restart the adapter. |
 | Plugin shows “rejected the connection” | Port or secret mismatch between adapter and plugin settings. |
 | Plugin loads but nothing happens | Open the Blockbench devtools console (`Ctrl+Shift+I`); Blockbench logs plugin load errors there without any UI notice. |
+| Plugin never connects and no permission prompt appears | Check **Tools → MCP Connection Status** for the config source. A denied file-access permission prompts again after changing "MCP Config File Path" (or use **Tools → Locate MCP Config File**); entering the port and secret manually always works. |
 | File tools fail with `E_SCOPE_*` codes | The scoped directory is unconfirmed, expired (reload), or revoked — run `propose_scoped_directory` again. |
 
 ## Development notes

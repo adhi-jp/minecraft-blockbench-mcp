@@ -4,8 +4,9 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
+import { resolveDefaultConfigPath } from '../shared/config-path.js';
 import { checkAdapterHealth, type HealthState } from './health-check.js';
 
 export interface ClaudeResult {
@@ -124,20 +125,19 @@ export function createRealDeps(cliJsPath: string): SetupDeps {
   };
 }
 
-/** Per-platform location of the shared config file. The Blockbench plugin is
- * intended to read this same file directly in a future release, so the path
- * must stay stable. */
+/** Per-platform location of the shared config file, resolved from the
+ * environment with the process home directory as a last resort. The Blockbench
+ * plugin reads the same file (deriving the base from its userData directory),
+ * so the path must stay stable. */
 export function resolveConfigPath(deps: Pick<SetupDeps, 'env' | 'osPlatform'>): string {
-  if (deps.osPlatform === 'win32') {
-    const appData = deps.env.APPDATA ?? join(deps.env.USERPROFILE ?? homedir(), 'AppData', 'Roaming');
-    return join(appData, 'minecraft-blockbench-mcp', 'config.json');
-  }
-  if (deps.osPlatform === 'darwin') {
-    return join(deps.env.HOME ?? homedir(), 'Library', 'Application Support', 'minecraft-blockbench-mcp', 'config.json');
-  }
-  const configHome =
-    deps.env.XDG_CONFIG_HOME !== undefined && deps.env.XDG_CONFIG_HOME !== ''
-      ? deps.env.XDG_CONFIG_HOME
-      : join(deps.env.HOME ?? homedir(), '.config');
-  return join(configHome, 'minecraft-blockbench-mcp', 'config.json');
+  const resolved = resolveDefaultConfigPath({
+    platform: deps.osPlatform,
+    xdgConfigHome: deps.env.XDG_CONFIG_HOME,
+    home: deps.env.HOME ?? homedir(),
+    appData: deps.env.APPDATA,
+    userProfile: deps.env.USERPROFILE ?? homedir(),
+  });
+  // Unreachable in practice: homedir() always supplies a base.
+  if (resolved === null) throw new Error('could not resolve the per-user config directory');
+  return resolved;
 }

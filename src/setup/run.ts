@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { DEFAULT_WS_PORT } from '../shared/protocol.js';
+import { parentDirectory } from '../shared/config-path.js';
 import { createRealDeps, resolveConfigPath, type SetupDeps } from './deps.js';
 import type { HealthState } from './health-check.js';
 import type { Subcommand } from './route.js';
@@ -146,11 +147,23 @@ function renderManualSteps(
       deps.out('     (Windows path unavailable: wslpath and WSL_DISTRO_NAME are both missing)');
     }
   }
-  deps.out('  2. File → Preferences → Settings → General');
-  deps.out(`     MCP Adapter Port: ${details.port}`);
-  deps.out(`     MCP Shared Secret: ${details.showSecret ? details.secret : MASKED_SECRET}`);
+  deps.out('  2. Let the plugin read the connection settings');
+  deps.out(
+    `     When Blockbench asks for permission to access "${parentDirectory(details.configPath)}", choose "Always allow for this plugin" — the plugin then reads the port and shared secret automatically.`,
+  );
+  if (deps.isWsl) {
+    const windowsConfigPath = deps.toWindowsPath(details.configPath);
+    if (windowsConfigPath !== null) {
+      deps.out('     If Blockbench runs on Windows, set "MCP Config File Path" under File → Preferences → Settings → General to:');
+      deps.out(`       ${windowsConfigPath}`);
+      deps.out('     (the permission dialog then names the equivalent \\\\wsl.localhost\\... folder)');
+    }
+  }
+  deps.out('     Manual alternative — enter the values under File → Preferences → Settings → General:');
+  deps.out(`       MCP Adapter Port: ${details.port}`);
+  deps.out(`       MCP Shared Secret: ${details.showSecret ? details.secret : MASKED_SECRET}`);
   if (!details.showSecret) {
-    deps.out('     (rerun with --show-secret to display it, or --clipboard to copy it)');
+    deps.out('       (rerun with --show-secret to display it, or --clipboard to copy it)');
   }
   deps.out('');
   deps.out(`The shared secret is stored in ${details.configPath}.`);
@@ -399,6 +412,7 @@ export async function runDoctor(deps: SetupDeps, flags: SetupFlags): Promise<num
     return 1;
   }
   deps.out(`Config file: ${configPath}`);
+  deps.out('  (per-user default location — a bare adapter invocation picks it up automatically; this probe passes it explicitly)');
 
   const existing = readConfigFile(deps, configPath);
   const port = existing.kind === 'valid' ? (existing.port ?? DEFAULT_WS_PORT) : DEFAULT_WS_PORT;

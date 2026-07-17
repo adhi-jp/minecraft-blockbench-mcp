@@ -1,7 +1,8 @@
 // Adapter configuration loading.
-// Precedence: CLI arguments > environment variables > JSON config file
-// (path given by --config / BLOCKBENCH_MCP_CONFIG only; no implicit default
-// path) > built-in defaults.
+// Precedence: CLI arguments > environment variables > explicit JSON config
+// file (--config / BLOCKBENCH_MCP_CONFIG) > implicit per-user default config
+// file (when the caller supplies its path and the file exists) > built-in
+// defaults.
 import { parseArgs } from 'node:util';
 
 import { DEFAULTS, DEFAULT_WS_PORT, type ErrorCode } from '../shared/protocol.js';
@@ -87,11 +88,17 @@ const NUMERIC_KEYS: NumericKey[] = [
   },
 ];
 
+export interface ConfigSource {
+  kind: 'explicit' | 'explicit-failed' | 'default' | 'none';
+  path?: string;
+}
+
 export function loadConfig(
   argv: string[],
   env: Record<string, string | undefined>,
   readFile: (path: string) => string,
-): { config: AdapterConfig; issues: SetupIssue[] } {
+  implicitDefaultPath?: string | null,
+): { config: AdapterConfig; issues: SetupIssue[]; configSource: ConfigSource } {
   const issues: SetupIssue[] = [];
   const config: AdapterConfig = { ...CONFIG_DEFAULTS };
 
@@ -110,11 +117,15 @@ export function loadConfig(
     },
   });
 
-  // Config file layer (lowest precedence above defaults).
+  // Config file layer (lowest precedence above defaults). An explicit path is
+  // required to exist; the implicit per-user default is used only when no
+  // explicit path is given, and a missing default file is silently fine.
   let fileValues: Record<string, unknown> = {};
-  const configPath =
+  let configSource: ConfigSource = { kind: 'none' };
+  const explicitPath =
     (typeof cli.config === 'string' ? cli.config : undefined) ?? env[`${ENV_PREFIX}CONFIG`] ?? undefined;
-  if (configPath !== undefined && configPath !== '') {
+
+  const parseConfigFile = (configPath: string, missingIsError: boolean): boolean => {
     let raw: string | null = null;
     try {
       raw = readFile(configPath);
@@ -122,28 +133,38 @@ export function loadConfig(
       // Report only the error code, never the message: fs/parser messages can
       // echo file content, and the file may contain the shared secret.
       const code = (error as NodeJS.ErrnoException).code ?? 'read error';
-      issues.push({
-        code: 'E_INVALID_PARAMS',
-        message: `Config file could not be read: ${configPath} (${code})`,
-      });
-    }
-    if (raw !== null) {
-      try {
-        const parsed: unknown = JSON.parse(raw);
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          fileValues = parsed as Record<string, unknown>;
-        } else {
-          issues.push({ code: 'E_INVALID_PARAMS', message: `Config file must contain a JSON object: ${configPath}` });
-        }
-      } catch (error) {
-        // JSON.parse messages embed raw input snippets; keep only a position hint.
-        const position = error instanceof Error ? /at position \d+/.exec(error.message)?.[0] : undefined;
+      if (missingIsError || code !== 'ENOENT') {
         issues.push({
           code: 'E_INVALID_PARAMS',
-          message: `Config file is not valid JSON: ${configPath}${position !== undefined ? ` (${position})` : ''}`,
+          message: `Config file could not be read: ${configPath} (${code})`,
         });
       }
+      return false;
     }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        fileValues = parsed as Record<string, unknown>;
+        return true;
+      }
+      issues.push({ code: 'E_INVALID_PARAMS', message: `Config file must contain a JSON object: ${configPath}` });
+    } catch (error) {
+      // JSON.parse messages embed raw input snippets; keep only a position hint.
+      const position = error instanceof Error ? /at position \d+/.exec(error.message)?.[0] : undefined;
+      issues.push({
+        code: 'E_INVALID_PARAMS',
+        message: `Config file is not valid JSON: ${configPath}${position !== undefined ? ` (${position})` : ''}`,
+      });
+    }
+    return false;
+  };
+
+  if (explicitPath !== undefined && explicitPath !== '') {
+    configSource = parseConfigFile(explicitPath, true)
+      ? { kind: 'explicit', path: explicitPath }
+      : { kind: 'explicit-failed', path: explicitPath };
+  } else if (implicitDefaultPath !== undefined && implicitDefaultPath !== null && implicitDefaultPath !== '') {
+    if (parseConfigFile(implicitDefaultPath, false)) configSource = { kind: 'default', path: implicitDefaultPath };
   }
 
   const applyNumeric = (key: NumericKey, raw: unknown, source: string): boolean => {
@@ -173,5 +194,5 @@ export function loadConfig(
   const cliSecret = typeof cli.secret === 'string' && cli.secret !== '' ? cli.secret : null;
   config.secret = cliSecret ?? envSecret ?? fileSecret;
 
-  return { config, issues };
+  return { config, issues, configSource };
 }

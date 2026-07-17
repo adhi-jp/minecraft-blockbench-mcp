@@ -50,7 +50,8 @@ interface FakeOptions {
   health?: HealthState;
   portState?: 'free' | 'held';
   isWsl?: boolean;
-  windowsPath?: string | null;
+  /** When set, the fake wslpath translates per input: prefix + backslashed path. */
+  windowsPathPrefix?: string | null;
   existingConfig?: string;
   missingBundle?: boolean;
 }
@@ -145,7 +146,10 @@ function makeWorld(options: FakeOptions = {}): FakeWorld {
     },
     probePort: async () => options.portState ?? 'free',
     checkHealth: async () => options.health ?? { state: 'waiting', codes: [] },
-    toWindowsPath: () => options.windowsPath ?? null,
+    toWindowsPath: (path) =>
+      options.windowsPathPrefix === undefined || options.windowsPathPrefix === null
+        ? null
+        : `${options.windowsPathPrefix}${path.replaceAll('/', '\\')}`,
   };
   return world;
 }
@@ -226,7 +230,9 @@ test('fresh setup writes a versioned config, registers with config-path env only
 
   const text = allOutput(world);
   assert.match(text, /1\. File → Plugins → Load Plugin from File/);
-  assert.match(text, /2\. File → Preferences → Settings → General/);
+  assert.match(text, /2\. Let the plugin read the connection settings/);
+  assert.match(text, /"Always allow for this plugin"/);
+  assert.ok(text.includes('File → Preferences → Settings → General'), 'the manual alternative keeps the verbatim menu path');
   assert.ok(text.includes(FAKE_PLUGIN));
   assertNoSecretLeak(world, written.secret as string);
   assert.match(text, /\*{8}/);
@@ -421,11 +427,16 @@ test('rewriting a corrupt config salvages its in-range port', async () => {
 });
 
 test('WSL prints both path notations; non-WSL output has no Windows path line', async () => {
-  const wsl = makeWorld({ isWsl: true, windowsPath: '\\\\wsl.localhost\\Ubuntu\\repo\\dist\\plugin\\minecraft_blockbench_mcp.js' });
+  const wsl = makeWorld({ isWsl: true, windowsPathPrefix: '\\\\wsl.localhost\\Ubuntu' });
   await runSetup(wsl.deps, flags());
   const wslText = allOutput(wsl);
   assert.ok(wslText.includes(FAKE_PLUGIN));
-  assert.ok(wslText.includes('\\\\wsl.localhost\\Ubuntu'));
+  assert.ok(wslText.includes(`\\\\wsl.localhost\\Ubuntu${FAKE_PLUGIN.replaceAll('/', '\\')}`), 'plugin path translated');
+  assert.ok(wslText.includes('"MCP Config File Path"'), 'WSL output must name the cross-boundary setting');
+  assert.ok(
+    wslText.includes(`\\\\wsl.localhost\\Ubuntu${CONFIG_PATH.replaceAll('/', '\\')}`),
+    'the translated config file path must be printed for the cross-boundary setting',
+  );
   assertNoSecretLeak(wsl, writtenSecret(wsl));
 
   const plain = makeWorld();
@@ -433,7 +444,7 @@ test('WSL prints both path notations; non-WSL output has no Windows path line', 
   assert.ok(!allOutput(plain).toLowerCase().includes('wsl'));
   assert.ok(!allOutput(plain).includes('Windows path'));
 
-  const noTranslation = makeWorld({ isWsl: true, windowsPath: null });
+  const noTranslation = makeWorld({ isWsl: true, windowsPathPrefix: null });
   await runSetup(noTranslation.deps, flags());
   assert.match(allOutput(noTranslation), /Windows path unavailable/);
 });
@@ -476,6 +487,12 @@ test('doctor without a config file says setup has not run', async () => {
   const world = makeWorld();
   assert.equal(await runDoctor(world.deps, flags()), 1);
   assert.match(allOutput(world), /Not configured — run `minecraft-blockbench-mcp setup` first\./);
+});
+
+test('doctor states that the config path is the per-user default a bare adapter picks up', async () => {
+  const world = makeWorld({ existingConfig: validConfig() });
+  await runDoctor(world.deps, flags());
+  assert.match(allOutput(world), /per-user default location — a bare adapter invocation picks it up automatically/);
 });
 
 test('uninstall removes the registration and config file and lists what it left', async () => {
@@ -537,7 +554,7 @@ test('resolveConfigPath follows the per-platform table', () => {
   );
   assert.equal(
     resolveConfigPath({ env: { APPDATA: 'C:\\Users\\u\\AppData\\Roaming' }, osPlatform: 'win32' }),
-    join('C:\\Users\\u\\AppData\\Roaming', 'minecraft-blockbench-mcp', 'config.json'),
+    'C:\\Users\\u\\AppData\\Roaming\\minecraft-blockbench-mcp\\config.json',
   );
 });
 
@@ -586,6 +603,71 @@ test('checkAdapterHealth reports E_SECRET_MISSING as broken against the real ada
     const state = await checkAdapterHealth(builtCliPath, configPath, { timeoutMs: 20_000 });
     assert.equal(state.state, 'broken');
     assert.ok(state.codes.includes('E_SECRET_MISSING'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+async function spawnAdapterForStderr(env: Record<string, string>): Promise<{ stderrText: string; health: Record<string, unknown> }> {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const childEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) childEnv[key] = value;
+  }
+  delete childEnv.BLOCKBENCH_MCP_SECRET;
+  delete childEnv.BLOCKBENCH_MCP_CONFIG;
+  delete childEnv.BLOCKBENCH_MCP_PORT;
+  delete childEnv.XDG_CONFIG_HOME;
+  Object.assign(childEnv, env);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [builtCliPath],
+    env: childEnv,
+    stderr: 'pipe',
+  });
+  const stderrChunks: string[] = [];
+  const client = new Client({ name: 'setup-cli-test', version: '0.0.0' });
+  await client.connect(transport);
+  transport.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(String(chunk)));
+  try {
+    const raw = (await client.callTool({ name: 'health', arguments: {} })) as {
+      content?: Array<{ type: string; text: string }>;
+    };
+    return { stderrText: stderrChunks.join(''), health: JSON.parse(raw.content![0].text) as Record<string, unknown> };
+  } finally {
+    await client.close();
+  }
+}
+
+test('the adapter logs its config source to stderr without the secret (explicit config)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bbmcp-source-test-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ version: 1, mode: 'shared-secret', port: 40941, secret: SENTINEL }));
+    const { stderrText } = await spawnAdapterForStderr({ BLOCKBENCH_MCP_CONFIG: configPath });
+    assert.ok(stderrText.includes(`Config source: ${configPath} (explicit).`), stderrText);
+    assert.ok(!stderrText.includes(SENTINEL));
+    assert.ok(!stderrText.includes(SENTINEL.slice(0, 12)));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a bare adapter resolves the implicit per-user default config file', { skip: process.platform !== 'linux' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bbmcp-implicit-test-'));
+  try {
+    const configDir = join(dir, 'minecraft-blockbench-mcp');
+    writeFileSync(join(dir, 'placeholder.txt'), '');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ version: 1, mode: 'shared-secret', port: 40943, secret: 'implicit-x' }));
+    const { stderrText, health } = await spawnAdapterForStderr({ XDG_CONFIG_HOME: dir });
+    assert.ok(stderrText.includes(`Config source: ${configPath} (default location).`), stderrText);
+    assert.ok(!stderrText.includes('implicit-x'), 'the default-file secret must not reach stderr');
+    const result = (health as { result?: { setup_errors?: unknown[] } }).result;
+    assert.deepEqual(result?.setup_errors ?? [], [], 'the default file supplies the secret, so no setup errors');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
