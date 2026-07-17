@@ -3,18 +3,29 @@
 // that supports local stdio servers). stdout carries MCP JSON-RPC frames;
 // all logging goes to stderr and never includes the shared secret.
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { loadConfig } from './config.js';
 import { WsBridge } from './ws-bridge.js';
 import { buildMcpServer } from './mcp-server.js';
+import { routeCli } from '../setup/route.js';
 
 function logLine(line: string): void {
   process.stderr.write(`[minecraft-blockbench-mcp] ${line}\n`);
 }
 
 export async function main(): Promise<void> {
+  // `setup`/`doctor` at argv[2] run the guided-installation CLI and exit;
+  // every other invocation (including bare startup by MCP clients) serves MCP.
+  const subcommand = routeCli(process.argv[2]);
+  if (subcommand !== null) {
+    const { runSetupCli } = await import('../setup/run.js');
+    process.exitCode = await runSetupCli(subcommand, process.argv.slice(3), fileURLToPath(import.meta.url));
+    return;
+  }
+
   const { config, issues } = loadConfig(process.argv.slice(2), process.env, (path) =>
     readFileSync(path, 'utf8'),
   );

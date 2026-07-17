@@ -73,13 +73,49 @@ npm test        # protocol, scope-safety, bridge, stdio E2E, plugin-session suit
 
 ## Setup
 
-### 1. Choose a shared secret
+### Guided setup (recommended)
+
+```sh
+npx minecraft-blockbench-mcp setup   # inside the persistent npm installation directory
+npm run setup                        # in a git checkout, after npm run build
+```
+
+The `setup` command generates a shared secret, stores it in a per-user config
+file readable only by your user (Linux/WSL:
+`${XDG_CONFIG_HOME:-~/.config}/minecraft-blockbench-mcp/config.json`, macOS:
+`~/Library/Application Support/minecraft-blockbench-mcp/config.json`, Windows:
+`%APPDATA%\minecraft-blockbench-mcp\config.json`), registers the `blockbench`
+MCP server in Claude Code (default `--scope project`; the registration stores
+only the config file path, never the secret), and prints the remaining
+Blockbench steps. Under WSL the plugin path is also printed in Windows notation
+for a Windows-native Blockbench. The secret is never shown unless you pass
+`--show-secret`, or `--clipboard` to copy it without displaying it.
+
+Flags: `--scope project|user|local`, `--port <n>`, `--replace` (replace an
+existing `blockbench` registration — never done silently), `--rotate-secret`,
+`--show-secret`, `--clipboard`, `--wait <seconds>` (keep the adapter up and
+report the moment the plugin connects), `--uninstall` (remove the registration
+and config file; the Blockbench-side plugin stays installed).
+
+Re-running `setup` with nothing to change is a no-op. `minecraft-blockbench-mcp
+doctor` diagnoses the current state without changing anything: it prints the
+resolved config file, the Claude Code registration, and one of four adapter
+states (broken with remediation, port already held — usually your registered
+adapter running, waiting for Blockbench, or fully connected).
+
+Running `setup` from the npx cache (outside a persistent installation
+directory) is refused, because Blockbench keeps loading the plugin from its
+original path across restarts.
+
+### Manual setup
+
+#### 1. Choose a shared secret
 
 The adapter refuses plugin connections until a secret is configured, and the
 plugin refuses to connect until the same secret is entered in its settings.
 Pick any random string (for example `openssl rand -hex 16`).
 
-### 2. Register the adapter in Claude Code
+#### 2. Register the adapter in Claude Code
 
 For an npm installation, replace the example adapter path below with the
 absolute path under the persistent installation directory described in
@@ -103,7 +139,7 @@ The optional config file is a JSON object with keys `port`, `secret`,
 `requestTimeoutMs`, `heartbeatIntervalMs`, `heartbeatMissLimit`,
 `handshakeTimeoutMs`, `maxMessageBytes`.
 
-### 3. Load the plugin in Blockbench
+#### 3. Load the plugin in Blockbench
 
 1. Build (`npm run build`) — the plugin bundle is
    `dist/plugin/minecraft_blockbench_mcp.js`.
@@ -325,7 +361,7 @@ Common failures:
 
 | Symptom | Check |
 | --- | --- |
-| `health` reports `E_SECRET_MISSING` | Configure `--secret` / `BLOCKBENCH_MCP_SECRET` for the adapter. |
+| `health` reports `E_SECRET_MISSING` | Run `minecraft-blockbench-mcp setup`, or configure `--secret` / `BLOCKBENCH_MCP_SECRET` for the adapter. |
 | `health` reports `E_PORT_IN_USE` | Another process (possibly an orphaned adapter) holds the port; change `--port` on both sides or free it. |
 | `health` reports `E_LISTENER_FAILED` | The operating system or runtime could not create the loopback listener; check local network permissions and platform policy, then restart the adapter. |
 | Plugin shows “rejected the connection” | Port or secret mismatch between adapter and plugin settings. |

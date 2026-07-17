@@ -9,5 +9,5 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/adapter/**/*", "src/shared/**/*"]
+  "include": ["src/adapter/**/*", "src/setup/**/*", "src/shared/**/*"]
 }

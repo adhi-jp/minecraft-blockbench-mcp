@@ -14,9 +14,10 @@
   "scripts": {
     "check": "tsc -p tsconfig.adapter.json --noEmit && tsc -p tsconfig.plugin.json --noEmit",
     "build": "npm run build:adapter && npm run build:plugin",
-    "build:adapter": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist/adapter', { recursive: true, force: true }); rmSync('dist/shared', { recursive: true, force: true });\" && tsc -p tsconfig.adapter.json",
+    "build:adapter": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist/adapter', { recursive: true, force: true }); rmSync('dist/setup', { recursive: true, force: true }); rmSync('dist/shared', { recursive: true, force: true });\" && tsc -p tsconfig.adapter.json",
     "build:plugin": "node scripts/build-plugin.mjs",
     "prepack": "npm run build",
+    "setup": "node scripts/setup-wrapper.mjs",
     "start": "node dist/adapter/cli.js",
     "test": "node --test --import tsx tests/*.test.ts",
     "test:package": "node scripts/verify-package.mjs",
