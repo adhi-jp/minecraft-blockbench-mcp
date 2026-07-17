@@ -150,6 +150,7 @@ function makeWorld(options: FakeOptions = {}): FakeWorld {
       options.windowsPathPrefix === undefined || options.windowsPathPrefix === null
         ? null
         : `${options.windowsPathPrefix}${path.replaceAll('/', '\\')}`,
+    runFullAuto: async () => 'unsupported',
   };
   return world;
 }
@@ -164,6 +165,8 @@ function flags(overrides: Partial<SetupFlags> = {}): SetupFlags {
     clipboard: false,
     uninstall: false,
     waitSeconds: 0,
+    fullAuto: false,
+    blockbenchPath: undefined,
     ...overrides,
   };
 }
@@ -195,6 +198,66 @@ test('parseFlags rejects unknown flags, bad scope, bad port, bad wait', () => {
   assert.equal(parsed.flags.scope, 'user');
   assert.equal(parsed.flags.port, 40000);
   assert.equal(parsed.flags.replace, true);
+});
+
+test('parseFlags accepts --full-auto and --blockbench-path', () => {
+  const parsed = parseFlags(['--full-auto', '--blockbench-path', '/opt/Blockbench']);
+  assert.ok('flags' in parsed);
+  assert.equal(parsed.flags.fullAuto, true);
+  assert.equal(parsed.flags.blockbenchPath, '/opt/Blockbench');
+  const bare = parseFlags([]);
+  assert.ok('flags' in bare);
+  assert.equal(bare.flags.fullAuto, false);
+  assert.equal(bare.flags.blockbenchPath, undefined);
+});
+
+test('--full-auto provisions via runFullAuto and then verifies health', async () => {
+  const world = makeWorld();
+  const calls: Array<{ pluginPath: string; port: number; secret: string }> = [];
+  world.deps.runFullAuto = async (context) => {
+    calls.push({ pluginPath: context.pluginPath, port: context.port, secret: context.secret });
+    return 'provisioned';
+  };
+  world.deps.checkHealth = async () => ({ state: 'connected', codes: [] });
+  const code = await runSetup(world.deps, flags({ fullAuto: true }));
+  assert.equal(code, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].pluginPath, FAKE_PLUGIN);
+  assert.match(allOutput(world), /Fully connected/);
+  assertNoSecretLeak(world, calls[0].secret);
+});
+
+test('--full-auto still provisions when the config and registration already exist (no-op path is not taken)', async () => {
+  const world = makeWorld({
+    existingConfig: validConfig(),
+    registrationDetail: ourRegistrationDetail(CONFIG_PATH, FAKE_CLI),
+  });
+  let provisioned = false;
+  world.deps.runFullAuto = async () => {
+    provisioned = true;
+    return 'provisioned';
+  };
+  world.deps.checkHealth = async () => ({ state: 'connected', codes: [] });
+  const code = await runSetup(world.deps, flags({ fullAuto: true }));
+  assert.equal(code, 0);
+  assert.ok(provisioned, 'runFullAuto must run even when nothing needs writing');
+  assert.ok(!allOutput(world).includes('Already configured'), 'the no-op early return must not swallow --full-auto');
+});
+
+test('--full-auto on an unsupported platform falls back to the manual steps, exit 0', async () => {
+  const world = makeWorld();
+  world.deps.runFullAuto = async () => 'unsupported';
+  const code = await runSetup(world.deps, flags({ fullAuto: true }));
+  assert.equal(code, 0);
+  assert.match(allOutput(world), /Let the plugin read the connection settings/);
+});
+
+test('--full-auto that aborts exits 1 after printing the manual fallback', async () => {
+  const world = makeWorld();
+  world.deps.runFullAuto = async () => 'aborted';
+  const code = await runSetup(world.deps, flags({ fullAuto: true }));
+  assert.equal(code, 1);
+  assert.match(allOutput(world), /Load Plugin from File/);
 });
 
 test('runSetupCli returns exit code 2 on usage errors', async () => {
@@ -599,7 +662,7 @@ test('checkAdapterHealth reports E_SECRET_MISSING as broken against the real ada
   const dir = mkdtempSync(join(tmpdir(), 'bbmcp-health-test-'));
   try {
     const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ version: 1, port: 40911 }));
+    writeFileSync(configPath, JSON.stringify({ version: 1, port: 41911 }));
     const state = await checkAdapterHealth(builtCliPath, configPath, { timeoutMs: 20_000 });
     assert.equal(state.state, 'broken');
     assert.ok(state.codes.includes('E_SECRET_MISSING'));
@@ -644,7 +707,7 @@ test('the adapter logs its config source to stderr without the secret (explicit 
   const dir = mkdtempSync(join(tmpdir(), 'bbmcp-source-test-'));
   try {
     const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ version: 1, mode: 'shared-secret', port: 40941, secret: SENTINEL }));
+    writeFileSync(configPath, JSON.stringify({ version: 1, mode: 'shared-secret', port: 41941, secret: SENTINEL }));
     const { stderrText } = await spawnAdapterForStderr({ BLOCKBENCH_MCP_CONFIG: configPath });
     assert.ok(stderrText.includes(`Config source: ${configPath} (explicit).`), stderrText);
     assert.ok(!stderrText.includes(SENTINEL));
@@ -662,7 +725,7 @@ test('a bare adapter resolves the implicit per-user default config file', { skip
     const { mkdirSync } = await import('node:fs');
     mkdirSync(configDir, { recursive: true });
     const configPath = join(configDir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ version: 1, mode: 'shared-secret', port: 40943, secret: 'implicit-x' }));
+    writeFileSync(configPath, JSON.stringify({ version: 1, mode: 'shared-secret', port: 41943, secret: 'implicit-x' }));
     const { stderrText, health } = await spawnAdapterForStderr({ XDG_CONFIG_HOME: dir });
     assert.ok(stderrText.includes(`Config source: ${configPath} (default location).`), stderrText);
     assert.ok(!stderrText.includes('implicit-x'), 'the default-file secret must not reach stderr');

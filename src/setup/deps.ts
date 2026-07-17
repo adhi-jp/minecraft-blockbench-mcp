@@ -8,6 +8,7 @@ import { dirname } from 'node:path';
 
 import { resolveDefaultConfigPath } from '../shared/config-path.js';
 import { checkAdapterHealth, type HealthState } from './health-check.js';
+import { createRealFullAutoDeps, runFullAuto } from './full-auto.js';
 
 export interface ClaudeResult {
   /** null when the binary could not be spawned at all. */
@@ -36,6 +37,13 @@ export interface SetupDeps {
   checkHealth: (configPath: string, options?: { waitMs?: number }) => Promise<HealthState>;
   /** WSL-only translation to \\wsl.localhost notation; null when unavailable. */
   toWindowsPath: (path: string) => string | null;
+  /** Launches and provisions Blockbench over CDP; see src/setup/full-auto.ts. */
+  runFullAuto: (context: {
+    pluginPath: string;
+    port: number;
+    secret: string;
+    blockbenchPathOverride?: string | undefined;
+  }) => Promise<'provisioned' | 'unsupported' | 'aborted'>;
 }
 
 function detectWsl(): boolean {
@@ -49,6 +57,17 @@ function detectWsl(): boolean {
 
 export function createRealDeps(cliJsPath: string): SetupDeps {
   const isWsl = detectWsl();
+  const toWindowsPath = (path: string): string | null => {
+    const viaTool = spawnSync('wslpath', ['-w', path], { encoding: 'utf8' });
+    if (viaTool.error === undefined && viaTool.status === 0 && viaTool.stdout.trim() !== '') {
+      return viaTool.stdout.trim();
+    }
+    const distro = process.env.WSL_DISTRO_NAME;
+    if (distro !== undefined && distro !== '') {
+      return `\\\\wsl.localhost\\${distro}${path.replaceAll('/', '\\')}`;
+    }
+    return null;
+  };
   // Piping the CLI into `head` or a pager closes stdout early; exit quietly
   // instead of crashing with an unhandled EPIPE.
   process.stdout.once('error', (error: NodeJS.ErrnoException) => {
@@ -111,16 +130,19 @@ export function createRealDeps(cliJsPath: string): SetupDeps {
         });
       }),
     checkHealth: (configPath, options) => checkAdapterHealth(cliJsPath, configPath, options),
-    toWindowsPath: (path) => {
-      const viaTool = spawnSync('wslpath', ['-w', path], { encoding: 'utf8' });
-      if (viaTool.error === undefined && viaTool.status === 0 && viaTool.stdout.trim() !== '') {
-        return viaTool.stdout.trim();
-      }
-      const distro = process.env.WSL_DISTRO_NAME;
-      if (distro !== undefined && distro !== '') {
-        return `\\\\wsl.localhost\\${distro}${path.replaceAll('/', '\\')}`;
-      }
-      return null;
+    toWindowsPath,
+    runFullAuto: (context) => {
+      const out = (line: string) => process.stdout.write(`${line}\n`);
+      const fullAutoDeps = createRealFullAutoDeps(
+        {
+          osPlatform: process.platform,
+          isWsl,
+          blockbenchPathOverride: context.blockbenchPathOverride,
+          toWindowsPath,
+        },
+        out,
+      );
+      return runFullAuto(fullAutoDeps, context);
     },
   };
 }

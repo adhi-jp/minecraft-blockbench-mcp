@@ -114,6 +114,17 @@ resolved config file, the Claude Code registration, and one of four adapter
 states (broken with remediation, port already held — usually your registered
 adapter running, waiting for Blockbench, or fully connected).
 
+`setup --full-auto` goes one step further on Linux and Windows (including a
+Windows Blockbench driven from a WSL adapter): it launches Blockbench once
+with a loopback-only DevTools port, installs the plugin and applies the
+connection settings through Blockbench's own APIs, and reports the connected
+state — zero clicks inside Blockbench. The binary is auto-detected
+(`--blockbench-path <path>` overrides); a Blockbench that is already running
+aborts the run with guidance instead of being touched. Note: the DevTools port
+stays open until that Blockbench instance exits — restart Blockbench after
+provisioning to close it. On unsupported platforms (currently macOS) the
+normal setup completes and the manual steps are printed instead.
+
 Running `setup` from the npx cache (outside a persistent installation
 directory) is refused, because Blockbench keeps loading the plugin from its
 original path across restarts.

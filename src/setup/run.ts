@@ -27,6 +27,8 @@ export interface SetupFlags {
   clipboard: boolean;
   uninstall: boolean;
   waitSeconds: number;
+  fullAuto: boolean;
+  blockbenchPath: string | undefined;
 }
 
 function usage(out: (line: string) => void): void {
@@ -34,6 +36,7 @@ function usage(out: (line: string) => void): void {
   out('  minecraft-blockbench-mcp setup  [--scope project|user|local] [--port <n>] [--replace]');
   out('                                  [--rotate-secret] [--show-secret] [--clipboard]');
   out('                                  [--wait <seconds>] [--uninstall]');
+  out('                                  [--full-auto] [--blockbench-path <path>]');
   out('  minecraft-blockbench-mcp doctor [--wait <seconds>]');
 }
 
@@ -53,6 +56,8 @@ export function parseFlags(argv: string[]): { flags: SetupFlags } | { error: str
         clipboard: { type: 'boolean' },
         uninstall: { type: 'boolean' },
         wait: { type: 'string' },
+        'full-auto': { type: 'boolean' },
+        'blockbench-path': { type: 'string' },
       },
     }));
   } catch (error) {
@@ -87,6 +92,8 @@ export function parseFlags(argv: string[]): { flags: SetupFlags } | { error: str
       clipboard: values.clipboard === true,
       uninstall: values.uninstall === true,
       waitSeconds,
+      fullAuto: values['full-auto'] === true,
+      blockbenchPath: values['blockbench-path'] as string | undefined,
     },
   };
 }
@@ -310,7 +317,8 @@ export async function runSetup(deps: SetupDeps, flags: SetupFlags): Promise<numb
     registration.detail.includes(deps.cliJsPath);
 
   // Idempotent no-op: nothing to write and our registration is already there.
-  if (!needConfigWrite && registrationMatches && !flags.replace) {
+  // --full-auto still has provisioning work to do, so it skips the no-op path.
+  if (!needConfigWrite && registrationMatches && !flags.replace && !flags.fullAuto) {
     deps.out('Already configured — nothing changed.');
     deps.out(`Config file: ${configPath}`);
     if (flags.showSecret || flags.clipboard) {
@@ -385,6 +393,26 @@ export async function runSetup(deps: SetupDeps, flags: SetupFlags): Promise<numb
     if (flags.scope === 'project') {
       deps.out('  The project .mcp.json stores only the config file path — collaborators run setup themselves.');
     }
+  }
+
+  if (flags.fullAuto) {
+    const outcome = await deps.runFullAuto({
+      pluginPath,
+      port,
+      secret,
+      blockbenchPathOverride: flags.blockbenchPath,
+    });
+    if (outcome === 'provisioned') {
+      const state = await deps.checkHealth(configPath, { waitMs: Math.max(flags.waitSeconds, 60) * 1000 });
+      renderHealthState(deps, state, port);
+      return stateExitCode(state);
+    }
+    renderManualSteps(deps, { pluginPath, port, configPath, secret, showSecret: flags.showSecret });
+    if (flags.clipboard) copySecret(deps, secret);
+    if (outcome === 'aborted') return 1;
+    const unsupportedState = await deps.checkHealth(configPath, { waitMs: flags.waitSeconds * 1000 });
+    renderHealthState(deps, unsupportedState, port);
+    return stateExitCode(unsupportedState);
   }
 
   renderManualSteps(deps, { pluginPath, port, configPath, secret, showSecret: flags.showSecret });
