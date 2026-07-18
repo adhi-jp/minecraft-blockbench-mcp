@@ -21,7 +21,7 @@ import { registerModelCommands } from '../src/plugin/commands/model-commands.js'
 import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
 
 const SECRET = 'geckolib-cmd-secret-42';
-let nextPort = 40700;
+let nextPort = 47000;
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'geckolib');
 
