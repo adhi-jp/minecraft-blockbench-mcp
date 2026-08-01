@@ -71,10 +71,22 @@ class FakeTexture {
   static all: FakeTexture[] = [];
   uuid: string;
   name: string;
-  constructor(uuid: string, name: string) {
-    this.uuid = uuid;
-    this.name = name;
+  constructor(uuidOrOptions: string | { name?: string }, name?: string) {
+    if (typeof uuidOrOptions === 'string') {
+      this.uuid = uuidOrOptions;
+      this.name = name ?? '';
+      FakeTexture.all.push(this);
+    } else {
+      this.uuid = `t-assigned-${FakeTexture.all.length + 1}`;
+      this.name = uuidOrOptions.name ?? 'texture';
+    }
+  }
+  fromDataURL(_dataUrl: string): this {
+    return this;
+  }
+  add(_undo: boolean): this {
     FakeTexture.all.push(this);
+    return this;
   }
 }
 
@@ -106,6 +118,7 @@ class FakeCube {
   mirror_uv = false;
   faces: Record<string, FakeCubeFace>;
   parent: FakeParent = 'root';
+  applyTextureCalls: Array<{ texture: FakeTexture; faces: unknown }> = [];
   constructor(options: {
     uuid: string;
     name: string;
@@ -123,6 +136,9 @@ class FakeCube {
     this.rotation = options.rotation ?? [0, 0, 0];
     this.faces = options.faces;
     FakeCube.all.push(this);
+  }
+  applyTexture(texture: FakeTexture, faces: unknown): void {
+    this.applyTextureCalls.push({ texture, faces });
   }
 }
 
@@ -687,6 +703,53 @@ function makeFakeUndo(): FakeUndo {
     },
   };
 }
+
+test('assign_texture rejects an unknown cube before adding a texture', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectModelProject();
+  const undo = makeFakeUndo();
+  injectedGlobals.Undo = undo;
+  injectedGlobals.Canvas = { updateAll: () => {} };
+  const textureCount = FakeTexture.all.length;
+
+  const outcome = await harness.bridge.request('assign_texture', {
+    source: { kind: 'data_url', data_url: 'data:image/png;base64,iVBORw0KGgo=' },
+    apply_to: { cube_uuids: ['missing-cube'] },
+  });
+
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_NOT_FOUND');
+  assert.equal(FakeTexture.all.length, textureCount, 'a rejected UUID must not add an orphan texture');
+  assert.equal(undo.initCalls.length, 0, 'a rejected UUID must not start an undo entry');
+});
+
+test('assign_texture adds and applies a texture in one undo step', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { body } = injectModelProject();
+  const undo = makeFakeUndo();
+  let canvasUpdates = 0;
+  injectedGlobals.Undo = undo;
+  injectedGlobals.Canvas = { updateAll: () => (canvasUpdates += 1) };
+
+  const outcome = await harness.bridge.request('assign_texture', {
+    name: 'overlay',
+    source: { kind: 'data_url', data_url: 'data:image/png;base64,iVBORw0KGgo=' },
+    apply_to: { cube_uuids: ['c-body'] },
+  });
+
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const result = outcome.result as { texture_uuid: string; name: string; applied_to: string[] };
+  assert.equal(result.name, 'overlay');
+  assert.deepEqual(result.applied_to, ['c-body']);
+  assert.equal(FakeTexture.all.length, 2, 'the assigned texture is added to the project');
+  assert.deepEqual(body.applyTextureCalls, [{ texture: FakeTexture.all[1], faces: true }]);
+  assert.deepEqual(undo.initCalls, [{ elements: [body] }]);
+  assert.equal(undo.finishCalls.length, 1, 'the application uses one undo step');
+  assert.equal(undo.finishCalls[0]?.action, 'Apply texture');
+  assert.equal(canvasUpdates, 1);
+});
 
 /** Inject a project with one cube for UV command tests. */
 function injectUvProject(

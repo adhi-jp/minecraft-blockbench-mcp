@@ -489,6 +489,7 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
 
   register(session, 'assign_texture', (params) => {
     requireProject();
+    const cubes = params.apply_to === 'all' ? Cube.all : params.apply_to.cube_uuids.map(findCube);
     let texture: Texture;
     if (params.source.kind === 'path') {
       const resolved = resolveForIo(scope, params.source.path);
@@ -511,12 +512,11 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
 
     let appliedTo: 'all' | string[];
     if (params.apply_to === 'all') {
-      Undo.initEdit({ elements: Cube.all });
-      for (const cube of Cube.all) cube.applyTexture(texture, true);
+      Undo.initEdit({ elements: cubes });
+      for (const cube of cubes) cube.applyTexture(texture, true);
       Undo.finishEdit('Apply texture');
       appliedTo = 'all';
     } else {
-      const cubes = params.apply_to.cube_uuids.map(findCube);
       Undo.initEdit({ elements: cubes });
       for (const cube of cubes) {
         cube.applyTexture(texture, params.apply_to.faces !== undefined ? params.apply_to.faces : true);
