@@ -10,6 +10,7 @@ import { ScopeManager, type ScopedFsLike } from './scope-manager.js';
 import { registerModelCommands } from './commands/model-commands.js';
 import { registerGeckolibCommands } from './commands/geckolib-commands.js';
 import { geckolibFormatRegistered, detectGeckolibPluginVersion } from './commands/helpers.js';
+import { sanitizeDialogText, SCOPE_REASON_MAX_LENGTH } from './dialog-text.js';
 
 const PLUGIN_ID = 'minecraft_blockbench_mcp';
 const PLUGIN_VERSION = '0.1.0';
@@ -44,8 +45,8 @@ function confirmScopeDialog(normalizedPath: string, reason: string | undefined):
         title: 'Minecraft Blockbench MCP: scoped directory',
         message:
           `The connected AI client asks for file access limited to this directory:\n\n` +
-          `**${normalizedPath}**\n\n` +
-          (reason !== undefined ? `Reason: ${reason}\n\n` : '') +
+          `**${sanitizeDialogText(normalizedPath, 300)}**\n\n` +
+          (reason !== undefined ? `Reason: ${sanitizeDialogText(reason, SCOPE_REASON_MAX_LENGTH)}\n\n` : '') +
           `AI file reads and writes will be restricted to this directory until you revoke it, ` +
           `reload the plugin, or restart Blockbench.`,
         buttons: ['Allow this session', 'Deny'],
