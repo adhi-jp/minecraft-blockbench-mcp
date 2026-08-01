@@ -100,19 +100,23 @@ and config file; the Blockbench-side plugin stays installed).
 The plugin reads that same config file directly. When Blockbench runs on the
 same system, load the plugin and approve the one-time file-access permission
 ("Always allow for this plugin") — no port or secret needs to be typed, and a
-later `setup --rotate-secret` is picked up automatically. When Blockbench runs
-on Windows against a WSL adapter, set the plugin's "MCP Config File Path"
-setting to the Windows-notation path that `setup` prints (or pick the file via
+later `setup --rotate-secret` is picked up automatically by the plugin. A
+running adapter keeps the secret it started with, so the adapter (or the
+Claude Code session that launched it) must be restarted for a rotated secret
+to take effect. When Blockbench runs on Windows against a WSL adapter, set the
+plugin's "MCP Config File Path" setting to the Windows-notation path that
+`setup` prints (or pick the file via
 **Tools → Locate MCP Config File**). Entering "MCP Adapter Port" and "MCP
 Shared Secret" manually keeps working and takes precedence over the file. The
 adapter itself also picks the config file up automatically when started with
 no `--config`/`BLOCKBENCH_MCP_CONFIG` at all.
 
 Re-running `setup` with nothing to change is a no-op. `minecraft-blockbench-mcp
-doctor` diagnoses the current state without changing anything: it prints the
-resolved config file, the Claude Code registration, and one of four adapter
-states (broken with remediation, port already held — usually your registered
-adapter running, waiting for Blockbench, or fully connected).
+doctor` diagnoses the current state without changing anything: when no config
+file is resolved it reports `Not configured`; otherwise it prints the resolved
+config file, the Claude Code registration, and one of four adapter states
+(broken with remediation, port already held — usually your registered adapter
+running, waiting for Blockbench, or fully connected).
 
 `setup --full-auto` goes one step further on Linux and Windows (including a
 Windows Blockbench driven from a WSL adapter): it launches Blockbench once
@@ -163,7 +167,9 @@ The optional config file is a JSON object with keys `port`, `secret`,
 
 #### 3. Load the plugin in Blockbench
 
-1. Build (`npm run build`) — the plugin bundle is
+1. For an npm installation, select the already-built plugin bundle at
+   `node_modules/@adhisang/minecraft-blockbench-mcp/dist/plugin/minecraft_blockbench_mcp.js`.
+   For a git checkout only, build (`npm run build`) and select
    `dist/plugin/minecraft_blockbench_mcp.js`.
 2. In Blockbench: **File → Plugins → Load Plugin from File** and select that
    file.
@@ -187,6 +193,23 @@ restricted to one directory per session:
 4. Overwrites require an explicit per-file `overwrite: true` flag; multi-file
    writes preflight every destination and write nothing if any blocker exists.
    Symbolic links inside the scoped directory are rejected.
+
+## Security model
+
+The adapter listens on loopback only (`127.0.0.1`) and authenticates the
+plugin with a shared secret. The config file is user-only (`0600` on
+non-Windows systems).
+
+This design assumes every process running on the machine under your user
+account is trusted, because such a process can read the config file directly.
+On a shared multi-user machine, another local user can bind the loopback port
+before the adapter starts and obtain the secret, so this tool is intended for
+single-user desktops.
+
+AI file access is additionally gated by the in-Blockbench scoped-directory
+confirmation dialog and remains limited to the confirmed directory for the
+session. `setup --full-auto` leaves a loopback DevTools port open until that
+Blockbench instance exits; restart Blockbench after provisioning to close it.
 
 ## Tools
 
@@ -387,6 +410,7 @@ Common failures:
 | `health` reports `E_PORT_IN_USE` | Another process (possibly an orphaned adapter) holds the port; change `--port` on both sides or free it. |
 | `health` reports `E_LISTENER_FAILED` | The operating system or runtime could not create the loopback listener; check local network permissions and platform policy, then restart the adapter. |
 | Plugin shows “rejected the connection” | Port or secret mismatch between adapter and plugin settings. |
+| Rotated the secret but the plugin still reports “rejected the connection” | Restart the adapter, or the Claude Code session that launched it, so it loads the new secret. |
 | Plugin loads but nothing happens | Open the Blockbench devtools console (`Ctrl+Shift+I`); Blockbench logs plugin load errors there without any UI notice. |
 | Plugin never connects and no permission prompt appears | Check **Tools → MCP Connection Status** for the config source. A denied file-access permission prompts again after changing "MCP Config File Path" (or use **Tools → Locate MCP Config File**); entering the port and secret manually always works. |
 | File tools fail with `E_SCOPE_*` codes | The scoped directory is unconfirmed, expired (reload), or revoked — run `propose_scoped_directory` again. |
