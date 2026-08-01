@@ -256,6 +256,7 @@ class FakeSocket implements WebSocketLike {
   onclose: ((event: { code: number }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
   sent: string[] = [];
+  closeCalls: Array<{ code: number; reason?: string }> = [];
   throwOnSend = false;
 
   send(data: string): void {
@@ -263,8 +264,9 @@ class FakeSocket implements WebSocketLike {
     this.sent.push(data);
   }
 
-  close(code = 1000): void {
+  close(code = 1000, reason?: string): void {
     this.readyState = 3;
+    this.closeCalls.push({ code, reason });
     this.onclose?.({ code });
   }
 
@@ -277,6 +279,52 @@ class FakeSocket implements WebSocketLike {
     this.onmessage?.({ data: JSON.stringify(value) });
   }
 }
+
+test('requests are rejected before authentication and handled after hello_ack', async () => {
+  const unauthenticatedSocket = new FakeSocket();
+  let unauthenticatedInvocations = 0;
+  const unauthenticated = makeSession(0, {
+    createWebSocket: () => unauthenticatedSocket,
+    backoffInitialMs: 10,
+    backoffMaxMs: 10,
+  });
+  unauthenticated.session.registerHandler('get_project_state', () => {
+    unauthenticatedInvocations += 1;
+    return { open: false };
+  });
+  unauthenticated.session.start();
+  unauthenticatedSocket.open();
+  unauthenticatedSocket.message({ type: 'request', id: 'request-1', command: 'get_project_state', params: {} });
+
+  assert.equal(unauthenticatedInvocations, 0);
+  assert.equal(unauthenticatedSocket.sent.filter((frame) => JSON.parse(frame).type === 'response').length, 0);
+  assert.deepEqual(unauthenticatedSocket.closeCalls, [{ code: 4400, reason: 'unauthenticated_request' }]);
+  unauthenticated.session.stop();
+
+  const authenticatedSocket = new FakeSocket();
+  let authenticatedInvocations = 0;
+  const authenticated = makeSession(0, {
+    createWebSocket: () => authenticatedSocket,
+  });
+  authenticated.session.registerHandler('get_project_state', () => {
+    authenticatedInvocations += 1;
+    return { open: false };
+  });
+  authenticated.session.start();
+  authenticatedSocket.open();
+  authenticatedSocket.message({ type: 'hello_ack', protocol_version: 5, heartbeat_interval_ms: 100, capabilities: [] });
+  authenticatedSocket.message({ type: 'request', id: 'request-1', command: 'get_project_state', params: {} });
+  await waitFor(() => authenticatedSocket.sent.some((frame) => JSON.parse(frame).type === 'response'));
+
+  assert.equal(authenticatedInvocations, 1);
+  assert.deepEqual(JSON.parse(authenticatedSocket.sent.at(-1)!), {
+    type: 'response',
+    id: 'request-1',
+    ok: true,
+    result: { open: false },
+  });
+  authenticated.session.stop();
+});
 
 test('a synchronous hello send failure is contained and enters retry lifecycle', async () => {
   const socket = new FakeSocket();

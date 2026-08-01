@@ -277,6 +277,12 @@ export class PluginSession {
       return;
     }
 
+    if (this.#status !== 'connected') {
+      this.#log('Rejecting an unauthenticated request from the adapter.');
+      this.#closeSocket(socket, 4400, 'unauthenticated_request');
+      return;
+    }
+
     // request
     let response: { type: 'response'; id: string; ok: boolean; result?: unknown; error?: ErrorPayload };
     const handler = this.#handlers.get(message.command);
