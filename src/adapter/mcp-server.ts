@@ -117,6 +117,19 @@ export function buildMcpServer(options: {
         }
         const outcome = await bridge.request(command, parsed.data, spec.timeoutMs);
         if (outcome.ok) {
+          const result = spec.result.safeParse(outcome.result);
+          if (!result.success) {
+            return toToolResult({
+              summary: `${command} failed: E_PROTOCOL_MISMATCH.`,
+              ok: false,
+              command,
+              error: makeError(
+                'E_PROTOCOL_MISMATCH',
+                `${command} plugin result did not match the protocol result schema.`,
+                result.error.issues,
+              ),
+            });
+          }
           return toToolResult({
             summary: `${command} succeeded.`,
             ok: true,

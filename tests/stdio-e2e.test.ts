@@ -322,3 +322,60 @@ test('with a fake plugin attached: responses are plugin-generated, health shows 
   assert.ok(!everything.includes(Buffer.from(SECRET, 'utf8').toString('base64')), 'base64 secret leaked');
   assert.ok(!everything.includes(encodeURIComponent(SECRET)), 'URL-encoded secret leaked');
 });
+
+test('plugin result schemas preserve valid results and reject structurally invalid results', async (t) => {
+  const port = nextPort++;
+  const { client, close } = await startClient({ port, secret: SECRET });
+  t.after(close);
+
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  await once(socket, 'open');
+  const ack = new Promise<void>((resolve) => {
+    socket.on('message', (data) => {
+      const frame = JSON.parse(String(data));
+      if (frame.type === 'hello_ack') resolve();
+      if (frame.type === 'request') {
+        if (frame.command === 'get_project_state') {
+          socket.send(
+            JSON.stringify({
+              type: 'response',
+              id: frame.id,
+              ok: true,
+              result: { open: true, format: 'java_block', counts: { cubes: 1, groups: 0, textures: 0 } },
+            }),
+          );
+        } else if (frame.command === 'get_plugin_status') {
+          socket.send(JSON.stringify({ type: 'response', id: frame.id, ok: true, result: 'not a status object' }));
+        }
+      }
+    });
+  });
+  socket.send(
+    JSON.stringify({
+      type: 'hello',
+      protocol_version: PROTOCOL_VERSION,
+      secret: SECRET,
+      plugin_version: '0.1.0',
+      blockbench_version: '5.1.4',
+      capabilities: ['java_block'],
+    }),
+  );
+  await ack;
+  t.after(() => socket.close());
+
+  const valid = parseEnvelope(await client.callTool({ name: 'get_project_state', arguments: {} }));
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid, {
+    summary: 'get_project_state succeeded.',
+    ok: true,
+    command: 'get_project_state',
+    result: { open: true, format: 'java_block', counts: { cubes: 1, groups: 0, textures: 0 } },
+  });
+
+  const invalid = parseEnvelope(await client.callTool({ name: 'get_plugin_status', arguments: {} }));
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.command, 'get_plugin_status');
+  assert.equal(invalid.error?.code, 'E_PROTOCOL_MISMATCH');
+  assert.match(invalid.error?.message ?? '', /get_plugin_status.*result.*protocol result schema/i);
+  assert.ok(Array.isArray(invalid.error?.details));
+});
