@@ -91,7 +91,7 @@ const finiteNumber = z.number().finite();
 
 const vec2 = z.tuple([finiteNumber, finiteNumber]);
 
-const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+const vec3 = z.tuple([finiteNumber, finiteNumber, finiteNumber]);
 
 const cubeFaceNames = ['north', 'south', 'east', 'west', 'up', 'down'] as const;
 
@@ -155,7 +155,7 @@ const getProjectStateResult = z.object({
       z.object({
         name: z.string(),
         loop: z.enum(['once', 'loop', 'hold_on_last_frame']),
-        length: z.number(),
+        length: z.number().finite(),
       }),
     )
     .optional(),
@@ -259,7 +259,7 @@ const openModelResult = z.object({
 
 const cubeRotationSchema = z.object({
   axis: z.enum(['x', 'y', 'z']),
-  angle: z.number(),
+  angle: finiteNumber,
   origin: vec3.optional(),
 });
 

@@ -462,6 +462,18 @@ test('create_cubes accepts optional per-cube box_uv and uv_offset and stays back
   );
 });
 
+test('cube coordinate params reject JSON-sourced non-finite values', () => {
+  const nonFiniteCreate = JSON.parse('{"cubes":[{"from":[1e999,0,0],"to":[1,1,1]}]}');
+  const nonFiniteUpdate = JSON.parse('{"uuid":"u-1","set":{"from":[1e999,0,0]}}');
+  const finiteCreate = JSON.parse('{"cubes":[{"from":[1,0,0],"to":[1,1,1]}]}');
+  const finiteUpdate = JSON.parse('{"uuid":"u-1","set":{"from":[1,0,0]}}');
+
+  assert.equal(COMMAND_SPECS.create_cubes.params.safeParse(nonFiniteCreate).success, false);
+  assert.equal(COMMAND_SPECS.update_cube.params.safeParse(nonFiniteUpdate).success, false);
+  assert.equal(COMMAND_SPECS.create_cubes.params.safeParse(finiteCreate).success, true);
+  assert.equal(COMMAND_SPECS.update_cube.params.safeParse(finiteUpdate).success, true);
+});
+
 test('capture_screenshot accepts the native camera preset ids and echoes the applied one', () => {
   const spec = COMMAND_SPECS.capture_screenshot;
   assert.equal(spec.params.safeParse({}).success, true, 'the pre-existing no-preset payload still validates');
