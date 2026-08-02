@@ -9,6 +9,7 @@ export const CONTROLLER_LEASE_EVENTS = [
   'heartbeatExpired',
   'idleExpired',
   'revocationResolved',
+  'acquirerDisconnected',
   'pluginDisconnected',
   'pluginAuthenticated',
 ] as const;
@@ -41,6 +42,7 @@ export const CONTROLLER_LEASE_TRANSITION_TABLE: Readonly<
   recovering: {
     acquire: ['recovering'],
     revocationResolved: ['idle', 'owned', 'recovering'],
+    acquirerDisconnected: ['recovering'],
     pluginDisconnected: ['recovering'],
     pluginAuthenticated: ['recovering'],
   },
@@ -223,6 +225,11 @@ export class ControllerLease<TimerHandle> {
       return;
     }
     this.grant(pending);
+  }
+
+  acquirerDisconnected(sessionId: string): void {
+    this.assertAllowed('acquirerDisconnected');
+    if (this.pendingAcquirer === sessionId) this.pendingAcquirer = null;
   }
 
   pluginDisconnected(): void {

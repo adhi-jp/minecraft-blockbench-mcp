@@ -98,6 +98,9 @@ function invokeEvent(lease: ControllerLease<number>, event: ControllerLeaseEvent
     case 'revocationResolved':
       lease.revocationResolved(true);
       return;
+    case 'acquirerDisconnected':
+      lease.acquirerDisconnected('session-b');
+      return;
     case 'pluginDisconnected':
       lease.pluginDisconnected();
       return;
@@ -204,6 +207,36 @@ test('a different session must complete revocation before acquiring a previous s
   assert.equal(lease.ownerSessionId, 'session-b');
   assert.equal(lease.scopeEraOwnerSessionId, 'session-b');
   assert.equal(lease.tainted, false);
+});
+
+test('a disconnected pending acquirer is removed and a later acquire starts fresh recovery', () => {
+  const { lease } = makeLease();
+  lease.acquire('session-a');
+  lease.idleExpired();
+  assert.deepEqual(lease.acquire('session-b'), { outcome: 'revocation_required' });
+  assert.equal(lease.snapshot().pendingAcquirerSessionId, 'session-b');
+
+  lease.acquirerDisconnected('another-session');
+  assert.equal(lease.snapshot().pendingAcquirerSessionId, 'session-b');
+  lease.acquirerDisconnected('session-b');
+  assert.equal(lease.state, 'recovering');
+  assert.equal(lease.snapshot().pendingAcquirerSessionId, null);
+
+  assert.deepEqual(lease.acquire('session-b'), { outcome: 'revocation_required' });
+  assert.equal(lease.snapshot().pendingAcquirerSessionId, 'session-b');
+});
+
+test('acquirer disconnection is illegal outside recovery', () => {
+  for (const state of ['idle', 'owned', 'releasing'] as const) {
+    const lease = moveToState(state, 'acquirerDisconnected');
+    assert.throws(
+      () => lease.acquirerDisconnected('session-b'),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(`state=${state}`) &&
+        error.message.includes('event=acquirerDisconnected'),
+    );
+  }
 });
 
 test('a lost revocation acknowledgement remains tainted across plugin reconnect and blocks grant', () => {

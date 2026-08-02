@@ -44,6 +44,7 @@ export interface BridgeOptions {
   maxMessageBytes: number;
   /** Receives sanitized log lines only; secrets must never reach this. */
   log: (line: string) => void;
+  onSessionChange?: (connected: boolean) => void;
 }
 
 export interface BridgeRequestResult {
@@ -248,6 +249,7 @@ export class WsBridge {
           }),
         )) return;
         this.#startHeartbeat(socket);
+        this.#options.onSessionChange?.(true);
         this.#options.log(
           `Plugin session authenticated (plugin ${hello.plugin_version}, Blockbench ${hello.blockbench_version}).`,
         );
@@ -362,6 +364,7 @@ export class WsBridge {
     }
     if (active !== null) {
       this.#options.log(`Plugin session ended (${reason}).`);
+      this.#options.onSessionChange?.(false);
     }
   }
 
