@@ -3,7 +3,7 @@
 // adapter (Node) and plugin (browser/Blockbench) TypeScript configurations.
 import { z } from 'zod';
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export const DEFAULT_WS_PORT = 39731;
 
@@ -43,6 +43,9 @@ export const ERROR_CODES = [
   'E_FORMAT_UNSUPPORTED',
   'E_PLUGIN_DEPENDENCY_MISSING',
   'E_BLOCKBENCH_ERROR',
+  'E_CLIENT_BUSY',
+  'E_BROKER_UNAVAILABLE',
+  'E_BROKER_VERSION_MISMATCH',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -1074,6 +1077,17 @@ export const COMMAND_SPECS = {
   ...JAVA_FORMAT_COMMAND_SPECS,
   ...GECKOLIB_FORMAT_COMMAND_SPECS,
 } as const;
+
+// Internal commands are broker-to-plugin control commands and must never be
+// registered as MCP tools.
+export const INTERNAL_COMMAND_SPECS = {
+  revoke_scope: {
+    description: 'Revoke the scoped directory for the active AI client session.',
+    mutates: true,
+    params: z.object({}).strict(),
+    result: scopeStatusSchema,
+  },
+} as const satisfies Record<string, CommandSpec>;
 
 export type CommandName = keyof typeof COMMAND_SPECS;
 

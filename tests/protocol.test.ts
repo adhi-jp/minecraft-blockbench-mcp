@@ -6,6 +6,7 @@ import {
   DEFAULT_WS_PORT,
   ERROR_CODES,
   COMMAND_SPECS,
+  INTERNAL_COMMAND_SPECS,
   COMMAND_NAMES,
   SCREENSHOT_ANGLE_PRESETS,
   FORMAT_NEUTRAL_COMMAND_SPECS,
@@ -24,8 +25,8 @@ test('protocol version constant is a positive integer', () => {
   assert.ok(PROTOCOL_VERSION >= 1);
 });
 
-test('protocol version is 5 after adding GeckoLib animation frame screenshots', () => {
-  assert.equal(PROTOCOL_VERSION, 5);
+test('protocol version is 6 after adding broker control commands', () => {
+  assert.equal(PROTOCOL_VERSION, 6);
 });
 
 test('default WebSocket port matches the specified loopback port 39731', () => {
@@ -54,9 +55,31 @@ test('error code table is stable and free of duplicates', () => {
     'E_FORMAT_UNSUPPORTED',
     'E_PLUGIN_DEPENDENCY_MISSING',
     'E_BLOCKBENCH_ERROR',
+    'E_CLIENT_BUSY',
+    'E_BROKER_UNAVAILABLE',
+    'E_BROKER_VERSION_MISMATCH',
   ];
   assert.deepEqual([...ERROR_CODES], expected);
   assert.equal(new Set(ERROR_CODES).size, ERROR_CODES.length);
+});
+
+test('broker error codes are included in the protocol error table', () => {
+  assert.ok(ERROR_CODES.includes('E_CLIENT_BUSY'));
+  assert.ok(ERROR_CODES.includes('E_BROKER_UNAVAILABLE'));
+  assert.ok(ERROR_CODES.includes('E_BROKER_VERSION_MISMATCH'));
+});
+
+test('internal revoke_scope command has strict empty params and a scope-status result', () => {
+  const command = INTERNAL_COMMAND_SPECS.revoke_scope;
+  assert.equal(command.mutates, true);
+  assert.equal(command.params.safeParse({}).success, true);
+  assert.equal(command.params.safeParse({ unexpected: true }).success, false);
+  assert.equal(command.result.safeParse({ state: 'revoked' }).success, true);
+  assert.equal(command.result.safeParse({ state: 'bogus' }).success, false);
+});
+
+test('revoke_scope is not an MCP command name', () => {
+  assert.equal(COMMAND_NAMES.includes('revoke_scope'), false);
 });
 
 test('command registry is partitioned into format-neutral, Java-format, and GeckoLib-format groups', () => {
