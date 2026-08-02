@@ -36,6 +36,7 @@ async function startClient(options: {
   }
   delete env.BLOCKBENCH_MCP_SECRET;
   delete env.BLOCKBENCH_MCP_CONFIG;
+  env.BLOCKBENCH_MCP_DIRECT = '1';
   env.XDG_CONFIG_HOME = emptyConfigHome;
   env.HOME = emptyConfigHome;
   env.APPDATA = emptyConfigHome;

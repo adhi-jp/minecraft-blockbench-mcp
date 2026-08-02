@@ -16,6 +16,8 @@ export interface AdapterConfig {
   heartbeatMissLimit: number;
   handshakeTimeoutMs: number;
   maxMessageBytes: number;
+  brokerIdleTimeoutMs: number;
+  leaseIdleTimeoutMs: number;
 }
 
 export interface SetupIssue {
@@ -31,6 +33,8 @@ export const CONFIG_DEFAULTS: AdapterConfig = {
   heartbeatMissLimit: DEFAULTS.heartbeatMissLimit,
   handshakeTimeoutMs: DEFAULTS.handshakeTimeoutMs,
   maxMessageBytes: DEFAULTS.maxMessageBytes,
+  brokerIdleTimeoutMs: 120_000,
+  leaseIdleTimeoutMs: 60_000,
 };
 
 const ENV_PREFIX = 'BLOCKBENCH_MCP_';
@@ -86,6 +90,22 @@ const NUMERIC_KEYS: NumericKey[] = [
     min: 1_024,
     max: 1_073_741_824,
   },
+  {
+    configKey: 'brokerIdleTimeoutMs',
+    cliName: 'broker-idle-timeout-ms',
+    envName: `${ENV_PREFIX}BROKER_IDLE_TIMEOUT_MS`,
+    fileKey: 'brokerIdleTimeoutMs',
+    min: 1_000,
+    max: 3_600_000,
+  },
+  {
+    configKey: 'leaseIdleTimeoutMs',
+    cliName: 'lease-idle-timeout-ms',
+    envName: `${ENV_PREFIX}LEASE_IDLE_TIMEOUT_MS`,
+    fileKey: 'leaseIdleTimeoutMs',
+    min: 1_000,
+    max: 3_600_000,
+  },
 ];
 
 export interface ConfigSource {
@@ -114,6 +134,8 @@ export function loadConfig(
       'heartbeat-miss-limit': { type: 'string' },
       'handshake-timeout-ms': { type: 'string' },
       'max-message-bytes': { type: 'string' },
+      'broker-idle-timeout-ms': { type: 'string' },
+      'lease-idle-timeout-ms': { type: 'string' },
     },
   });
 
@@ -195,4 +217,53 @@ export function loadConfig(
   config.secret = cliSecret ?? envSecret ?? fileSecret;
 
   return { config, issues, configSource };
+}
+
+export type AdapterMode = 'direct' | 'brokered';
+
+export interface AdapterModeResolution {
+  mode: AdapterMode;
+  issues: SetupIssue[];
+}
+
+export function resolveAdapterMode(
+  argv: string[],
+  env: Record<string, string | undefined>,
+  platform: NodeJS.Platform,
+): AdapterModeResolution {
+  const { values: cli } = parseArgs({
+    args: argv,
+    strict: false,
+    options: {
+      direct: { type: 'boolean' },
+      broker: { type: 'boolean' },
+    },
+  });
+  const issues: SetupIssue[] = [];
+  const cliDirect = cli.direct === true;
+  const cliBroker = cli.broker === true;
+
+  if (cliDirect || cliBroker) {
+    if (cliDirect && cliBroker) {
+      issues.push({
+        code: 'E_INVALID_PARAMS',
+        message: 'Both --direct and --broker were provided; using direct mode.',
+      });
+    }
+    return { mode: cliDirect ? 'direct' : 'brokered', issues };
+  }
+
+  const envDirect = env[`${ENV_PREFIX}DIRECT`] === '1';
+  const envBroker = env[`${ENV_PREFIX}BROKER`] === '1';
+  if (envDirect || envBroker) {
+    if (envDirect && envBroker) {
+      issues.push({
+        code: 'E_INVALID_PARAMS',
+        message: 'Both BLOCKBENCH_MCP_DIRECT and BLOCKBENCH_MCP_BROKER are set to 1; using direct mode.',
+      });
+    }
+    return { mode: envDirect ? 'direct' : 'brokered', issues };
+  }
+
+  return { mode: platform === 'win32' ? 'direct' : 'brokered', issues };
 }

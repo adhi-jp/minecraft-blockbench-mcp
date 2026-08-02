@@ -15,6 +15,7 @@ export interface BuiltBrokerSpawn {
 
 export interface DetachedChild {
   unref(): void;
+  on?(event: 'error', listener: (error: Error) => void): unknown;
 }
 
 export type BrokerSpawnImplementation<T extends DetachedChild = DetachedChild> = (
@@ -34,8 +35,10 @@ export function buildBrokerSpawnArgs(input: BrokerSpawnInput): BuiltBrokerSpawn 
 export function spawnDetachedBroker<T extends DetachedChild>(
   spawnImpl: BrokerSpawnImplementation<T>,
   built: BuiltBrokerSpawn,
+  onError: (error: Error) => void = () => undefined,
 ): T {
   const child = spawnImpl(built.command, built.args, built.options);
+  child.on?.('error', onError);
   child.unref();
   return child;
 }

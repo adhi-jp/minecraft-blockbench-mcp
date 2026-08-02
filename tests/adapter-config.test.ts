@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loadConfig, CONFIG_DEFAULTS } from '../src/adapter/config.js';
+import { loadConfig, resolveAdapterMode, CONFIG_DEFAULTS } from '../src/adapter/config.js';
 import { DEFAULT_WS_PORT } from '../src/shared/protocol.js';
 
 const noFile = (): string => {
@@ -48,6 +48,73 @@ test('invalid numeric values are reported and fall back instead of crashing', ()
   const outOfRange = loadConfig([], { BLOCKBENCH_MCP_PORT: '70000' }, noFile);
   assert.equal(outOfRange.config.port, DEFAULT_WS_PORT);
   assert.equal(outOfRange.issues.length, 1);
+});
+
+test('broker timeout values use CLI over environment over config file', () => {
+  const readFile = () => JSON.stringify({ brokerIdleTimeoutMs: 10_000, leaseIdleTimeoutMs: 20_000 });
+  const fromFile = loadConfig([], { BLOCKBENCH_MCP_CONFIG: '/tmp/adapter-config.json' }, readFile);
+  assert.equal(fromFile.config.brokerIdleTimeoutMs, 10_000);
+  assert.equal(fromFile.config.leaseIdleTimeoutMs, 20_000);
+
+  const fromEnvironment = loadConfig(
+    [],
+    {
+      BLOCKBENCH_MCP_CONFIG: '/tmp/adapter-config.json',
+      BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS: '30000',
+      BLOCKBENCH_MCP_LEASE_IDLE_TIMEOUT_MS: '40000',
+    },
+    readFile,
+  );
+  assert.equal(fromEnvironment.config.brokerIdleTimeoutMs, 30_000);
+  assert.equal(fromEnvironment.config.leaseIdleTimeoutMs, 40_000);
+
+  const fromCli = loadConfig(
+    ['--broker-idle-timeout-ms', '50000', '--lease-idle-timeout-ms', '60000'],
+    {
+      BLOCKBENCH_MCP_CONFIG: '/tmp/adapter-config.json',
+      BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS: '30000',
+      BLOCKBENCH_MCP_LEASE_IDLE_TIMEOUT_MS: '40000',
+    },
+    readFile,
+  );
+  assert.equal(fromCli.config.brokerIdleTimeoutMs, 50_000);
+  assert.equal(fromCli.config.leaseIdleTimeoutMs, 60_000);
+});
+
+test('broker timeout values reject values outside their supported range', () => {
+  const invalid = loadConfig(
+    ['--broker-idle-timeout-ms', '999'],
+    { BLOCKBENCH_MCP_LEASE_IDLE_TIMEOUT_MS: '3600001' },
+    noFile,
+  );
+  assert.equal(invalid.config.brokerIdleTimeoutMs, CONFIG_DEFAULTS.brokerIdleTimeoutMs);
+  assert.equal(invalid.config.leaseIdleTimeoutMs, CONFIG_DEFAULTS.leaseIdleTimeoutMs);
+  assert.equal(invalid.issues.length, 2);
+  assert.ok(invalid.issues.every((issue) => issue.code === 'E_INVALID_PARAMS'));
+});
+
+test('adapter mode uses platform defaults, environment overrides, CLI overrides, and direct conflict precedence', () => {
+  assert.equal(resolveAdapterMode([], {}, 'linux').mode, 'brokered');
+  assert.equal(resolveAdapterMode([], {}, 'win32').mode, 'direct');
+  assert.equal(resolveAdapterMode([], { BLOCKBENCH_MCP_DIRECT: '1' }, 'linux').mode, 'direct');
+  assert.equal(resolveAdapterMode([], { BLOCKBENCH_MCP_BROKER: '1' }, 'win32').mode, 'brokered');
+  assert.equal(
+    resolveAdapterMode(['--broker'], { BLOCKBENCH_MCP_DIRECT: '1' }, 'win32').mode,
+    'brokered',
+    'explicit CLI selection wins over the environment',
+  );
+
+  const cliConflict = resolveAdapterMode(['--direct', '--broker'], {}, 'linux');
+  assert.equal(cliConflict.mode, 'direct');
+  assert.deepEqual(cliConflict.issues.map((issue) => issue.code), ['E_INVALID_PARAMS']);
+
+  const environmentConflict = resolveAdapterMode(
+    [],
+    { BLOCKBENCH_MCP_DIRECT: '1', BLOCKBENCH_MCP_BROKER: '1' },
+    'linux',
+  );
+  assert.equal(environmentConflict.mode, 'direct');
+  assert.deepEqual(environmentConflict.issues.map((issue) => issue.code), ['E_INVALID_PARAMS']);
 });
 
 test('an unreadable or malformed config file is a reported setup issue', () => {

@@ -52,6 +52,10 @@ export async function checkAdapterHealth(
   delete env.BLOCKBENCH_MCP_SECRET;
   delete env.BLOCKBENCH_MCP_PORT;
   env.BLOCKBENCH_MCP_CONFIG = configPath;
+  // Doctor probes the direct adapter path; broker-aware diagnostics are a
+  // separate, not-yet-built surface and must not change doctor semantics.
+  delete env.BLOCKBENCH_MCP_BROKER;
+  env.BLOCKBENCH_MCP_DIRECT = '1';
 
   const transport = new StdioClientTransport({
     command: process.execPath,

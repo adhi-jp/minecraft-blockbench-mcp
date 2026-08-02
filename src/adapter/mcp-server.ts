@@ -13,9 +13,24 @@ import {
   type ErrorPayload,
 } from '../shared/protocol.js';
 import type { AdapterConfig, SetupIssue } from './config.js';
-import type { WsBridge } from './ws-bridge.js';
+import type { BridgeRequestResult, PluginInfo } from './ws-bridge.js';
 
 export const ADAPTER_VERSION = '0.1.0';
+
+export interface PluginBridge {
+  connected: boolean;
+  listening: boolean;
+  pluginInfo: PluginInfo | null;
+  request(command: string, params: unknown, timeoutMs?: number): Promise<BridgeRequestResult>;
+}
+
+export interface BrokerStatus {
+  broker_connected: boolean;
+  controller_state: 'idle' | 'owned' | 'releasing' | 'recovering' | null;
+  controller_owner: string | null;
+  client_count: number | null;
+  effective_port: number | null;
+}
 
 interface Envelope {
   summary: string;
@@ -36,11 +51,13 @@ function toToolResult(envelope: Envelope): {
 }
 
 export function buildMcpServer(options: {
-  bridge: WsBridge;
+  bridge: PluginBridge;
   config: AdapterConfig;
   setupIssues: SetupIssue[];
+  mode: 'direct' | 'brokered';
+  brokerStatus?: () => BrokerStatus | null;
 }): McpServer {
-  const { bridge, config, setupIssues } = options;
+  const { bridge, config, setupIssues, mode, brokerStatus } = options;
 
   const server = new McpServer({
     name: 'minecraft-blockbench-mcp',
@@ -56,6 +73,7 @@ export function buildMcpServer(options: {
     },
     async () => {
       const connected = bridge.connected;
+      const broker = mode === 'brokered' ? brokerStatus?.() ?? null : null;
       const envelope: Envelope = {
         summary: connected
           ? 'Adapter is running and the Blockbench plugin is connected.'
@@ -64,11 +82,16 @@ export function buildMcpServer(options: {
         result: {
           adapter_version: ADAPTER_VERSION,
           protocol_version: PROTOCOL_VERSION,
-          port: config.port,
+          port: mode === 'brokered' ? broker?.effective_port ?? config.port : config.port,
           ws_listening: bridge.listening,
           plugin_connected: connected,
           setup_errors: setupIssues,
           plugin: bridge.pluginInfo,
+          mode,
+          broker_connected: broker?.broker_connected ?? false,
+          controller_state: broker?.controller_state ?? null,
+          controller_owner: broker?.controller_owner ?? null,
+          client_count: broker?.client_count ?? null,
         },
       };
       return toToolResult(envelope);

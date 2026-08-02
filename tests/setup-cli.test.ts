@@ -671,6 +671,22 @@ test('checkAdapterHealth reports E_SECRET_MISSING as broken against the real ada
   }
 });
 
+test('checkAdapterHealth ignores an inherited broker mode flag', async () => {
+  const previousBrokerMode = process.env.BLOCKBENCH_MCP_BROKER;
+  const dir = mkdtempSync(join(tmpdir(), 'bbmcp-health-test-'));
+  process.env.BLOCKBENCH_MCP_BROKER = '1';
+  try {
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ version: 1, mode: 'shared-secret', port: 41913, secret: 'integration-x' }));
+    const state = await checkAdapterHealth(builtCliPath, configPath, { timeoutMs: 20_000 });
+    assert.deepEqual(state, { state: 'waiting', codes: [] });
+  } finally {
+    if (previousBrokerMode === undefined) delete process.env.BLOCKBENCH_MCP_BROKER;
+    else process.env.BLOCKBENCH_MCP_BROKER = previousBrokerMode;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 async function spawnAdapterForStderr(env: Record<string, string>): Promise<{ stderrText: string; health: Record<string, unknown> }> {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
@@ -682,6 +698,7 @@ async function spawnAdapterForStderr(env: Record<string, string>): Promise<{ std
   delete childEnv.BLOCKBENCH_MCP_CONFIG;
   delete childEnv.BLOCKBENCH_MCP_PORT;
   delete childEnv.XDG_CONFIG_HOME;
+  childEnv.BLOCKBENCH_MCP_DIRECT = '1';
   Object.assign(childEnv, env);
   const transport = new StdioClientTransport({
     command: process.execPath,
