@@ -165,6 +165,26 @@ The optional config file is a JSON object with keys `port`, `secret`,
 `requestTimeoutMs`, `heartbeatIntervalMs`, `heartbeatMissLimit`,
 `handshakeTimeoutMs`, `maxMessageBytes`.
 
+### Brokered and direct adapter modes
+
+On Linux and WSL the adapter uses brokered mode by default, allowing multiple
+AI clients configured with the same config file to share one Blockbench
+connection. Native Windows uses direct mode by default. Select direct mode
+explicitly with `--direct` or `BLOCKBENCH_MCP_DIRECT=1`; select brokered mode
+with `--broker` or `BLOCKBENCH_MCP_BROKER=1`.
+
+Brokered mode also recognizes the JSON config keys `brokerIdleTimeoutMs` (how
+long the shared broker remains running without AI clients) and
+`leaseIdleTimeoutMs` (how long an inactive client retains control). The
+`health` result identifies the active `mode` and reports `broker_connected`,
+`controller_state`, `controller_owner`, and `client_count`.
+
+Only one AI client controls Blockbench at a time. While one client has
+control, another client's Blockbench command returns `E_CLIENT_BUSY`; health
+and tool discovery remain available. Handing control to another client revokes
+the scoped-directory grant first, so Blockbench asks for fresh confirmation
+before the new client can use file tools.
+
 #### 3. Load the plugin in Blockbench
 
 1. For an npm installation, select the already-built plugin bundle at

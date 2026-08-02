@@ -126,7 +126,10 @@ export function buildMcpServer(options: {
             error: makeError('E_INVALID_PARAMS', 'Parameters failed schema validation.', parsed.error.issues),
           });
         }
-        if (!bridge.connected) {
+        // Only direct mode may short-circuit on the connection flag: a broker
+        // shim must forward even while disconnected so its request path can
+        // re-elect or restart a broker on demand.
+        if (mode === 'direct' && !bridge.connected) {
           return toToolResult({
             summary: `Cannot run ${command}: the Blockbench plugin is not connected.`,
             ok: false,

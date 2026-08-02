@@ -148,6 +148,28 @@ test('operation tools gate on bridge connection and preserve bridge error payloa
   assert.equal(disconnected.error?.code, 'E_PLUGIN_NOT_CONNECTED');
   assert.equal(disconnectedRequests, 0);
 
+  // A broker shim must keep forwarding while disconnected: the request path
+  // owns re-election, so an early not-connected gate would make broker
+  // recovery unreachable.
+  let brokeredRequests = 0;
+  const brokeredDisconnected = await callTool(
+    {
+      bridge: bridge({
+        request: async () => {
+          brokeredRequests += 1;
+          return { ok: false, error: { code: 'E_BROKER_UNAVAILABLE', message: 'no healthy broker' } };
+        },
+      }),
+      config: adapterConfig(),
+      setupIssues: [],
+      mode: 'brokered',
+      brokerStatus: () => null,
+    },
+    'get_project_state',
+  );
+  assert.equal(brokeredRequests, 1);
+  assert.equal(brokeredDisconnected.error?.code, 'E_BROKER_UNAVAILABLE');
+
   const error: ErrorPayload = {
     code: 'E_SCOPE_NOT_CONFIRMED',
     message: 'The plugin denied this operation.',

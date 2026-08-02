@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -252,6 +253,12 @@ async function attachBroker(
       return probe(record, candidate);
     };
     const startBroker = async (): Promise<BrokerRecord> => {
+      // This callback runs while holding the startup lock and only after the
+      // endpoint probe failed, so a leftover socket file from a dead broker is
+      // provably stale and must be removed or the new broker cannot bind.
+      if (process.platform !== 'win32') {
+        await unlink(location.endpoint).catch(() => undefined);
+      }
       spawnDetachedBroker(
         spawn,
         buildBrokerSpawnArgs({

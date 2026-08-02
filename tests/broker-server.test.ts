@@ -601,6 +601,34 @@ test('last-client idle shutdown removes rendezvous state and refuses later IPC a
   await later.close();
 });
 
+test('a broker client reconnects after connection loss and after an explicit close', async (t) => {
+  const first = await createHarness(t);
+  await first.addPlugin();
+  const { client } = await first.addClient('session-a', 'Client A');
+  await waitFor(() => client.connected, 'the initial broker connection');
+  assert.equal((await client.request('get_project_state', {})).ok, true);
+
+  await first.server.stop();
+  await waitFor(() => !client.listening, 'the first broker connection to close');
+  assert.equal(client.brokerStatus(), null);
+  assert.equal((await client.request('get_project_state', {})).error?.code, 'E_BROKER_UNAVAILABLE');
+
+  const second = await createHarness(t);
+  assert.notEqual(second.endpoint, first.endpoint);
+  await second.addPlugin();
+  await client.connect(second.endpoint, clientHello(second.port, 'session-b', 'Client B'));
+  await waitFor(() => client.connected, 'the replacement broker connection');
+  assert.equal((await client.request('get_project_state', {})).ok, true);
+
+  await client.close();
+  assert.equal(client.listening, false);
+  assert.equal(client.brokerStatus(), null);
+
+  await client.connect(second.endpoint, clientHello(second.port, 'session-c', 'Client C'));
+  await waitFor(() => client.connected, 'the connection after explicit close');
+  assert.equal((await client.request('get_project_state', {})).ok, true);
+});
+
 test('detached broker spawning preserves argv boundaries and only unreferences the injected child', () => {
   const built = buildBrokerSpawnArgs({
     execPath: '/runtime/node',

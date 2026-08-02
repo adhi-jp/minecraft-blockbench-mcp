@@ -81,8 +81,7 @@ export class BrokerClient {
   }
 
   async connect(endpoint: string, helloFields: BrokerClientHello): Promise<HelloAckMessage> {
-    await this.close();
-    this.#status = null;
+    await this.#closeConnection(new Error('Broker client reconnecting.'));
     const socket = createConnection(endpoint);
     const decoder = new IpcLineDecoder<BrokerToClientMessage>(
       brokerToClientMessageSchema as z.ZodType<BrokerToClientMessage>,
@@ -165,22 +164,7 @@ export class BrokerClient {
   }
 
   async close(): Promise<void> {
-    const socket = this.#socket;
-    if (socket === null) {
-      this.#rejectHandshake(new Error('Broker client closed.'));
-      this.#resolvePendingUnavailable();
-      return;
-    }
-
-    this.#socket = null;
-    this.#decoder = null;
-    this.#rejectHandshake(new Error('Broker client closed.'));
-    this.#resolvePendingUnavailable();
-    if (socket.destroyed) return;
-    await new Promise<void>((resolve) => {
-      socket.once('close', resolve);
-      socket.end(encodeIpcMessage({ type: 'bye' }), () => socket.destroy());
-    });
+    await this.#closeConnection(new Error('Broker client closed.'));
   }
 
   #handleBrokerMessage(socket: Socket, message: BrokerToClientMessage): void {
@@ -232,10 +216,26 @@ export class BrokerClient {
 
   #markDisconnected(socket: Socket): void {
     if (socket !== this.#socket) return;
+    this.#resetConnection(new Error('Broker disconnected during the hello handshake.'));
+  }
+
+  async #closeConnection(error: Error): Promise<void> {
+    const socket = this.#resetConnection(error);
+    if (socket === null || socket.destroyed) return;
+    await new Promise<void>((resolve) => {
+      socket.once('close', resolve);
+      socket.end(encodeIpcMessage({ type: 'bye' }), () => socket.destroy());
+    });
+  }
+
+  #resetConnection(error: Error): Socket | null {
+    const socket = this.#socket;
     this.#socket = null;
     this.#decoder = null;
-    this.#rejectHandshake(new Error('Broker disconnected during the hello handshake.'));
+    this.#status = null;
+    this.#rejectHandshake(error);
     this.#resolvePendingUnavailable();
+    return socket;
   }
 
   #rejectHandshake(error: Error): void {
