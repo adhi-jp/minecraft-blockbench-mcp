@@ -1,7 +1,20 @@
 node_modules/
 /dist/
 /coverage/
-/docs/
+# Working documents under docs/ are agent and author scratch space - plans,
+# specs, reports, runbooks, follow-up registers. They are deliberately not part
+# of the repository, so the default here is deny.
+#
+# Ignoring `/docs/*` rather than `/docs/` matters: git does not descend into an
+# ignored directory, so a negation inside one can never take effect. Ignoring
+# the entries under docs/ instead leaves the directory itself walkable, which is
+# what makes the opt-in below work.
+#
+# To track a directory under docs/, add a negation next to the one below. Only
+# durable, repository-owned reference material belongs there - anything a reader
+# with a clone alone must be able to resolve.
+/docs/*
+!/docs/reference/
 /external/
 .claude/settings.local.json
 /.agents/
