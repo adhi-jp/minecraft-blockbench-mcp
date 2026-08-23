@@ -45,6 +45,23 @@ function parseHealth(result) {
   return JSON.parse(content[0].text);
 }
 
+// This probe starts the packaged server with no shared secret and an empty
+// config home, so the adapter must report that it cannot serve plugin traffic.
+// Which setup error says so depends on the mode the adapter resolved for this
+// platform, so the accepted codes are keyed by the mode health actually
+// reports rather than assumed.
+const ACCEPTED_SECRETLESS_SETUP_ERRORS = new Map([
+  // Direct mode (the Windows default) opens the plugin WebSocket listener in
+  // the adapter process, so the missing secret is reported directly.
+  ['direct', ['E_SECRET_MISSING']],
+  // Brokered mode (the POSIX default since commit 43ade3c) delegates the
+  // listener to a detached broker process. That broker refuses to start
+  // without a secret and never publishes its rendezvous record, so the adapter
+  // reports the broker as unreachable. E_SECRET_MISSING is also accepted in
+  // case the broker's underlying reason is ever propagated back to the client.
+  ['brokered', ['E_BROKER_UNAVAILABLE', 'E_SECRET_MISSING']],
+]);
+
 try {
   mkdirSync(packDir, { recursive: true });
   mkdirSync(installDir, { recursive: true });
@@ -113,8 +130,16 @@ try {
     const tools = await client.listTools();
     if (!tools.tools.some(({ name }) => name === 'health')) throw new Error('packaged MCP server did not expose health');
     const health = parseHealth(await client.callTool({ name: 'health', arguments: {} }));
-    if (!health.ok || !health.result?.setup_errors?.some(({ code }) => code === 'E_SECRET_MISSING')) {
-      throw new Error(`packaged MCP health check returned an unexpected result: ${JSON.stringify(health)}`);
+    const mode = health.result?.mode;
+    const accepted = typeof mode === 'string' ? ACCEPTED_SECRETLESS_SETUP_ERRORS.get(mode) : undefined;
+    if (accepted === undefined) {
+      throw new Error(`packaged MCP health result reported an unknown adapter mode: ${JSON.stringify(health)}`);
+    }
+    if (!health.ok || !health.result?.setup_errors?.some(({ code }) => accepted.includes(code))) {
+      throw new Error(
+        `packaged MCP health check returned an unexpected result: expected one of ` +
+          `${accepted.join(', ')} in setup_errors for mode ${mode}, got ${JSON.stringify(health)}`,
+      );
     }
   } finally {
     await client.close();
