@@ -27,7 +27,23 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const builtCliPath = join(projectRoot, 'dist', 'adapter', 'cli.js');
 
 const FAKE_CLI = '/repo/dist/adapter/cli.js';
-const FAKE_PLUGIN = '/repo/dist/plugin/minecraft_blockbench_mcp.js';
+/**
+ * The plugin bundle the product derives from `FAKE_CLI`.
+ *
+ * `runSetup` builds this path with the host `node:path` (`join(packageRoot,
+ * 'dist', 'plugin', ...)`), so on Windows it comes back separated by
+ * backslashes — `\repo\dist\plugin\...` — while a POSIX literal here did
+ * not. The host `join` over the same components tracks that on every platform
+ * and still pins the whole path, so nothing is compared any less exactly than
+ * before. It is deliberately assembled from a literal root rather than from
+ * `packageRootFromCli(FAKE_CLI)`, so the assertions that this path is the one
+ * the product reports keep testing that derivation instead of restating it.
+ *
+ * `CONFIG_PATH` stays a POSIX literal on purpose: `resolveConfigPath` selects
+ * its path flavour from `deps.osPlatform`, which these fakes fix at `'linux'`,
+ * so it is POSIX-shaped whatever the host is.
+ */
+const FAKE_PLUGIN = join('/repo', 'dist', 'plugin', 'minecraft_blockbench_mcp.js');
 const CONFIG_PATH = '/xdg/minecraft-blockbench-mcp/config.json';
 const SENTINEL = 'sentinel-secret-4f2b9c81aa77de10';
 
@@ -494,6 +510,10 @@ test('WSL prints both path notations; non-WSL output has no Windows path line', 
   await runSetup(wsl.deps, flags());
   const wslText = allOutput(wsl);
   assert.ok(wslText.includes(FAKE_PLUGIN));
+  // `replaceAll('/', '\\')` mirrors what the fake `toWindowsPath` does to the
+  // path the product hands it. On a Windows host `FAKE_PLUGIN` already carries
+  // backslashes, so the replacement is a no-op there and both sides still name
+  // the same translated path; on Linux it converts, exactly as before.
   assert.ok(wslText.includes(`\\\\wsl.localhost\\Ubuntu${FAKE_PLUGIN.replaceAll('/', '\\')}`), 'plugin path translated');
   assert.ok(wslText.includes('"MCP Config File Path"'), 'WSL output must name the cross-boundary setting');
   assert.ok(
@@ -688,8 +708,8 @@ test('checkAdapterHealth ignores an inherited broker mode flag', async () => {
 });
 
 async function spawnAdapterForStderr(env: Record<string, string>): Promise<{ stderrText: string; health: Record<string, unknown> }> {
-  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const { Client } = await import('@modelcontextprotocol/client');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/client/stdio');
   const childEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) childEnv[key] = value;

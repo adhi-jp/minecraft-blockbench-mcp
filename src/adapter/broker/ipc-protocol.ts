@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 import { errorPayloadSchema } from '../../shared/protocol.js';
 
-export const IPC_PROTOCOL_VERSION = 1;
+// Broker IPC version. Bumped from 1 to 2 by the `cancel_request` message below.
+// The hello check in broker-server.ts compares this value exactly, so a broker
+// and a stdio shim built from different versions refuse each other's handshake
+// and surface E_BROKER_VERSION_MISMATCH instead of speaking a mixed dialect.
+export const IPC_PROTOCOL_VERSION = 2;
 export const MAX_IPC_LINE_BYTES = 64 * 1024;
 
 const requiredUnknownSchema = z.unknown().refine((value) => value !== undefined, {
@@ -32,10 +36,15 @@ export const helloAckMessageSchema = z
   })
   .strict();
 
+// `session_in_use` refuses a hello whose `session_id` a still-connected client
+// already holds. It names a live-state conflict on an unchanged message shape,
+// not a dialect difference, so it does not move IPC_PROTOCOL_VERSION: the two
+// version-bearing reasons above stay the only ones that mean "we cannot speak
+// to each other".
 export const helloRejectMessageSchema = z
   .object({
     type: z.literal('hello_reject'),
-    reason: z.enum(['version_mismatch', 'identity_mismatch']),
+    reason: z.enum(['version_mismatch', 'identity_mismatch', 'session_in_use']),
     ipc_protocol_version: z.number().int(),
     package_version: z.string(),
   })
@@ -52,6 +61,17 @@ export const ipcRequestMessageSchema = z
   .strict();
 
 export const requestMessageSchema = ipcRequestMessageSchema;
+
+// Withdraws one still-unfinished request. `id` is the internal request UUID the
+// broker client allocated for that request; it is never a client-supplied
+// JSON-RPC id, which is untrusted and can repeat across stdio shims. The broker
+// answers nothing: a cancelled request produces no response message at all.
+export const ipcCancelRequestMessageSchema = z
+  .object({
+    type: z.literal('cancel_request'),
+    id: z.string(),
+  })
+  .strict();
 
 export const ipcResponseMessageSchema = z
   .object({
@@ -92,6 +112,7 @@ export const byeMessageSchema = z.object({ type: z.literal('bye') }).strict();
 export const clientToBrokerMessageSchema = z.discriminatedUnion('type', [
   clientHelloMessageSchema,
   ipcRequestMessageSchema,
+  ipcCancelRequestMessageSchema,
   pongMessageSchema,
   byeMessageSchema,
 ]);
@@ -110,6 +131,7 @@ export type ClientHelloMessage = z.infer<typeof clientHelloMessageSchema>;
 export type HelloAckMessage = z.infer<typeof helloAckMessageSchema>;
 export type HelloRejectMessage = z.infer<typeof helloRejectMessageSchema>;
 export type IpcRequestMessage = z.infer<typeof ipcRequestMessageSchema>;
+export type IpcCancelRequestMessage = z.infer<typeof ipcCancelRequestMessageSchema>;
 export type IpcResponseMessage = z.infer<typeof ipcResponseMessageSchema>;
 export type StatusEventMessage = z.infer<typeof statusEventMessageSchema>;
 export type PingMessage = z.infer<typeof pingMessageSchema>;

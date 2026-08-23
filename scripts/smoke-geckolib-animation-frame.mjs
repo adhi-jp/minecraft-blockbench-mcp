@@ -9,8 +9,8 @@ import { tmpdir } from 'node:os';
 import path, { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const DEFAULT_PORT = 39731;
 const DEFAULT_TIMEOUT_MS = 90_000;

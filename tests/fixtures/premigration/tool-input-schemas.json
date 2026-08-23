@@ -1,0 +1,1117 @@
+{
+  "note": "Every advertised tools/list input schema, keyed by tool name. Two of these schemas come from a shared schema with a top-level refinement, which is advertised unwrapped and re-validated inside the handler; see the tool-arguments-invalid-handler-layer scenario.",
+  "toolCount": 32,
+  "schemas": {
+    "health": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "get_plugin_status": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "get_project_state": {
+      "type": "object",
+      "properties": {
+        "include_objects": {
+          "type": "boolean",
+          "description": "Include per-object identifier lists (default true)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "get_elements": {
+      "type": "object",
+      "properties": {
+        "uuids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Cube/group UUIDs to read back; any unknown UUID fails with E_NOT_FOUND and returns nothing. Omit to return every element."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "create_cubes": {
+      "type": "object",
+      "properties": {
+        "cubes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "from": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/properties/cubes/items/properties/from/items/0"
+                  },
+                  {
+                    "$ref": "#/properties/cubes/items/properties/from/items/0"
+                  }
+                ]
+              },
+              "to": {
+                "$ref": "#/properties/cubes/items/properties/from"
+              },
+              "origin": {
+                "$ref": "#/properties/cubes/items/properties/from"
+              },
+              "rotation": {
+                "type": "object",
+                "properties": {
+                  "axis": {
+                    "type": "string",
+                    "enum": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
+                  },
+                  "angle": {
+                    "$ref": "#/properties/cubes/items/properties/from/items/0"
+                  },
+                  "origin": {
+                    "$ref": "#/properties/cubes/items/properties/from"
+                  }
+                },
+                "required": [
+                  "axis",
+                  "angle"
+                ],
+                "additionalProperties": false
+              },
+              "group_uuid": {
+                "type": "string"
+              },
+              "box_uv": {
+                "type": "boolean",
+                "description": "Per-cube UV mode (default: the project setting)."
+              },
+              "uv_offset": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": [
+                  {
+                    "$ref": "#/properties/cubes/items/properties/from/items/0"
+                  },
+                  {
+                    "$ref": "#/properties/cubes/items/properties/from/items/0"
+                  }
+                ],
+                "description": "Box-UV texture offset. Providing UV state disables auto-UV for the cube."
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "cubes"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "update_cube": {
+      "type": "object",
+      "properties": {
+        "uuid": {
+          "type": "string"
+        },
+        "set": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "from": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "$ref": "#/properties/set/properties/from/items/0"
+                },
+                {
+                  "$ref": "#/properties/set/properties/from/items/0"
+                }
+              ]
+            },
+            "to": {
+              "$ref": "#/properties/set/properties/from"
+            },
+            "origin": {
+              "$ref": "#/properties/set/properties/from"
+            },
+            "rotation": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "axis": {
+                      "type": "string",
+                      "enum": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    "angle": {
+                      "$ref": "#/properties/set/properties/from/items/0"
+                    },
+                    "origin": {
+                      "$ref": "#/properties/set/properties/from"
+                    }
+                  },
+                  "required": [
+                    "axis",
+                    "angle"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "visibility": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "uuid",
+        "set"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "set_cube_uv": {
+      "type": "object",
+      "properties": {
+        "uuid": {
+          "type": "string"
+        },
+        "box_uv": {
+          "type": "boolean",
+          "description": "Switch the cube UV mode. A mode differing from the format default needs a format with optional per-cube box UV; otherwise the call fails with E_FORMAT_UNSUPPORTED."
+        },
+        "uv_offset": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/properties/uv_offset/items/0"
+            }
+          ],
+          "description": "Box-UV texture offset; valid in box UV mode only."
+        },
+        "mirror_uv": {
+          "type": "boolean",
+          "description": "Box-UV X mirroring; valid in box UV mode only."
+        },
+        "faces": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "uv": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": [
+                  {
+                    "$ref": "#/properties/uv_offset/items/0"
+                  },
+                  {
+                    "$ref": "#/properties/uv_offset/items/0"
+                  },
+                  {
+                    "$ref": "#/properties/uv_offset/items/0"
+                  },
+                  {
+                    "$ref": "#/properties/uv_offset/items/0"
+                  }
+                ]
+              },
+              "rotation": {
+                "type": "number",
+                "enum": [
+                  0,
+                  90,
+                  180,
+                  270
+                ],
+                "description": "Face texture rotation in degrees (quarter turns)."
+              }
+            },
+            "required": [
+              "uv"
+            ],
+            "additionalProperties": false
+          },
+          "propertyNames": {
+            "enum": [
+              "north",
+              "south",
+              "east",
+              "west",
+              "up",
+              "down"
+            ]
+          },
+          "description": "Per-face UV rectangles plus optional rotation; valid in per-face UV mode only."
+        }
+      },
+      "required": [
+        "uuid"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "set_texture_resolution": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "rescale_existing_uv": {
+          "type": "boolean",
+          "description": "Scale existing UV coordinates to the new resolution. Supported only when Blockbench itself can rescale: the new size is square, the width changes, and old/new widths are integer multiples; otherwise the call fails with E_INVALID_PARAMS before changing anything."
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "delete_cubes": {
+      "type": "object",
+      "properties": {
+        "uuids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "uuids"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "create_group": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "parent_uuid": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/properties/origin/items/0"
+            },
+            {
+              "$ref": "#/properties/origin/items/0"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "update_group": {
+      "type": "object",
+      "properties": {
+        "uuid": {
+          "type": "string"
+        },
+        "set": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "$ref": "#/properties/set/properties/origin/items/0"
+                },
+                {
+                  "$ref": "#/properties/set/properties/origin/items/0"
+                }
+              ]
+            },
+            "parent_uuid": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "uuid",
+        "set"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "delete_group": {
+      "type": "object",
+      "properties": {
+        "uuid": {
+          "type": "string"
+        },
+        "keep_children": {
+          "type": "boolean",
+          "description": "Move children to the parent instead of deleting them (default false)."
+        }
+      },
+      "required": [
+        "uuid"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "assign_texture": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "path"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "data_url"
+                },
+                "data_url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "data_url"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "apply_to": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "all"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "cube_uuids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1
+                },
+                "faces": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "north",
+                      "south",
+                      "east",
+                      "west",
+                      "up",
+                      "down"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "cube_uuids"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "apply_to"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "read_file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "base64"
+          ]
+        },
+        "max_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 8388608
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "write_files": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "encoding": {
+                "type": "string",
+                "enum": [
+                  "utf8",
+                  "base64"
+                ]
+              },
+              "overwrite": {
+                "type": "boolean",
+                "description": "Required to replace an existing file at this destination; applies to this file only."
+              }
+            },
+            "required": [
+              "path",
+              "content"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "save_project": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "\\.bbmodel$",
+          "description": "Destination ending in .bbmodel inside the confirmed scoped directory (absolute or scope-relative)."
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "Required to replace an existing file at the destination; applies to this write only."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "capture_screenshot": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1920
+        },
+        "height": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1920
+        },
+        "angle_preset": {
+          "type": "string",
+          "enum": [
+            "initial",
+            "top",
+            "bottom",
+            "south",
+            "north",
+            "east",
+            "west",
+            "isometric_right",
+            "isometric_left",
+            "true_isometric_right",
+            "true_isometric_left"
+          ],
+          "description": "Render from a native Blockbench camera preset through the offscreen preview; the visible viewport camera is never modified. Compass directions are model-space (the model's \"front\" depends on the format's forward_direction). Omit to capture the currently visible view."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "validate_project": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "propose_scoped_directory": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute directory path proposed for session-scoped AI file access."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Shown to the Blockbench user in the confirmation dialog."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "create_project": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "java_block"
+        },
+        "name": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Required when an unsaved project is open; the new project opens in a separate tab."
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "open_model": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Model JSON path inside the confirmed scoped directory (absolute or scope-relative)."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Required when an unsaved project is open; the model opens in a separate tab."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "set_display_transform": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "string",
+          "enum": [
+            "thirdperson_righthand",
+            "thirdperson_lefthand",
+            "firstperson_righthand",
+            "firstperson_lefthand",
+            "ground",
+            "gui",
+            "head",
+            "fixed"
+          ]
+        },
+        "translation": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/properties/translation/items/0"
+            },
+            {
+              "$ref": "#/properties/translation/items/0"
+            }
+          ]
+        },
+        "rotation": {
+          "$ref": "#/properties/translation"
+        },
+        "scale": {
+          "$ref": "#/properties/translation"
+        }
+      },
+      "required": [
+        "slot"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "export_model": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "Required to replace an existing file at the destination; applies to this write only."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "create_geckolib_project": {
+      "type": "object",
+      "properties": {
+        "modid": {
+          "type": "string",
+          "pattern": "^[_\\-.a-z0-9]+$",
+          "description": "Mod namespace (lowercase letters, digits, `_`, `-`, `.`), stored as geckolib_modid."
+        },
+        "model_type": {
+          "type": "string",
+          "enum": [
+            "Entity",
+            "Block",
+            "Item",
+            "Armor",
+            "Object"
+          ]
+        },
+        "identifier": {
+          "type": "string",
+          "pattern": "^[_\\-.a-z0-9]+$",
+          "description": "Object ID used for `geometry.<identifier>` and recommended export file names."
+        },
+        "name": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Required when an unsaved project is open; the new project opens in a separate tab."
+        }
+      },
+      "required": [
+        "modid",
+        "model_type",
+        "identifier"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "open_geckolib_model": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "GeckoLib .bbmodel path inside the confirmed scoped directory (absolute or scope-relative)."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Required when an unsaved project is open; the model opens in a separate tab."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "export_geckolib_model": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "Required to replace an existing file at the destination; applies to this write only."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "export_geckolib_animations": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "Required to replace an existing file at the destination; applies to this write only."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "validate_geckolib_file": {
+      "type": "object",
+      "properties": {
+        "geo_path": {
+          "type": "string",
+          "description": "Bedrock geometry JSON (.geo.json) path inside the confirmed scoped directory."
+        },
+        "animation_path": {
+          "type": "string",
+          "description": "GeckoLib animation JSON path inside the confirmed scoped directory; content checks need no geometry, bone cross-checks also need geo_path."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "upsert_geckolib_animation": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Animation name (the clip key), e.g. animation.<entity>.<action>."
+        },
+        "loop": {
+          "type": "string",
+          "enum": [
+            "once",
+            "loop",
+            "hold_on_last_frame"
+          ],
+          "description": "GeckoLib loop mode (default once)."
+        },
+        "length": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Clip length in seconds."
+        },
+        "override": {
+          "type": "boolean",
+          "description": "Override lower-priority animations (default false)."
+        },
+        "anim_time_update": {
+          "type": "string",
+          "description": "Molang expression driving clip time (passed through, never evaluated)."
+        },
+        "bones": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "rotation": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "time": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "Keyframe time in seconds from clip start."
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ],
+                              "description": "A number or a molang expression string (molang is passed through, never evaluated)."
+                            },
+                            {
+                              "$ref": "#/properties/bones/additionalProperties/properties/rotation/items/properties/value/anyOf/2/items/0"
+                            },
+                            {
+                              "$ref": "#/properties/bones/additionalProperties/properties/rotation/items/properties/value/anyOf/2/items/0"
+                            }
+                          ]
+                        }
+                      ],
+                      "description": "Keyframe value in the GeckoLib .animation.json convention: a number or molang string (applied to all three axes) or an [x, y, z] array of number|molang-string."
+                    },
+                    "interpolation": {
+                      "type": "string",
+                      "enum": [
+                        "linear",
+                        "catmullrom",
+                        "step"
+                      ],
+                      "description": "Interpolation to the next keyframe (default linear)."
+                    },
+                    "easing": {
+                      "type": "string",
+                      "enum": [
+                        "linear",
+                        "step",
+                        "easeInQuad",
+                        "easeOutQuad",
+                        "easeInOutQuad",
+                        "easeInCubic",
+                        "easeOutCubic",
+                        "easeInOutCubic",
+                        "easeInQuart",
+                        "easeOutQuart",
+                        "easeInOutQuart",
+                        "easeInQuint",
+                        "easeOutQuint",
+                        "easeInOutQuint",
+                        "easeInSine",
+                        "easeOutSine",
+                        "easeInOutSine",
+                        "easeInExpo",
+                        "easeOutExpo",
+                        "easeInOutExpo",
+                        "easeInCirc",
+                        "easeOutCirc",
+                        "easeInOutCirc",
+                        "easeInBack",
+                        "easeOutBack",
+                        "easeInOutBack",
+                        "easeInElastic",
+                        "easeOutElastic",
+                        "easeInOutElastic",
+                        "easeInBounce",
+                        "easeOutBounce",
+                        "easeInOutBounce"
+                      ],
+                      "description": "GeckoLib per-keyframe easing name (absent means linear)."
+                    },
+                    "easingArgs": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "description": "Numeric easing arguments; used by the Back/Elastic/Bounce families and step."
+                    }
+                  },
+                  "required": [
+                    "time",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "position": {
+                "$ref": "#/properties/bones/additionalProperties/properties/rotation"
+              },
+              "scale": {
+                "$ref": "#/properties/bones/additionalProperties/properties/rotation"
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Bone name → rotation/position/scale keyframe lists. Bone names must match current group names. Values use the GeckoLib .animation.json convention (what export_geckolib_animations writes): rotation X/Y and position X are stored inverted relative to the Blockbench UI; the handler applies that mapping."
+        },
+        "replace": {
+          "type": "boolean",
+          "description": "Must be true to overwrite an existing animation with the same name; applies to this call only."
+        }
+      },
+      "required": [
+        "name",
+        "length",
+        "bones"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "delete_geckolib_animation": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "get_geckolib_animation": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "capture_geckolib_animation_frame": {
+      "type": "object",
+      "properties": {
+        "animation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the GeckoLib animation clip to pose and capture."
+        },
+        "time": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Timestamp in seconds to render within the named clip."
+        },
+        "width": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1920
+        },
+        "height": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1920
+        },
+        "angle_preset": {
+          "type": "string",
+          "enum": [
+            "initial",
+            "top",
+            "bottom",
+            "south",
+            "north",
+            "east",
+            "west",
+            "isometric_right",
+            "isometric_left",
+            "true_isometric_right",
+            "true_isometric_left"
+          ],
+          "description": "Render the posed GeckoLib model from a native Blockbench camera preset through the offscreen preview; omit to capture the currently visible view."
+        }
+      },
+      "required": [
+        "animation",
+        "time"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}

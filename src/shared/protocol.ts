@@ -201,7 +201,10 @@ const cubeReadbackSchema = z.object({
   box_uv: z.boolean(),
   uv_offset: vec2,
   mirror_uv: z.boolean(),
-  faces: z.record(z.enum(cubeFaceNames), cubeFaceReadbackSchema),
+  // zod 4 makes an enum-keyed `record` exhaustive, which would demand every
+  // face be present; `partialRecord` keeps the optional-per-face shape the
+  // plugin has always returned.
+  faces: z.partialRecord(z.enum(cubeFaceNames), cubeFaceReadbackSchema),
   parent_uuid: z.string().nullable(),
 });
 
@@ -311,7 +314,9 @@ const setCubeUvParams = z
     uv_offset: vec2.optional().describe('Box-UV texture offset; valid in box UV mode only.'),
     mirror_uv: z.boolean().optional().describe('Box-UV X mirroring; valid in box UV mode only.'),
     faces: z
-      .record(z.enum(cubeFaceNames), setCubeUvFaceSchema)
+      // `partialRecord` keeps a caller free to name a single face; zod 4 would
+      // otherwise require all six, contradicting the "at least one face" refinement below.
+      .partialRecord(z.enum(cubeFaceNames), setCubeUvFaceSchema)
       .optional()
       .describe('Per-face UV rectangles plus optional rotation; valid in per-face UV mode only.'),
   })
@@ -814,7 +819,7 @@ const geckolibAnimationClipSchema = z
       .optional()
       .describe('Molang expression driving clip time (passed through, never evaluated).'),
     bones: z
-      .record(geckolibAnimationChannelsSchema)
+      .record(z.string(), geckolibAnimationChannelsSchema)
       .describe(
         'Bone name → rotation/position/scale keyframe lists. Bone names must match current group names. Values use the GeckoLib .animation.json convention (what export_geckolib_animations writes): rotation X/Y and position X are stored inverted relative to the Blockbench UI; the handler applies that mapping.',
       ),

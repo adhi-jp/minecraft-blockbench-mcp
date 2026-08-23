@@ -1,0 +1,80 @@
+{
+  "name": "initialize-2024-11-05",
+  "proves": "An opening initialize naming MCP revision 2024-11-05 is accepted, echoes that same revision back, and advertises the server capability object and server identity recorded here.",
+  "covers": [
+    "legacy-negotiation"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize with protocolVersion 2024-11-05",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2024-11-05",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "premigration-wire-recorder",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {
+                  "listChanged": true
+                }
+              },
+              "serverInfo": {
+                "name": "minecraft-blockbench-mcp",
+                "version": "0.1.0"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": 1
+          },
+          "rawSha256": "29ac7992e02d1cb50b290065f25832916f2a694b82f01ded89cb0f1a8f040a56"
+        }
+      ]
+    },
+    {
+      "label": "notifications/initialized carries no response",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 1,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

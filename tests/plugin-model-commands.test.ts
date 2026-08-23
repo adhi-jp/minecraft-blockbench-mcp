@@ -16,6 +16,7 @@ import { WsBridge } from '../src/adapter/ws-bridge.js';
 import { PluginSession, type WebSocketLike } from '../src/plugin/session.js';
 import { ScopeManager, type ScopedFsLike } from '../src/plugin/scope-manager.js';
 import { registerModelCommands } from '../src/plugin/commands/model-commands.js';
+import { registerScopeCommands } from '../src/plugin/commands/scope-commands.js';
 import { COMMAND_SPECS } from '../src/shared/protocol.js';
 
 const SECRET = 'model-cmd-secret-17';
@@ -291,6 +292,9 @@ async function makeHarness(): Promise<Harness> {
     return scope.propose(path, reason);
   });
   registerModelCommands(session, scope);
+  // The shipped plugin registers this too (src/plugin/main.ts); the adapter
+  // revokes any inherited scoped directory before it relays a first command.
+  registerScopeCommands(session, scope);
   session.start();
 
   try {

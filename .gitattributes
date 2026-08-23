@@ -1,0 +1,20 @@
+# The frozen pre-migration wire corpus is byte-exact evidence, so it must check
+# out byte-identically on every platform.
+#
+# `tests/premigration-corpus-integrity.test.ts` hashes each file under this
+# directory as a raw `Buffer` and compares the result against a digest recorded
+# when the corpus was captured; `tests/premigration-wire-baseline.test.ts`
+# replays the same files as the oracle for what the stdio executable puts on the
+# wire. Git for Windows installs `core.autocrlf=true` by default, which rewrites
+# the recorded LF bytes to CRLF on checkout — so the Windows working tree held
+# different bytes and the digest legitimately disagreed there, while the digest
+# itself and the single-byte sensitivity control it backs are both correct.
+#
+# `-text` turns end-of-line conversion off for these paths in both directions,
+# which pins the checkout to the recorded bytes without touching the digest and
+# without making it line-ending-insensitive.
+#
+# Scoped to this one directory on purpose: a repository-wide `text=auto eol=lf`
+# would renormalise unrelated files in the index, which is a far larger change
+# than pinning the evidence this repair is about.
+tests/fixtures/premigration/** -text

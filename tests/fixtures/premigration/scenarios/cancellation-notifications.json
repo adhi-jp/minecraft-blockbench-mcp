@@ -1,0 +1,165 @@
+{
+  "name": "cancellation-notifications",
+  "proves": "notifications/cancelled for request ids 0, the empty string, a nonzero number, and a nonempty string each produce no stdout and no error, and the connection keeps serving requests afterwards.",
+  "covers": [
+    "cancellation"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize with protocolVersion 2025-11-25",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "premigration-wire-recorder",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {
+                  "listChanged": true
+                }
+              },
+              "serverInfo": {
+                "name": "minecraft-blockbench-mcp",
+                "version": "0.1.0"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": 1
+          },
+          "rawSha256": "cfd279481b15c2356cba73a613a7a2973c2b409f079fb43d40cf59df5a5c3064"
+        }
+      ]
+    },
+    {
+      "label": "notifications/initialized carries no response",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "awaitStdoutMessages": 0,
+      "expect": []
+    },
+    {
+      "label": "cancel request id 0",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {
+          "requestId": 0,
+          "reason": "recorded baseline"
+        }
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "cancel request id \"\"",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {
+          "requestId": "",
+          "reason": "recorded baseline"
+        }
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "cancel request id 1",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {
+          "requestId": 1,
+          "reason": "recorded baseline"
+        }
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "cancel request id \"never-issued\"",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {
+          "requestId": "never-issued",
+          "reason": "recorded baseline"
+        }
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "the connection still answers a following request",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+          "name": "health",
+          "arguments": {}
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\n  \"summary\": \"Adapter is running; the Blockbench plugin is not connected.\",\n  \"ok\": true,\n  \"result\": {\n    \"adapter_version\": \"0.1.0\",\n    \"protocol_version\": 6,\n    \"port\": 39731,\n    \"ws_listening\": false,\n    \"plugin_connected\": false,\n    \"setup_errors\": [\n      {\n        \"code\": \"E_SECRET_MISSING\",\n        \"message\": \"No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.\"\n      }\n    ],\n    \"plugin\": null,\n    \"mode\": \"direct\",\n    \"broker_connected\": false,\n    \"controller_state\": null,\n    \"controller_owner\": null,\n    \"client_count\": null\n  }\n}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 2
+          },
+          "rawSha256": "3c9133ca26e4569e594c3dc221461990354a58d6cd99b5240ca5b013c43b16ea"
+        }
+      ]
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 2,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

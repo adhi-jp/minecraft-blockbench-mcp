@@ -21,8 +21,25 @@ import {
 const PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 
+/**
+ * Parents for the two run-directory tests below.
+ *
+ * The helper resolves `--out` and `outParent` with `path.resolve`, which is
+ * absolute-path-preserving but host-relative: a POSIX literal such as
+ * `/tmp/gecko-smoke` is already absolute on Linux and came back verbatim, while
+ * on Windows `resolve` prefixes the current drive and returned
+ * `D:\tmp\gecko-smoke`. Building the parents from the host's own temp
+ * directory keeps them absolute on every platform, so `resolve` is the identity
+ * on them and the assertions stay exact whole-path comparisons of the value the
+ * helper returned against the value it was given — no normalisation is applied
+ * to either side, and nothing is compared less strictly than before. Neither
+ * test creates anything on disk.
+ */
+const SMOKE_OUT_PARENT = join(tmpdir(), 'gecko-smoke');
+const SMOKE_RUN_PARENT = join(tmpdir(), 'smoke-parent');
+
 test('parseSmokeArgs prefers env secret and accepts port, output parent, and timeout overrides', () => {
-  const options = parseSmokeArgs(['--port', '40123', '--out', '/tmp/gecko-smoke', '--timeout-ms=120000'], {
+  const options = parseSmokeArgs(['--port', '40123', '--out', SMOKE_OUT_PARENT, '--timeout-ms=120000'], {
     BLOCKBENCH_MCP_SECRET: 'env-secret',
     BLOCKBENCH_MCP_PORT: '39731',
   });
@@ -31,7 +48,7 @@ test('parseSmokeArgs prefers env secret and accepts port, output parent, and tim
   assert.equal(options.secret, 'env-secret');
   assert.equal(options.authSource, 'environment');
   assert.equal(options.lessSafeSecretFlag, false);
-  assert.equal(options.outParent, '/tmp/gecko-smoke');
+  assert.equal(options.outParent, SMOKE_OUT_PARENT);
   assert.equal(options.timeoutMs, 120_000);
 });
 
@@ -51,14 +68,14 @@ test('parseSmokeArgs rejects missing and invalid option values', () => {
 
 test('selectRunDirectory creates unique GeckoLib live smoke run directories under the chosen parent', () => {
   const selected = selectRunDirectory({
-    outParent: '/tmp/smoke-parent',
+    outParent: SMOKE_RUN_PARENT,
     now: new Date('2026-07-11T01:02:03.004Z'),
     randomHex: 'abcd1234',
   });
 
-  assert.equal(selected.parent, '/tmp/smoke-parent');
+  assert.equal(selected.parent, SMOKE_RUN_PARENT);
   assert.equal(selected.runId, 'geckolib-live-smoke-2026-07-11T01-02-03-004Z-abcd1234');
-  assert.equal(selected.runDir, '/tmp/smoke-parent/geckolib-live-smoke-2026-07-11T01-02-03-004Z-abcd1234');
+  assert.equal(selected.runDir, join(SMOKE_RUN_PARENT, 'geckolib-live-smoke-2026-07-11T01-02-03-004Z-abcd1234'));
 });
 
 test('createRunDirectory refuses to overwrite an existing run directory', async (t) => {

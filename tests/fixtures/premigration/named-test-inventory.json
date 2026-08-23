@@ -1,0 +1,1695 @@
+{
+  "note": "Every named test that existed and passed before this wire corpus was added. The replay test re-scans the test sources and fails if any of these names disappears, so a later change cannot quietly drop or rename an existing test.",
+  "provenance": {
+    "note": "Recorded from the built stdio MCP executable before any dependency change. Regenerate with `node scripts/capture-premigration-baseline.mjs`. No capture timestamp is stored so that re-recording an unchanged build produces byte-identical files.",
+    "gitHead": "93a203ee825161c747bb50a5df8258f43119f65f",
+    "packageVersion": "0.1.0",
+    "declaredDependencies": {
+      "@modelcontextprotocol/sdk": "^1.29.0",
+      "ws": "^8.18.0",
+      "zod": "^3.25.0"
+    },
+    "installedSdkVersion": "1.29.0",
+    "installedZodVersion": "3.25.76",
+    "nodeVersion": "v24.13.0",
+    "platform": "linux",
+    "adapterMode": "direct (pinned with --direct; POSIX defaults to brokered)",
+    "environment": "isolated-empty-config-home"
+  },
+  "excludedFiles": [
+    "premigration-wire-baseline.test.ts"
+  ],
+  "verifiedByRun": true,
+  "fileCount": 25,
+  "testCount": 417,
+  "tests": [
+    {
+      "file": "adapter-config.test.ts",
+      "name": "a missing implicit default file is silent; a corrupt one is reported with its path only"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "adapter mode uses platform defaults, environment overrides, CLI overrides, and direct conflict precedence"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "an omitted or null implicit default path keeps the previous behavior"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "an unreadable or malformed config file is a reported setup issue"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "broker timeout values reject values outside their supported range"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "broker timeout values use CLI over environment over config file"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "defaults apply when nothing is configured"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "empty secrets are treated as unconfigured"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "invalid numeric values are reported and fall back instead of crashing"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "precedence is CLI over environment over config file over defaults"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "the --config flag beats the implicit default, and a failed explicit file never falls back to it"
+    },
+    {
+      "file": "adapter-config.test.ts",
+      "name": "the implicit default file is used only when no explicit config source exists"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "a directly spawned broker never writes the shared secret to stderr"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "a handoff command remains unrelayed until the plugin acknowledges scope revocation"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "a lost revocation acknowledgement is requested again after plugin reconnection before handoff"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "an attached MCP client re-elects a broker after the broker process is replaced"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "an idle broker exits cleanly and a later client elects a fresh instance"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "an incompatible broker is reported without replacing or terminating the running endpoint"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "brokered mutating timeouts preserve the direct-mode reconciliation error shape"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "closing the controller revokes its scoped directory exactly once before the next client command"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "concurrent MCP clients share one broker and retain partial availability without Blockbench"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "direct mode binds its own WebSocket listener while an unrelated broker is running"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "lease expiry revokes scope for a different client but not when the same client reacquires"
+    },
+    {
+      "file": "broker-e2e.test.ts",
+      "name": "the first plugin command owns control and excludes a second client without blocking read-only MCP surfaces"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "a dead broker record without a startup lock is replaced by a successful election"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "a failing probe behind a fresh startup lock waits without taking over"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "a fresh lock replacing the observed stale lock is restored without takeover"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "a healthy endpoint attaches even when its recorded pid is absent and the record remains untouched"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "a lone elector holds the startup lock while starting, publishes, and always unlocks"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "a second elector attaches to a healthy published record without starting"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "an elector re-probes after finding a lock and attaches when the holder becomes healthy"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "separately imported takeover racers cannot both start a broker"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "startup failure releases the exclusive lock"
+    },
+    {
+      "file": "broker-election.test.ts",
+      "name": "two racers perform exactly one stale-lock takeover"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "an absolute XDG runtime directory is honored and other values fall back to the config directory"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "config identity is stable per resolved path and contains 16 lowercase hex characters"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "missing, unparsable, invalid, and secret-bearing rendezvous records read as absent"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "rendezvous records are written atomically with owner-only permissions and read back"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "rendezvous removal is conditional on the broker instance id"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "rendezvous writes reject secret-bearing values instead of persisting them"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "runtime directories are created and repaired to owner-only mode"
+    },
+    {
+      "file": "broker-endpoint.test.ts",
+      "name": "Windows endpoints use the named-pipe namespace while POSIX endpoints use the runtime directory"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "an oversized line yields one structured rejection and decoding resumes at the next line"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "every broker-to-client message survives NDJSON encoding and decoding"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "every client-to-broker message survives NDJSON encoding and decoding"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "malformed JSON yields a structured rejection without poisoning the next frame"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "message schemas expose no secret field while opaque payloads remain content-agnostic"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "partial lines and multiple frames are reassembled across arbitrary chunks"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "response envelopes require errors exactly when ok is false"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "response error payloads reject extra keys"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "the line limit counts UTF-8 bytes rather than JavaScript characters"
+    },
+    {
+      "file": "broker-ipc.test.ts",
+      "name": "unknown message types and extra envelope keys are rejected"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "a different session must complete revocation before acquiring a previous scope era"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "a disconnected pending acquirer is removed and a later acquire starts fresh recovery"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "a lost revocation acknowledgement remains tainted across plugin reconnect and blocks grant"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "acquirer disconnection is illegal outside recovery"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "heartbeat expiry releases an owner with no request in flight"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "heartbeat expiry waits for an in-flight request before completing release"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "owner death during a request holds the lease in releasing until the request finishes"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "plugin re-authentication with a tainted scope requires revocation before any grant"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "taint survives two plugin reconnect cycles before a different session is granted"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "the idle timer is absent while a request is in flight and resumes after it finishes"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "the same session re-acquires after idle expiry without scope revocation"
+    },
+    {
+      "file": "broker-lease.test.ts",
+      "name": "the transition table covers every state and event as a transition or an explicit rejection"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "a broker client reconnects after connection loss and after an explicit close"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "a broker with no clients exits after its initial idle timeout"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "a client missing two ping replies is deregistered and its idle ownership is released"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "a disconnected broker client makes one injected reattach attempt before reporting unavailable"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "a disconnected pending acquirer is not granted or relayed after revocation acknowledgement"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "a lost revocation acknowledgement is retried after plugin authentication before handoff"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "an invalid revocation acknowledgement keeps recovery tainted and does not relay the waiting command"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "controller handoff waits for exactly one revoke_scope acknowledgement before relay"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "detached broker spawning preserves argv boundaries and only unreferences the injected child"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "identity and IPC version mismatches are rejected with their precise reasons and closed"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "idle shutdown revokes a connected plugin exactly once before closing the bridge"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "last-client idle shutdown removes rendezvous state and refuses later IPC attachment"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "mutating command timeouts pass through the direct bridge reconciliation payload"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "plugin-not-connected errors pass through the complete direct bridge payload"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "registered clients receive hello acknowledgements and shared connected status"
+    },
+    {
+      "file": "broker-server.test.ts",
+      "name": "the first controller excludes a busy client without relaying its command"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "a missing binary aborts and names --blockbench-path"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "a non-Blockbench DevTools endpoint is refused"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "a payload failure inside Blockbench reports a consistent state"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "an already-running Blockbench aborts before any launch"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "an interop evaluate failure still deletes the driver script and reports a consistent state"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "an unsupported target returns without launching"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "extractEvaluateValue unwraps the CDP response and surfaces errors"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "happy Linux path: launches with a debug port, evaluates the payload, reports provisioned"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "happy Windows path: the payload uses the Windows-notation plugin path"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "parseDriverOutput reads the single JSON result line and ignores noise"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "resolveFullAutoTarget maps platforms and the WSL override correctly"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "the CDP payload carries the exact proven calls and the plugin path, and embeds the secret only as a settings value"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "the PowerShell driver script is a constant with no interpolated runtime data"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "the running check receives the resolved binary and does not fire on the setup process itself"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "the secret never appears in any orchestration output"
+    },
+    {
+      "file": "full-auto.test.ts",
+      "name": "the Windows interop runner receives the payload on stdin and never in argv, and cleans up its driver script"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "a keyframe's linear easing is omitted like linear interpolation"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "a non-normalized payload converges to the normalized form through the mapping"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "blockbench data normalizes to the canonical payload form"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "clip properties map with defaults: loop once, override false, empty channels dropped"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "easingArgs are only emitted next to an easing name"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "loop modes map between GeckoLib JSON terms and Blockbench terms"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "molang strings pass through the injected inverter on the inverted axes only"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "payload → blockbench → payload round-trips to the normalized payload"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "payload values invert rotation X/Y and position X numerically, scale never"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "rotation zero values stay plain zero instead of negative zero"
+    },
+    {
+      "file": "geckolib-animation-mapping.test.ts",
+      "name": "scalar payload values expand to all three axes like the GeckoLib importer"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "a bone parent that does not exist is an error"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "a bone that is its own parent is an error"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "a real GeckoLib plugin 4.2.5 animation export validates clean"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "a valid animation cross-check against its geometry is clean"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "a valid GL4 geometry export produces no diagnostics"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "an animation file exercising every supported content feature produces no diagnostics"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "an animation_length shorter than the last bone keyframe is a warning"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "an empty channel array is an invalid keyframe value"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "an untested GeckoLib plugin version produces a soft-pin warning"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "animation files without an animations map are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "animation references to bones missing from the geometry are warnings naming the crash flag"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "armor projects warn for every missing template bone and pass with the full rig"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "ascending timestamps mixing integer and decimal keys are accepted despite JSON key reordering"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "bone entries that are not objects or have no usable name are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "broken animation content envelopes are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "broken geometry envelopes are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "duplicate bone names are errors, including case-insensitive duplicates"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "easingArgs that are not numeric arrays are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "empty bones maps and empty keyframe maps produce no diagnostics"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "extra geometry entries and empty bone lists are warnings"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "geometry bone names are extractable for cross-checks"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "GL5-only format versions are errors with a portability note"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "keyframe values outside the number/molang/3-entry-vector shapes are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "loop values GL4 cannot resolve are warnings naming the silent play-once fallback"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "malformed animation entries and uninspectable geometries degrade explicitly"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "malformed effect keyframes are errors, including two-data-points-per-timestamp arrays"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "molang strings are not evaluated; only unbalanced parentheses are warnings"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "non-numeric, negative, duplicated, and out-of-order keyframe timestamps are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "non-positive declared texture dimensions are errors"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "project rules flag bone charset violations and duplicates"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "project rules pass for a well-formed entity project"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "project rules require a valid modid and identifier"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "single-keyframe channel objects validate their vector and easing metadata"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "texture size mismatches against the declared UV base are warnings"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "the full-features animation cross-checks cleanly against the geometry fixture"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "the GeckoLib plugin easing whitelist has exactly the 32 surveyed names"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "the validator and the wire schema agree on the gl4 profile literal"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "undefined-valued easing/easingArgs keys are treated as absent (in-memory build objects)"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "unknown easing names are warnings; the whitelist is case-insensitive and includes GL4 aliases"
+    },
+    {
+      "file": "geckolib-validate.test.ts",
+      "name": "unknown, missing, or non-string format versions are errors"
+    },
+    {
+      "file": "mcp-server-health.test.ts",
+      "name": "brokered health degrades cleanly when the broker status is unavailable"
+    },
+    {
+      "file": "mcp-server-health.test.ts",
+      "name": "brokered health uses the broker status and effective port"
+    },
+    {
+      "file": "mcp-server-health.test.ts",
+      "name": "direct health preserves adapter fields and reports empty broker state"
+    },
+    {
+      "file": "mcp-server-health.test.ts",
+      "name": "operation tools gate on bridge connection and preserve bridge error payloads"
+    },
+    {
+      "file": "plugin-dialog-text.test.ts",
+      "name": "collapses newlines and C0/C1 control characters into spaces"
+    },
+    {
+      "file": "plugin-dialog-text.test.ts",
+      "name": "escapes every inline-Markdown character"
+    },
+    {
+      "file": "plugin-dialog-text.test.ts",
+      "name": "keeps empty input empty"
+    },
+    {
+      "file": "plugin-dialog-text.test.ts",
+      "name": "passes a short reason through after trimming"
+    },
+    {
+      "file": "plugin-dialog-text.test.ts",
+      "name": "truncates at the requested boundary and appends one ellipsis"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "a multi-file batch with any blocker writes nothing and reports the full blocker list"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "a previous-session grant reports E_SCOPE_EXPIRED through the dispatcher until reconfirmed"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "a rejected scope proposal reports user rejection through the dispatcher"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "a symlinked component inside the scope is rejected before any write"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "an existing destination without the explicit overwrite flag is rejected with E_FILE_EXISTS and the file is untouched"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "Blockbench-dependent commands degrade to structured errors when no Blockbench runtime exists"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "escape attempts through the dispatcher are rejected with E_PATH_OUTSIDE_SCOPE"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "file commands before scope confirmation fail with E_SCOPE_NOT_CONFIRMED through the dispatcher"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "normalized scope paths flow through results (separator policy)"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "read_file reports E_NOT_FOUND for missing files and E_INVALID_PARAMS beyond max_bytes"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "revoking the scope mid-session flips file commands to E_SCOPE_REVOKED"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "the plugin re-validates parameters itself even when the adapter is bypassed"
+    },
+    {
+      "file": "plugin-file-commands.test.ts",
+      "name": "write and read round-trip inside the confirmed scope, including base64 and nested directories"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "a keyframe-level invalid payload fails plugin-side validation without leaving a partial clip"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "a mid-apply Blockbench failure rolls back to the previous animation state"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "an unsaved open project blocks create/open without force:true, matching the java_block guard"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "capture_geckolib_animation_frame applies loop timing rules before Timeline.setTime"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "capture_geckolib_animation_frame poses one animation, renders, and restores animation state"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "capture_geckolib_animation_frame rejects active playback and missing animations before posing"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "capture_geckolib_animation_frame restores state after screenshot failure and the queue keeps serving"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "capture_geckolib_animation_frame uses preset screenshots without touching the visible preview"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "concurrent GeckoLib animation frame captures serialize the full pose-render-restore section"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "delete_geckolib_animation removes the clip in one undo step and reports missing names"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "every geckolib command fails with E_PLUGIN_DEPENDENCY_MISSING while the GeckoLib format is absent"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "export_geckolib_animations reports E_NOT_FOUND when the project has no animations"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "geckolib commands on a non-geckolib project fail with E_FORMAT_UNSUPPORTED naming the actual format"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "get_geckolib_animation normalizes out-of-payload interpolation and easing so the result re-upserts"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "get_plugin_status reports the shared protocol constant, geckolib capability, and detected plugin version"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "get_project_state lists an animations summary in GeckoLib loop terms"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "get_project_state omits the animations summary for a non-geckolib project"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "open_geckolib_model rejects .bbmodel files whose meta.model_format is not geckolib_model"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "the GeckoLib format is detected per call, not cached from the handshake"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "the plugin re-validates geckolib parameters itself even when the adapter is bypassed"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "upsert rejects a payload whose bone keys collide on one group"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "upsert_geckolib_animation creates a clip in one undo step and get_geckolib_animation round-trips it"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "upsert_geckolib_animation rejects unknown and ambiguous bone names before any mutation"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "upsert_geckolib_animation requires replace:true to overwrite and keeps the exact name on replace"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "validate_geckolib_file validates an animation file alone and dedupes envelope errors with geometry"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "validate_geckolib_file validates scoped files end-to-end and reuses scope errors"
+    },
+    {
+      "file": "plugin-geckolib-commands.test.ts",
+      "name": "validate_project runs the shared animation checks on the in-memory build and skips the build with zero animations"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "a failed capture does not wedge the screenshot queue"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "assign_texture adds and applies a texture in one undo step"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "assign_texture rejects an unknown cube before adding a texture"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "capture_screenshot fails cleanly for a preset missing from the runtime preset list"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "capture_screenshot resets the residual orthographic zoom that locked-angle presets skip"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "capture_screenshot with a preset and no open project fails with E_NOT_FOUND"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "capture_screenshot with a preset is rejected while a Blockbench recording is running"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "capture_screenshot with a preset renders through the offscreen preview and echoes the preset"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "capture_screenshot without a preset shoots the selected preview exactly as before"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "concurrent capture_screenshot calls are serialized on the shared offscreen preview"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "create_cubes passes box_uv and uv_offset through and disables auto-UV only for UV data"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "create_cubes rejects a box_uv the format cannot represent before creating anything"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "create_cubes rejects uv_offset on a cube that would be created in per-face UV mode"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "get_elements returns geometry, UV state, resolved textures, and hierarchy for every element"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "get_elements uuids filter bounds the response to the requested cubes and groups"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "get_elements with any unknown UUID fails with E_NOT_FOUND and returns no partial result"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "get_elements with no open project fails with E_NOT_FOUND"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "PROBE: capture_screenshot succeeds after a previous failed capture"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project on a fresh project adopts the destination, compiles against it, and marks the project saved"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project outside the scoped directory fails with the scope error and mutates nothing"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project recognizes a same-path re-save stored with OS-native separators"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project rejects a destination that does not end in .bbmodel before any state change"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project rejects a non-string compile result instead of writing coerced garbage"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project reports success even when the saved setter throws in a listener"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project restores the save path and clears the codec flag when compile fails"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project restores the save path when the write fails after a clean preflight"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project to a divergent path keeps the save target and the dirty flag"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project to the current save path re-saves in place and clears the dirty flag"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project with no open project fails with E_NOT_FOUND"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "save_project without overwrite on an existing file fails before compiling or touching project state"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv allows switching back to the format default even without optional box UV"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv fails with E_FORMAT_UNSUPPORTED when the format forbids the mode switch"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv fails with E_NOT_FOUND for an unknown cube UUID"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv refreshes the UV panel only when it shows the edited cube"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv rejects a non-zero face rotation when the format has no per-face rotation"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv rejects box-UV fields on a per-face cube"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv rejects faces on a box-UV cube without an explicit mode switch"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv switches the UV mode through setUVMode before writing mode-specific fields"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv writes box-UV state in one undo step, disables auto-UV, and refreshes UVs"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_cube_uv writes per-face uv and rotation values"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_texture_resolution delegates to the native resolution utility"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_texture_resolution rejects a rescale from a non-positive current resolution"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_texture_resolution rejects rescale requests the native utility would silently skip"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_texture_resolution rescales UVs when the native guard conditions hold"
+    },
+    {
+      "file": "plugin-model-commands.test.ts",
+      "name": "set_texture_resolution with no open project fails with E_NOT_FOUND"
+    },
+    {
+      "file": "plugin-scope-commands.test.ts",
+      "name": "registering scope commands exposes exactly the revoke_scope handler"
+    },
+    {
+      "file": "plugin-scope-commands.test.ts",
+      "name": "revoke_scope leaves an unconfirmed scope unchanged without emitting scope_changed"
+    },
+    {
+      "file": "plugin-scope-commands.test.ts",
+      "name": "revoke_scope revokes a confirmed scope and reports the resulting state"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "a synchronous hello send failure is contained and enters retry lifecycle"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "a wrong secret surfaces as auth_failed status"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "an acknowledgement from a replaced socket cannot authenticate the current session"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "an empty secret never attempts a connection and reports auth_failed"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "command response sending contains a close-at-send failure after the handler completes"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "CommandError from a handler keeps its machine-readable code and details"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "hello acknowledgement cancels the authentication deadline"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "missing hello acknowledgement closes the socket and schedules retry"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "reconnectNow connects promptly after a secret becomes available"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "registered handlers answer relayed requests; results pass through the bridge unchanged"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "requests are rejected before authentication and handled after hello_ack"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "scope_changed events reach the adapter cache through sendEvent"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "sendEvent contains a close-at-send failure"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "stop() closes cleanly and disables reconnection"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "the session connects, authenticates, and reports connected on both ends"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "the session reconnects with backoff after the adapter restarts"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "unexpected handler exceptions become E_BLOCKBENCH_ERROR without killing the session"
+    },
+    {
+      "file": "plugin-session.test.ts",
+      "name": "unknown commands produce a structured E_UNSUPPORTED_COMMAND rejection"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "a get_elements per-face read-back with quarter-turn rotation is valid set_cube_uv faces input"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "adapter-to-plugin envelope accepts hello_ack/request and rejects hello"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "broker error codes are included in the protocol error table"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "capture_geckolib_animation_frame validates timing, dimensions, presets, and metadata"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "capture_screenshot accepts the native camera preset ids and echoes the applied one"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "command params schemas reject unknown extra fields"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "command registry is partitioned into format-neutral, Java-format, and GeckoLib-format groups"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "create_cubes accepts optional per-cube box_uv and uv_offset and stays backward compatible"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "create_geckolib_project params enforce GeckoLib naming rules and the model type enum"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "cube coordinate params reject JSON-sourced non-finite values"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "default WebSocket port matches the specified loopback port 39731"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "error code table is stable and free of duplicates"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "error responses carry a stable machine-readable code"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "every command has a description that names its create/update semantics or read-only nature"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "GeckoLib open/export params accept valid shapes and reject unknown extra fields"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "get_elements params take an optional non-empty uuid filter and reject unknown fields"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "get_elements result carries full cube/group read-back whose values feed the write commands"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "get_geckolib_animation returns the upsert payload shape and delete takes only a name"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "get_plugin_status result accepts an optional GeckoLib plugin version"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "get_project_state result accepts the additive animations summary"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "hello message round-trips and requires a non-empty secret"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "internal revoke_scope command has strict empty params and a scope-status result"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "plugin-to-adapter envelope accepts hello/response/event and rejects request"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "protocol version constant is a positive integer"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "protocol version is 6 after adding broker control commands"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "response envelope enforces ok/error correlation"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "revoke_scope is not an MCP command name"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "save_project params take a path with an explicit per-call overwrite flag and report a write result"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "set_cube_uv params constrain box and per-face fields and require at least one change"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "set_texture_resolution params require positive integers and an explicit rescale opt-in"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "unknown command names are rejected by the registry lookup"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "upsert_geckolib_animation accepts the full clip payload and rejects out-of-contract shapes"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "validate_geckolib_file result requires check ids and the gl4 profile literal"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "validate_project diagnostics accept an optional target naming the affected object"
+    },
+    {
+      "file": "protocol.test.ts",
+      "name": "write_files params require the per-file overwrite flag to be boolean and per file"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "a read failure after a positive existence check degrades as unreadable"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "after a deny the reconnect loop only probes silently; a config-path change re-arms one prompt"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "an invalid port in the file falls back to the settings port"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "describe() covers every source state with actionable text and no secrets"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "describe() names the active source without touching the filesystem"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "missing file and underivable path degrade without prompting twice"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "non-empty settings secret wins and never touches the file"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "one prompt per session: a grant is retained and re-used across snapshots and rotation is picked up"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "parentDirectory and the userData derivation preserve separator style"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "resolveDefaultConfigPath follows the per-platform table with host-independent separators"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "the file is the source when settings are empty; its valid port is used"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "the session connects with the file secret and picks up rotations before and after a successful connect"
+    },
+    {
+      "file": "rendezvous.test.ts",
+      "name": "unrecognized version or mode degrades like an unreadable file"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "containment is separator-aware: sibling directories sharing a name prefix stay outside"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "multi-file preflight aggregates every blocker and reports duplicates, conflicts, and escapes"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "normalizePath handles UNC prefixes and drive roots"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "normalizePath rejects any traversal above an absolute root as invalid"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "normalizePath unifies separators and resolves dot segments"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "preflight flags case-variant duplicate destinations in one batch"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "preflight normalizes the scope root before the symlink walk (fail-closed wiring)"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "preflight with an explicit overwrite flag and clean destinations reports no blockers"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "resolveInScope accepts scope-relative and inside-absolute paths, rejects escapes"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "resolveInScope rejects NTFS alternate data streams and reserved device names"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "segment walk joins drive-root and trailing-slash scopes without doubling separators"
+    },
+    {
+      "file": "scope-logic.test.ts",
+      "name": "segment walk rejects symlinked components inside the scope (real temp symlink)"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "a denied native permission returns E_SCOPE_NOT_CONFIRMED with the native reason"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "a previous-session grant reports as expired until reconfirmed"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "a rejected proposal returns E_SCOPE_NOT_CONFIRMED with the user_rejected reason"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "a rejected re-proposal keeps the previously confirmed scope intact"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "concurrent proposals are rejected while a dialog is open"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "confirmation exceptions restore the prior confirmed scope and clear the proposal guard"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "confirming a proposal grants access, persists the memo, and emits scope events"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "disposing while native permission acquisition is pending prevents a stale grant"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "file access before any confirmation fails with E_SCOPE_NOT_CONFIRMED"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "in-session revocation flips file access to E_SCOPE_REVOKED"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "native permission exceptions restore an unsuperseded prior scope"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "relative or invalid proposals are rejected with E_INVALID_PARAMS"
+    },
+    {
+      "file": "scope-manager.test.ts",
+      "name": "revoking while confirmation is pending prevents stale approval from restoring access"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--full-auto on an unsupported platform falls back to the manual steps, exit 0"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--full-auto provisions via runFullAuto and then verifies health"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--full-auto still provisions when the config and registration already exist (no-op path is not taken)"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--full-auto that aborts exits 1 after printing the manual fallback"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--port change rewrites the config and tells the user to update Blockbench"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--port is honored when the existing config has no usable port field"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--rotate-secret regenerates the secret, keeps the port, and warns about Blockbench"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "--show-secret reveals the secret; --clipboard pipes it to the clipboard tool only"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "a bare adapter resolves the implicit per-user default config file"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "a broken adapter state after successful registration exits 1 with the remediation"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "a config directory that cannot be written surfaces as an error before registration"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "a foreign blockbench registration aborts without any state change; --replace replaces it"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "a matching registration with a deleted config file recovers without --replace"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "checkAdapterHealth ignores an inherited broker mode flag"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "checkAdapterHealth reports E_SECRET_MISSING as broken against the real adapter"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "checkAdapterHealth reports port-held while another listener owns the port"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "claude mcp add failure reports the manual command and a consistent state"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "corrupt config file aborts without overwriting unless --rotate-secret"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "doctor reports each of the four states with the plan exit codes"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "doctor states that the config path is the per-user default a bare adapter picks up"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "doctor without a config file says setup has not run"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "fresh setup writes a versioned config, registers with config-path env only, prints the manual steps"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "parseFlags accepts --full-auto and --blockbench-path"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "parseFlags rejects unknown flags, bad scope, bad port, bad wait"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "port held on fresh setup produces a warning but still completes"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "preflight: missing bundle names the right remediation per install mode"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "preflight: missing claude CLI stops before any state change"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "preflight: npm-cache install path is refused with persistent-install instructions"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "resolveConfigPath follows the per-platform table"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "rewriting a corrupt config salvages its in-range port"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "routeCli dispatches only the exact setup/doctor positionals at argv[2]"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "runSetupCli refuses to run from a non-built entry path"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "runSetupCli returns exit code 2 on usage errors"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "setup honors --scope user in registration args"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "the adapter logs its config source to stderr without the secret (explicit config)"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "the real clipboard path pipes the secret via stdin, never argv"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "unchanged re-run is a no-op: no writes, no registration calls beyond the checks"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "uninstall leaves a blockbench registration that points elsewhere untouched"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "uninstall removes the registration and config file and lists what it left"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "uninstall reports a removal failure and echoes the scope the registration reports"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "writeSecretFile writes atomically with 0600 permissions"
+    },
+    {
+      "file": "setup-cli.test.ts",
+      "name": "WSL prints both path notations; non-WSL output has no Windows path line"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "buildSmokeReport records human review handoff and excludes secrets and raw screenshot data"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "createRunDirectory refuses to overwrite an existing run directory"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "decodePngDataUrl and writePngDataUrl validate PNG data URLs and hash bytes"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "failure classification gives actionable precondition remediation without process killing"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "generateReviewChecklist includes required human visual review items"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "parseSmokeArgs prefers env secret and accepts port, output parent, and timeout overrides"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "parseSmokeArgs rejects missing and invalid option values"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "parseSmokeArgs supports the less-safe CLI secret flag without requiring raw argv in outputs"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "sanitizeForReport redacts known secrets, base64 secrets, and secret-like keys"
+    },
+    {
+      "file": "smoke-geckolib-animation-frame.test.ts",
+      "name": "selectRunDirectory creates unique GeckoLib live smoke run directories under the chosen parent"
+    },
+    {
+      "file": "stdio-e2e.test.ts",
+      "name": "a malformed config file never leaks its content (or the secret) into health responses or logs"
+    },
+    {
+      "file": "stdio-e2e.test.ts",
+      "name": "missing secret: MCP still serves and health reports E_SECRET_MISSING"
+    },
+    {
+      "file": "stdio-e2e.test.ts",
+      "name": "plugin result schemas preserve valid results and reject structurally invalid results"
+    },
+    {
+      "file": "stdio-e2e.test.ts",
+      "name": "port already in use: MCP still serves, health reports E_PORT_IN_USE, tools stay listed"
+    },
+    {
+      "file": "stdio-e2e.test.ts",
+      "name": "schema-invalid arguments are rejected before the tool handler and never reach the plugin"
+    },
+    {
+      "file": "stdio-e2e.test.ts",
+      "name": "with a fake plugin attached: responses are plugin-generated, health shows plugin info, and the secret never leaks into MCP responses"
+    },
+    {
+      "file": "stdio-e2e.test.ts",
+      "name": "with Blockbench closed: initialize, list tools, healthy health, and immediate not-connected precondition errors for every operation tool"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a hello without a secret is rejected as an invalid handshake"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a mutating timeout reports unknown execution outcome and reconciliation guidance"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a pre-auth operation frame is dropped with the handshake close code"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a protocol version mismatch is rejected with a version close code"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a second authenticated session is rejected without disrupting the first"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a session that never answers heartbeat pings goes stale and releases the lock"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a silent socket is closed when the handshake window expires"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a valid hello authenticates, receives hello_ack with capabilities, and takes the session lock"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "a wrong secret is rejected with the auth close code and does not take the lock"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "an unanswered request times out with E_TIMEOUT"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "closing the active session releases the lock so a new session can authenticate"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "disconnect while a request is in flight resolves it with E_PLUGIN_NOT_CONNECTED"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "listener failures other than address conflicts use a truthful setup error"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "missing secret configuration prevents the listener from starting with E_SECRET_MISSING"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "no frame sent by the bridge ever contains the shared secret in raw or encoded form"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "oversized frames close the session without crashing the bridge"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "plugin-generated rejections pass through with their error codes"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "port conflicts are reported as E_PORT_IN_USE without throwing"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "requests are relayed to the plugin and responses return unchanged"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "requests without a connected plugin fail immediately with E_PLUGIN_NOT_CONNECTED"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "responses with stale correlation ids are ignored"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "scope_changed events update the cached plugin scope status"
+    },
+    {
+      "file": "ws-bridge.test.ts",
+      "name": "stop terminates a silent unauthenticated socket without waiting for its handshake deadline"
+    }
+  ]
+}

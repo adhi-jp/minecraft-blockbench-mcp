@@ -1,0 +1,75 @@
+{
+  "name": "initialize-missing-params",
+  "proves": "An initialize request with no params object is answered with a JSON-RPC error, and the connection stays usable afterwards.",
+  "covers": [
+    "legacy-negotiation",
+    "invalid-arguments"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize without params",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize"
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+              "code": -32603,
+              "message": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"
+            }
+          },
+          "rawSha256": "db750bf1a564d05c56a71fa732ddbd1fd939e51cb7f5b18a22ed3837c1eb494b"
+        }
+      ]
+    },
+    {
+      "label": "the connection still answers a following request",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "ping",
+        "params": {}
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {},
+            "jsonrpc": "2.0",
+            "id": 2
+          },
+          "rawSha256": "ff8b857e6e8f88cd9d11cef6bbd4738ad9f51b4b8e38f2e2b90628c09482aa00"
+        }
+      ]
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 2,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

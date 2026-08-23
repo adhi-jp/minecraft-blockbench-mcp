@@ -18,6 +18,13 @@ The adapter is only a compatibility shim: it never edits model files itself.
 Every operation is executed (or rejected) by the plugin inside Blockbench,
 with undo entries and viewport refreshes.
 
+The adapter speaks MCP revision `2026-07-28` and continues to support
+`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`, and `2024-10-07`. The
+revision is settled per connection, so a client on the newest revision and a
+client on an older one both work against the same installed adapter. There is
+no protocol setting to pick, and an existing MCP registration keeps working
+unchanged.
+
 ## Package installation
 
 The npm package contains both the stdio adapter and the compiled Blockbench
@@ -167,6 +174,9 @@ The optional config file is a JSON object with keys `port`, `secret`,
 
 ### Brokered and direct adapter modes
 
+These modes decide only how the adapter reaches Blockbench. The AI client
+talks to the adapter over the same stdio MCP connection either way.
+
 On Linux and WSL the adapter uses brokered mode by default, allowing multiple
 AI clients configured with the same config file to share one Blockbench
 connection. Native Windows uses direct mode by default. Select direct mode
@@ -178,6 +188,16 @@ long the shared broker remains running without AI clients) and
 `leaseIdleTimeoutMs` (how long an inactive client retains control). The
 `health` result identifies the active `mode` and reports `broker_connected`,
 `controller_state`, `controller_owner`, and `client_count`.
+
+The adapter and the shared broker greet each other over a private handshake,
+and this version changed it. A broker left running from an earlier version
+therefore cannot serve an adapter from this version: the new adapter reports
+`E_BROKER_VERSION_MISMATCH` and leaves that broker alone rather than killing or
+replacing it. The old broker shuts itself down once it has been idle for
+`brokerIdleTimeoutMs`; restart the adapter (or the Claude Code session that
+launched it) after that and it attaches normally. Direct mode is unaffected,
+and the Blockbench plugin is not part of this handshake, so no plugin update is
+needed.
 
 Only one AI client controls Blockbench at a time. While one client has
 control, another client's Blockbench command returns `E_CLIENT_BUSY`; health
@@ -266,6 +286,15 @@ plugin, see below): `create_geckolib_project`, `open_geckolib_model`,
 While Blockbench (or the plugin) is not running, operation tools return a
 structured `E_PLUGIN_NOT_CONNECTED` error immediately — the adapter never
 auto-launches Blockbench, waits, or retries in the background.
+
+Cancelling a tool call that has not reached Blockbench yet stops it before it
+runs; once the plugin has started an operation, cancelling does not undo it.
+One case never cancels at all: when the AI client numbers a request with the
+JSON-RPC id `0` or `""`, the MCP SDK the adapter is built on drops the
+cancellation before the adapter can see it, so that request runs to completion
+and returns its normal result as if nothing had been cancelled. Every other
+request id cancels normally. This is upstream behavior, not something the
+adapter can intercept.
 
 ## GeckoLib models
 
@@ -428,6 +457,7 @@ Common failures:
 | --- | --- |
 | `health` reports `E_SECRET_MISSING` | Run `minecraft-blockbench-mcp setup`, or configure `--secret` / `BLOCKBENCH_MCP_SECRET` for the adapter. |
 | `health` reports `E_PORT_IN_USE` | Another process (possibly an orphaned adapter) holds the port; change `--port` on both sides or free it. |
+| `health` reports `E_BROKER_VERSION_MISMATCH` | A shared broker left running from an earlier version still holds the connection. Let it idle out (`brokerIdleTimeoutMs`), then restart the adapter — or start the adapter with `--direct`. |
 | `health` reports `E_LISTENER_FAILED` | The operating system or runtime could not create the loopback listener; check local network permissions and platform policy, then restart the adapter. |
 | Plugin shows “rejected the connection” | Port or secret mismatch between adapter and plugin settings. |
 | Rotated the secret but the plugin still reports “rejected the connection” | Restart the adapter, or the Claude Code session that launched it, so it loads the new secret. |

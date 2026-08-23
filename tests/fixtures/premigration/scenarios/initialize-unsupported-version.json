@@ -1,0 +1,80 @@
+{
+  "name": "initialize-unsupported-version",
+  "proves": "An opening initialize naming a protocol revision the server does not support is answered with a successful result carrying the latest supported revision instead of a JSON-RPC error.",
+  "covers": [
+    "legacy-negotiation"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize with an unsupported protocolVersion",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "1999-01-01",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "premigration-wire-recorder",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {
+                  "listChanged": true
+                }
+              },
+              "serverInfo": {
+                "name": "minecraft-blockbench-mcp",
+                "version": "0.1.0"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": 1
+          },
+          "rawSha256": "cfd279481b15c2356cba73a613a7a2973c2b409f079fb43d40cf59df5a5c3064"
+        }
+      ]
+    },
+    {
+      "label": "notifications/initialized carries no response",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 1,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

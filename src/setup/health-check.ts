@@ -3,8 +3,8 @@
 // the check and nothing on disk is touched.
 import type { Readable } from 'node:stream';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 export type HealthStateName = 'broken' | 'port-held' | 'waiting' | 'connected';
 

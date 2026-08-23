@@ -1,0 +1,197 @@
+{
+  "name": "stdout-framing",
+  "proves": "A mixed session of results, an error response, an isError tool result, and notifications produces exactly one newline-delimited JSON-RPC object per stdout line, while every adapter log line goes to stderr. The recorded stderr lines are the positive control that logging happens and is not on stdout.",
+  "covers": [
+    "framing"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize with protocolVersion 2025-11-25",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "premigration-wire-recorder",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {
+                  "listChanged": true
+                }
+              },
+              "serverInfo": {
+                "name": "minecraft-blockbench-mcp",
+                "version": "0.1.0"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": 1
+          },
+          "rawSha256": "cfd279481b15c2356cba73a613a7a2973c2b409f079fb43d40cf59df5a5c3064"
+        }
+      ]
+    },
+    {
+      "label": "notifications/initialized carries no response",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "awaitStdoutMessages": 0,
+      "expect": []
+    },
+    {
+      "label": "ping",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "ping",
+        "params": {}
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {},
+            "jsonrpc": "2.0",
+            "id": 2
+          },
+          "rawSha256": "ff8b857e6e8f88cd9d11cef6bbd4738ad9f51b4b8e38f2e2b90628c09482aa00"
+        }
+      ]
+    },
+    {
+      "label": "unknown method error response",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "blockbench/not-a-method",
+        "params": {}
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "error": {
+              "code": -32601,
+              "message": "Method not found"
+            }
+          },
+          "rawSha256": "029a2b653687579b1fa67637d784b7d282d68962649ef3a898ee658a4875b6e7"
+        }
+      ]
+    },
+    {
+      "label": "successful health tool result",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+          "name": "health",
+          "arguments": {}
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\n  \"summary\": \"Adapter is running; the Blockbench plugin is not connected.\",\n  \"ok\": true,\n  \"result\": {\n    \"adapter_version\": \"0.1.0\",\n    \"protocol_version\": 6,\n    \"port\": 39731,\n    \"ws_listening\": false,\n    \"plugin_connected\": false,\n    \"setup_errors\": [\n      {\n        \"code\": \"E_SECRET_MISSING\",\n        \"message\": \"No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.\"\n      }\n    ],\n    \"plugin\": null,\n    \"mode\": \"direct\",\n    \"broker_connected\": false,\n    \"controller_state\": null,\n    \"controller_owner\": null,\n    \"client_count\": null\n  }\n}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 4
+          },
+          "rawSha256": "138717b96516579b9fceeb27af8614101e1bd86ab9916eadce53ae6b196da6df"
+        }
+      ]
+    },
+    {
+      "label": "isError tool result",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/call",
+        "params": {
+          "name": "get_plugin_status",
+          "arguments": {}
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\n  \"summary\": \"Cannot run get_plugin_status: the Blockbench plugin is not connected.\",\n  \"ok\": false,\n  \"command\": \"get_plugin_status\",\n  \"error\": {\n    \"code\": \"E_PLUGIN_NOT_CONNECTED\",\n    \"message\": \"Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.\",\n    \"details\": {\n      \"setup_errors\": [\n        {\n          \"code\": \"E_SECRET_MISSING\",\n          \"message\": \"No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.\"\n        }\n      ]\n    }\n  }\n}"
+                }
+              ],
+              "isError": true
+            },
+            "jsonrpc": "2.0",
+            "id": 5
+          },
+          "rawSha256": "18d1053f90b98a12bfbbbc7b5814666d412e0afe1a108b53bf0119bba89b579c"
+        }
+      ]
+    },
+    {
+      "label": "a client notification produces no stdout",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/progress",
+        "params": {
+          "progressToken": "p1",
+          "progress": 1
+        }
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 5,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

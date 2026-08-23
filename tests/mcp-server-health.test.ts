@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 
 import { CONFIG_DEFAULTS, type AdapterConfig } from '../src/adapter/config.js';
 import { ADAPTER_VERSION, buildMcpServer, type BrokerStatus, type PluginBridge } from '../src/adapter/mcp-server.js';

@@ -4,22 +4,25 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import WebSocket from 'ws';
 
 import { IPC_PROTOCOL_VERSION } from '../src/adapter/broker/ipc-protocol.js';
-import { ipcEndpointFor } from '../src/adapter/broker/endpoint.js';
-import { readBrokerRecord, type BrokerRecord } from '../src/adapter/broker/rendezvous.js';
+import { ensureRuntimeDirectory, ipcEndpointFor } from '../src/adapter/broker/endpoint.js';
+import { readBrokerRecord, writeBrokerRecordAtomic, type BrokerRecord } from '../src/adapter/broker/rendezvous.js';
 import { ADAPTER_VERSION } from '../src/adapter/mcp-server.js';
 import { COMMAND_NAMES, PROTOCOL_VERSION } from '../src/shared/protocol.js';
+import { MODERN_PROTOCOL_VERSION } from './helpers/mcp-era-wire.ts';
+import { processCommandLine } from './helpers/process-scan.ts';
+import { createRuntimeRoot, removeRuntimeRoot } from './helpers/runtime-root.ts';
 
 const SECRET = 'broker-e2e-secret-1234567890';
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,6 +61,14 @@ interface StartClientOptions {
   leaseIdleTimeoutMs?: number;
   requestTimeoutMs?: number;
   trackBroker?: boolean;
+  /**
+   * Which MCP wire era this client negotiates. `@modelcontextprotocol/client`
+   * defaults to the 2025-era latest, so every client here speaks the legacy era
+   * unless it says otherwise; pinning the modern revision fails loudly rather
+   * than falling back, which is what makes a modern arm a second observation
+   * instead of a second legacy run.
+   */
+  era?: 'legacy' | 'modern';
 }
 
 function allocatePort(): number {
@@ -139,8 +150,17 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * The command line of `pid`, argument-separated by single spaces on every
+ * platform, so the `__broker` check below reads the same thing on Linux, macOS
+ * and Windows. A pid that is gone throws, exactly as the `/proc` read this
+ * replaced did: refusing to answer is the honest result, and answering with an
+ * empty line would turn the identity check into one that cannot fail.
+ */
 async function brokerCommandLine(pid: number): Promise<string> {
-  return (await readFile(`/proc/${pid}/cmdline`, 'utf8')).replaceAll('\0', ' ').trim();
+  const commandLine = await processCommandLine(pid);
+  if (commandLine === null) throw new Error(`no process is running as pid ${pid}, so it has no command line to read`);
+  return commandLine;
 }
 
 async function assertBrokerIdentity(pid: number): Promise<string> {
@@ -185,7 +205,13 @@ async function launchClient(
   });
   const stderrChunks: string[] = [];
   transport.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(String(chunk)));
-  const client = new Client({ name: options.label, version: '0.0.0' });
+  const client = new Client(
+    { name: options.label, version: '0.0.0' },
+    {
+      versionNegotiation:
+        (options.era ?? 'legacy') === 'legacy' ? { mode: 'legacy' } : { mode: { pin: MODERN_PROTOCOL_VERSION } },
+    },
+  );
   try {
     await withDeadline(client.connect(transport), `${options.label} MCP initialization`);
   } catch (error) {
@@ -221,18 +247,20 @@ class TestWorld {
   readonly config: ConfigFixture;
   #cleaned = false;
 
-  private constructor(root: string, config: ConfigFixture) {
+  private constructor(root: string, runtimeRoot: string, config: ConfigFixture) {
     this.root = root;
-    this.runtimeRoot = join(root, 'runtime');
+    this.runtimeRoot = runtimeRoot;
     this.config = config;
   }
 
   static async create(t: TestContext, port: number): Promise<TestWorld> {
     const root = await mkdtemp(join(tmpdir(), 'minecraft-blockbench-broker-e2e-'));
-    const runtimeRoot = join(root, 'runtime');
-    await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+    // The runtime root lives outside `root` on purpose: see
+    // `tests/helpers/runtime-root.ts` for why a socket under `os.tmpdir()`
+    // cannot fit in a macOS `sun_path`. It is removed by `cleanup` below.
+    const runtimeRoot = await createRuntimeRoot('bbe2e-');
     const config = await TestWorld.writeConfig(root, runtimeRoot, 'config.json', port);
-    const world = new TestWorld(root, config);
+    const world = new TestWorld(root, runtimeRoot, config);
     t.after(() => world.cleanup());
     return world;
   }
@@ -259,6 +287,13 @@ class TestWorld {
     const plugin = new FakePlugin(port);
     this.plugins.push(plugin);
     await plugin.connect();
+    // The adapter revokes any scoped directory the plugin still holds as soon as
+    // a session authenticates. Settle that before handing the plugin back, so a
+    // test that changes revocation behaviour afterwards cannot race it.
+    await waitFor(
+      () => plugin.requests('revoke_scope').length >= 1,
+      'the scope revocation that starts every authenticated plugin session',
+    );
     return plugin;
   }
 
@@ -303,6 +338,9 @@ class TestWorld {
       ),
     );
     await rm(this.root, { recursive: true, force: true }).catch((error) =>
+      failures.push(error instanceof Error ? error : new Error(String(error))),
+    );
+    await removeRuntimeRoot(this.runtimeRoot).catch((error) =>
       failures.push(error instanceof Error ? error : new Error(String(error))),
     );
 
@@ -447,7 +485,12 @@ class FakePlugin {
     await Promise.all(
       [...this.#sockets].map(async (socket) => {
         if (socket.readyState === WebSocket.CLOSED) return;
-        const closed = once(socket, 'close');
+        // Teardown kills the broker before it reaches here, so an auto-
+        // reconnecting plugin can be holding a socket that is still mid-
+        // handshake. Aborting one makes `ws` emit 'error' first, and
+        // `events.once` would turn that expected teardown noise into a failed
+        // test. Waiting on 'close' alone still proves every socket was closed.
+        const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
         socket.terminate();
         await closed;
       }),
@@ -727,9 +770,10 @@ test('closing the controller revokes its scoped directory exactly once before th
   const revocationsBeforeRead = plugin.frames.filter(
     (frame) => frame.command === 'revoke_scope' && frame.sequence < readFrame.sequence,
   );
-  assert.equal(revocationsBeforeRead.length, 1);
-  assert.equal(plugin.requests('revoke_scope').length, 1);
-  const revocationResponse = plugin.responses('revoke_scope')[0];
+  // One when the plugin session authenticated, one when the controller changed.
+  assert.equal(revocationsBeforeRead.length, 2);
+  assert.equal(plugin.requests('revoke_scope').length, 2);
+  const revocationResponse = plugin.responses('revoke_scope').at(-1);
   assert.ok(revocationResponse, 'fake plugin did not observe its revoke_scope response');
   assert.ok(revocationResponse.sequence < readFrame.sequence);
 });
@@ -751,7 +795,8 @@ test('a handoff command remains unrelayed until the plugin acknowledges scope re
     settled = true;
     return outcome;
   });
-  await waitFor(() => plugin.requests('revoke_scope').length === 1, 'withheld revoke_scope request');
+  // Two in total: one when the plugin session authenticated, one for this handoff.
+  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'withheld revoke_scope request');
   assert.equal(plugin.requests('get_project_state').length, 1, 'Client B command was relayed before revocation');
   await new Promise<void>((resolve) => setTimeout(resolve, 75));
   assert.equal(settled, false);
@@ -761,7 +806,7 @@ test('a handoff command remains unrelayed until the plugin acknowledges scope re
   assert.equal(outcome.ok, true);
   const commands = plugin.requests('get_project_state');
   assert.equal(commands.length, 2);
-  const response = plugin.responses('revoke_scope')[0];
+  const response = plugin.responses('revoke_scope').at(-1);
   assert.ok(response && response.sequence < commands[1].sequence);
   plugin.delayRevocations = false;
 });
@@ -779,13 +824,13 @@ test('a lost revocation acknowledgement is requested again after plugin reconnec
   await waitForHealth(b.client, (health) => health.result?.client_count === 1, 'Client A to close');
 
   const firstAttempt = callEnvelope(b.client, 'get_project_state');
-  await waitFor(() => plugin.requests('revoke_scope').length === 1, 'first revoke_scope request');
+  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'first revoke_scope request');
   await plugin.disconnectCurrent();
   assert.equal((await firstAttempt).error?.code, 'E_PLUGIN_NOT_CONNECTED');
   assert.equal(plugin.requests('get_project_state').length, 1);
 
   await plugin.connect();
-  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'replayed revoke_scope request');
+  await waitFor(() => plugin.requests('revoke_scope').length === 3, 'replayed revoke_scope request');
   const retry = callEnvelope(b.client, 'get_project_state');
   await new Promise<void>((resolve) => setTimeout(resolve, 75));
   assert.equal(plugin.requests('get_project_state').length, 1, 'Client B command passed the unacknowledged retry');
@@ -793,7 +838,7 @@ test('a lost revocation acknowledgement is requested again after plugin reconnec
   assert.equal((await retry).ok, true);
 
   const commands = plugin.requests('get_project_state');
-  const secondRevocation = plugin.requests('revoke_scope')[1];
+  const secondRevocation = plugin.requests('revoke_scope').at(-1)!;
   const secondResponse = plugin.responses('revoke_scope').at(-1);
   assert.equal(commands.length, 2);
   assert.ok(secondResponse && secondResponse.sequence > secondRevocation.sequence);
@@ -846,7 +891,11 @@ test('brokered mutating timeouts preserve the direct-mode reconciliation error s
 test('an incompatible broker is reported without replacing or terminating the running endpoint', async (t) => {
   const port = allocatePort();
   const world = await TestWorld.create(t, port);
-  await mkdir(dirname(world.config.endpoint), { recursive: true, mode: 0o700 });
+  // The runtime directory has to exist before the stand-in binds inside it and
+  // before the record and lock files below are written. It is derived from the
+  // record path, not from the endpoint: on Windows the endpoint is a named pipe
+  // whose `dirname` is `\\.\pipe`, a device namespace that holds neither.
+  await ensureRuntimeDirectory(dirname(world.config.recordPath));
   const sockets = new Set<Socket>();
   let helloCount = 0;
   const server: Server = createServer((socket) => {
@@ -990,8 +1039,9 @@ test('lease expiry revokes scope for a different client but not when the same cl
   const handoffCommands = handoffPlugin.requests('get_project_state');
   const handoffRevocation = handoffPlugin.requests('revoke_scope');
   assert.equal(handoffCommands.length, 2);
-  assert.equal(handoffRevocation.length, 1);
-  assert.ok(handoffRevocation[0].sequence < handoffCommands[1].sequence);
+  // One when the plugin session authenticated, one when control changed hands.
+  assert.equal(handoffRevocation.length, 2);
+  assert.ok(handoffRevocation.at(-1)!.sequence < handoffCommands[1].sequence);
 
   const sameClient = await world.startClient(reacquireConfig, {
     label: 'Solo client',
@@ -1008,7 +1058,8 @@ test('lease expiry revokes scope for a different client but not when the same cl
   );
   assert.equal((await callEnvelope(sameClient.client, 'get_project_state')).ok, true);
   assert.equal(reacquirePlugin.requests('get_project_state').length, 2);
-  assert.equal(reacquirePlugin.requests('revoke_scope').length, 0);
+  // Only the one that started the plugin session: reacquiring adds none.
+  assert.equal(reacquirePlugin.requests('revoke_scope').length, 1);
 });
 
 test('an attached MCP client re-elects a broker after the broker process is replaced', async (t) => {
@@ -1095,4 +1146,173 @@ test('a directly spawned broker never writes the shared secret to stderr', async
   for (const encoded of [SECRET, Buffer.from(SECRET).toString('base64')]) {
     assert.ok(!stderrText.includes(encoded), 'broker stderr must never contain the shared secret');
   }
+});
+
+test('a broker speaking a different IPC version is reported to the client and is neither stopped nor replaced', async (t) => {
+  const port = allocatePort();
+  const world = await TestWorld.create(t, port);
+
+  // Stand in for a broker built before the cancel_request message existed: it
+  // completes the handshake far enough to state its version and refuse.
+  const hellos: Array<Record<string, unknown>> = [];
+  const incompatibleBroker: Server = createServer((socket: Socket) => {
+    let buffered = '';
+    socket.on('error', () => undefined);
+    socket.on('data', (chunk) => {
+      buffered += chunk.toString('utf8');
+      let newline = buffered.indexOf('\n');
+      while (newline !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (line !== '') {
+          const message = JSON.parse(line) as Record<string, unknown>;
+          if (message.type === 'client_hello') {
+            hellos.push(message);
+            socket.write(
+              `${JSON.stringify({
+                type: 'hello_reject',
+                reason: 'version_mismatch',
+                ipc_protocol_version: IPC_PROTOCOL_VERSION - 1,
+                package_version: ADAPTER_VERSION,
+              })}\n`,
+            );
+            socket.end();
+          }
+        }
+        newline = buffered.indexOf('\n');
+      }
+    });
+  });
+  t.after(() => new Promise<void>((resolve) => incompatibleBroker.close(() => resolve())));
+  // The adapter creates this directory when it starts a broker of its own; here
+  // the stand-in has to bind inside it first, and the stale record below has to
+  // land in it. It is derived from the record path, not from the endpoint,
+  // because a Windows endpoint is a named pipe whose `dirname` is `\\.\pipe`.
+  await ensureRuntimeDirectory(dirname(world.config.recordPath));
+  await new Promise<void>((resolve, reject) => {
+    incompatibleBroker.once('error', reject);
+    incompatibleBroker.listen(world.config.endpoint, () => resolve());
+  });
+
+  const staleRecord: BrokerRecord = {
+    endpoint: world.config.endpoint,
+    broker_instance_id: 'broker-from-an-earlier-build',
+    broker_pid: process.pid,
+    ipc_protocol_version: IPC_PROTOCOL_VERSION - 1,
+    package_version: ADAPTER_VERSION,
+    ws_port: port,
+  };
+  await writeBrokerRecordAtomic(world.config.recordPath, staleRecord);
+
+  const client = await world.startClient(world.config, {
+    label: 'Mismatched client',
+    mode: 'brokered',
+    trackBroker: false,
+  });
+  const health = await callEnvelope(client.client, 'health');
+  assert.equal(health.ok, true);
+  assert.equal(health.result?.broker_connected, false);
+  assert.ok(
+    setupErrorCodes(health).includes('E_BROKER_VERSION_MISMATCH'),
+    `expected E_BROKER_VERSION_MISMATCH, got ${JSON.stringify(setupErrorCodes(health))}`,
+  );
+
+  // The incompatible broker is untouched: still listening, still the published
+  // rendezvous target, and asked exactly once rather than displaced by a
+  // replacement the client started for itself.
+  assert.equal(incompatibleBroker.listening, true);
+  assert.equal(hellos.length, 1);
+  assert.deepEqual(await readBrokerRecord(world.config.recordPath), staleRecord);
+  await client.close();
+
+  // Positive control: with the incompatible broker gone, the identical client
+  // setup does attach, so the failure above came from the version refusal and
+  // not from a harness that can never connect.
+  await new Promise<void>((resolve) => incompatibleBroker.close(() => resolve()));
+  await unlink(world.config.recordPath).catch(() => undefined);
+  const compatible = await world.startClient(world.config, { label: 'Compatible client', mode: 'brokered' });
+  const healthy = await waitForHealth(
+    compatible.client,
+    (value) => value.result?.broker_connected === true,
+    'the compatible client to attach to a broker it started',
+  );
+  assert.ok(!setupErrorCodes(healthy).includes('E_BROKER_VERSION_MISMATCH'));
+  const freshRecord = await world.brokerRecord(world.config);
+  assert.notEqual(freshRecord.broker_instance_id, staleRecord.broker_instance_id);
+  assert.equal(freshRecord.ipc_protocol_version, IPC_PROTOCOL_VERSION);
+});
+
+test('broker taint recovery, idle shutdown, and rendezvous cleanup behave identically for a 2026-07-28 client and a 2025-era one', async (t) => {
+  // The broker path is negotiated once, by the stdio shim, and everything below
+  // it — election, the controller lease, scope revocation, the idle timer, the
+  // rendezvous record — is era-blind by construction. "By construction" is the
+  // claim being checked: every other broker test here runs on the client
+  // default, which is the 2025-era latest, so nothing observed a modern client
+  // driving these paths at all.
+  const observed: Partial<Record<'legacy' | 'modern', Record<string, unknown>>> = {};
+
+  for (const era of ['legacy', 'modern'] as const) {
+    const port = allocatePort();
+    const world = await TestWorld.create(t, port);
+
+    // Taint recovery: a broker that has just started cannot know which scoped
+    // directory the plugin still holds, so it revokes before serving anyone.
+    const first = await world.startClient(world.config, { label: `First ${era} client`, mode: 'brokered', era });
+    await waitForHealth(first.client, (health) => health.result?.broker_connected === true, `${era} broker connection`);
+    const plugin = await world.addPlugin(port);
+    const revocationsBeforeWork = plugin.requests('revoke_scope').length;
+    const relayed = await callEnvelope(first.client, 'get_project_state');
+    const firstRecord = await world.brokerRecord(world.config);
+
+    // Idle shutdown and rendezvous cleanup: with the only client gone, the
+    // broker exits and removes the record it published.
+    await first.close();
+    await waitFor(async () => !(await pathExists(world.config.recordPath)), `${era} idle broker rendezvous removal`);
+    await waitFor(() => !pidAlive(firstRecord.broker_pid), `${era} idle broker process exit`);
+    // Read both facts here, while the broker is gone and before anything elects
+    // a replacement: after the second client starts, a present record would be
+    // the new broker's and would say nothing about the cleanup.
+    const recordAbsentAfterIdle = !(await pathExists(world.config.recordPath));
+    const firstBrokerExited = !pidAlive(firstRecord.broker_pid);
+
+    // A later client of the same era elects a fresh instance against the same
+    // config, which is what proves the cleanup left nothing behind.
+    const second = await world.startClient(world.config, { label: `Second ${era} client`, mode: 'brokered', era });
+    const secondHealth = await waitForHealth(
+      second.client,
+      (health) => health.result?.broker_connected === true && health.result?.client_count === 1,
+      `${era} fresh broker connection`,
+    );
+    const secondRecord = await world.brokerRecord(world.config);
+
+    observed[era] = {
+      revokedBeforeFirstCommand: revocationsBeforeWork >= 1,
+      firstCommandOk: relayed.ok,
+      recordAbsentAfterIdle,
+      firstBrokerExited,
+      freshInstanceElected: secondRecord.broker_instance_id !== firstRecord.broker_instance_id,
+      mode: secondHealth.result?.mode,
+      brokerConnected: secondHealth.result?.broker_connected,
+      clientCount: secondHealth.result?.client_count,
+      ipcProtocolVersion: secondRecord.ipc_protocol_version,
+    };
+  }
+
+  for (const era of ['legacy', 'modern'] as const) {
+    const arm = observed[era] as Record<string, unknown>;
+    assert.equal(arm.revokedBeforeFirstCommand, true, `${era}: the broker served a command with no scope revocation`);
+    assert.equal(arm.firstCommandOk, true, `${era}: the first brokered command failed`);
+    assert.equal(arm.recordAbsentAfterIdle, true, `${era}: the idle broker left its rendezvous record behind`);
+    assert.equal(arm.firstBrokerExited, true, `${era}: the idle broker process did not exit`);
+    assert.equal(arm.freshInstanceElected, true, `${era}: the second client reused the exited broker instance`);
+    assert.equal(arm.mode, 'brokered', `${era}: the adapter did not report brokered mode`);
+    assert.equal(arm.brokerConnected, true, `${era}: the second client never attached to a broker`);
+    assert.equal(arm.clientCount, 1, `${era}: the exited broker's client was still counted`);
+    assert.equal(arm.ipcProtocolVersion, IPC_PROTOCOL_VERSION, `${era}: the fresh record declared another IPC version`);
+  }
+  assert.deepEqual(
+    observed.modern,
+    observed.legacy,
+    'broker taint recovery, idle shutdown, or rendezvous cleanup differs between the two MCP wire eras',
+  );
 });

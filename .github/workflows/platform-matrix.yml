@@ -1,0 +1,667 @@
+# Platform matrix — CI evidence for the four required platform scenarios.
+#
+# The platform-evidence criterion, from the migration spec
+# (`docs/specs/2026-08-21-mcp-2026-07-28-migration-spec.md`):
+#   "Linux/WSL brokered behavior, native-Windows direct behavior, macOS default
+#    behavior, and explicit native-Windows broker behavior each pass in an
+#    authoritative environment. If a required platform environment is
+#    unavailable, this criterion remains unverified and the limitation is
+#    reported explicitly; absence of a runner is not a passing result and does
+#    not narrow [the set of platforms this project claims to support]."
+#
+# The four matrix legs below are those four scenarios, one-to-one. Nothing else
+# in this repository can produce that evidence: the development machine is
+# Linux/WSL only.
+#
+# Why the `ci/**` trigger exists
+# ------------------------------
+# All migration work is uncommitted, CI only runs on commits, and the plan
+# blocks the final commit until the platform-evidence criterion passes. The
+# agreed way out is a throwaway branch: commit the working tree to
+# `ci/<something>`, push it, let this workflow collect the platform evidence,
+# then make the reviewed focused commit on the real branch. The `ci/**` branch
+# is never merged, and this trigger is the only reason it exists.
+#
+# WHAT THIS WORKFLOW DOES NOT CLOSE
+# ---------------------------------
+#  * The live Blockbench smoke. It needs the Blockbench desktop application
+#    running with the plugin loaded and a human-confirmed scoped directory.
+#    Hosted runners have no desktop session and nothing to answer the
+#    confirmation dialog with. A green matrix here must never be read as
+#    closing that criterion.
+#  * A leg that is skipped, cancelled, or never configured. The
+#    platform-evidence criterion makes that an unverified result to be
+#    reported, not a pass. The final enforcement step in every leg treats a
+#    skipped gate as a failure for exactly this reason, and the `ac27-gate` job
+#    fails the whole run unless every leg succeeded, so a leg that never
+#    happened cannot pass by absence.
+#  * Anything about a platform whose leg did not run. Four green legs are the
+#    whole claim; three green legs and one missing runner is "platform
+#    evidence remains unverified".
+#
+# Re-run policy — NO automatic retry
+# ----------------------------------
+# The handoff offered a third mitigation for the port flakiness: re-run a failed
+# leg once inside the workflow and require the second run to be green. That is
+# deliberately NOT implemented. An in-workflow retry is recorded by GitHub as a
+# single green run, which is precisely the "a re-run that is never surfaced
+# hides a genuine regression" failure the handoff itself warns about. What is
+# implemented instead is the cause removal (the Linux ephemeral-range narrowing
+# below). A failed leg is re-run by hand from the Actions UI, and the re-run
+# MUST be recorded in the bound plan's `Implementation progress` table together
+# with the reason. This is a coordinator decision that departs from the
+# handoff's mitigation 3; the repository owner can overrule it.
+
+name: platform-matrix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ci/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Every `run:` on every runner uses bash, Windows included (Git Bash ships
+    # on `windows-latest`). One shell dialect across three platforms is what
+    # lets the receipt and enforcement steps below be written once instead of
+    # three times. Note that `shell: bash` runs with `-eo pipefail`, so a
+    # failing command aborts its step and a failing command inside a pipeline
+    # is not masked by a later one.
+    shell: bash
+
+env:
+  # Pinned on purpose. An unpinned clone would make the plugin typecheck track
+  # an upstream project this repository does not control, turning an unrelated
+  # upstream change into a red run here.
+  BLOCKBENCH_REF: v5.1.4
+  CI_LOG_DIR: ci-logs
+
+jobs:
+  matrix:
+    # The leg has to be unambiguous at a glance in the Actions UI: `windows-latest`
+    # appears twice and the two runs differ only in mode and how it was selected.
+    name: '${{ matrix.os }} / ${{ matrix.mode }} (${{ matrix.select }})'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      # Every leg is separate evidence. One red leg must not cancel the other
+      # three, or a single failure would leave the platform-evidence criterion
+      # unverified on platforms that would have passed.
+      fail-fast: false
+      matrix:
+        # Legs are numbered by their position in this list, which is the
+        # numbering the implementation record uses; each row also names the
+        # required platform scenario it satisfies, because the two orders are
+        # not the same.
+        #
+        # Provenance of the `expected_*` rows. Every one is now grounded in a
+        # measurement rather than in arithmetic, but they are not all grounded
+        # the same way, so the difference is recorded here.
+        #
+        # MEASURED DIRECTLY:
+        #   * every `expected_skipped`, from run 32569234550. macOS 1 and
+        #     Windows 3 were already correct before any repair and are
+        #     unchanged; they come from the three reviewed conditional skips in
+        #     `tests/setup-cli.test.ts`.
+        #   * Linux 616, on the development machine.
+        #   * The pass halves as they stood BEFORE the platform-capability
+        #     registry landed: run 32581368315 measured macOS 593 (gate PASS,
+        #     so exact) and Windows 589 with 2 failures.
+        #
+        # DERIVED, and this is the only inference left in the table: the
+        # registry added three tests to `tests/premigration-wire-baseline.test.ts`
+        # which are static source scans with no platform branching at all, so
+        # every leg gains exactly 3. macOS 593 + 3 = 596. Windows 589 + 2 + 3 =
+        # 594, where the + 2 is `shutdown-sigint` and `shutdown-sigterm`, which
+        # now assert the termination contract Windows actually has instead of
+        # replaying a Linux-recorded exit code.
+        #
+        # 2026-08-23, second increase: the AC-21 live scope-isolation smoke
+        # (`scripts/smoke-scope-isolation.mjs`) added 19 unit tests over its pure
+        # functions. They read no host-platform interface at all — verified, and
+        # enforced by the registry guard in `tests/platform-capabilities.ts` — so
+        # every leg gains exactly 19: 597->616, 596->615, 594->613. The live path
+        # those functions serve is NOT run here; it needs Blockbench and a human,
+        # and its receipts are the AC-21 evidence, not this matrix.
+        #
+        # Note what did NOT happen: no expectation was lowered to accommodate a
+        # failure. Windows moved 591 -> 594 by gaining tests, not by forgiving
+        # them, and the two Windows failures were repaired rather than
+        # absorbed. A mismatch here is still the signal this gate exists to
+        # produce — re-measure and update the row, never relax the assertion.
+        include:
+          # Leg 1 — native Linux, brokered by platform default.
+          # Satisfies the Linux scenario. The runner is native Linux, not
+          # WSL; the WSL evidence is the development-machine baseline, which is
+          # separately recorded and is not produced here.
+          - os: ubuntu-latest
+            mode: brokered
+            select: default
+            expected_pass: 616
+            expected_skipped: 0
+          # Leg 2 — macOS default behaviour, which is brokered.
+          # Satisfies the macOS scenario.
+          - os: macos-latest
+            mode: brokered
+            select: default
+            expected_pass: 615
+            expected_skipped: 1
+          # Leg 3 — native-Windows direct behaviour, platform default.
+          # Satisfies the native-Windows direct scenario.
+          - os: windows-latest
+            mode: direct
+            select: default
+            expected_pass: 613
+            expected_skipped: 3
+          # Leg 4 — explicit native-Windows broker behaviour.
+          # Satisfies the explicit-broker scenario. What this leg adds over
+          # leg 3 is the mode gate: that the explicit BLOCKBENCH_MCP_BROKER=1
+          # lever flips the OBSERVED mode on a platform whose default is
+          # direct. The Windows named-pipe broker transport itself is exercised
+          # by `npm test` on BOTH Windows legs, not only here — see the
+          # packaged-artifact gate's comment below.
+          - os: windows-latest
+            mode: brokered
+            select: env
+            expected_pass: 613
+            expected_skipped: 3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # engines.node is ">=22". The Linux baseline these expected counts come
+      # from was measured on v24.13.0; 22 is the declared floor, so the floor is
+      # what CI pins.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Evidence, not a gate. The handoff's mitigation 2 says to verify each
+      # runner's actual ephemeral range before assuming it collides with the
+      # test band (fixed literals 40100..47100), so this reports the range on
+      # all three platforms and never fails the job.
+      - name: Record runner environment and ephemeral port range
+        id: runner_env
+        continue-on-error: true
+        run: |
+          mkdir -p "${CI_LOG_DIR}"
+          oneline() { tr '\r\n\t' '   ' | tr -s ' ' | sed 's/^ *//; s/ *$//'; }
+          range=''
+          case "${RUNNER_OS}" in
+            Linux)   range="$(cat /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null | oneline || true)" ;;
+            macOS)   range="$(sysctl net.inet.ip.portrange.first net.inet.ip.portrange.last 2>/dev/null | oneline || true)" ;;
+            Windows) range="$(netsh int ipv4 show dynamicport tcp 2>/dev/null | oneline || true)" ;;
+          esac
+          [ -n "${range}" ] || range='unavailable'
+          echo "ephemeral port range (initial): ${range}"
+          {
+            echo "PORT_RANGE_INITIAL=${range}"
+            echo "PORT_RANGE_EFFECTIVE=${range}"
+            echo "RUNNER_NODE_VERSION=$(node --version 2>/dev/null || echo unknown)"
+            echo "RUNNER_NPM_VERSION=$(npm --version 2>/dev/null || echo unknown)"
+            echo "RUNNER_IMAGE=${ImageOS:-unknown}/${ImageVersion:-unknown}"
+          } >> "${GITHUB_ENV}"
+
+      # Cause removal for the known port flakiness, Linux only. The suite
+      # allocates fixed ports from module-level counters in the 40100..47100
+      # band; where the OS ephemeral range covers that band it can hand the same
+      # port to another process mid-test, which produced rotating E_PORT_IN_USE
+      # / ECONNREFUSED / MCP-init-timeout failures during the migration. The
+      # macOS and Windows knobs are deliberately left alone: the handoff says to
+      # verify the runner's real range before assuming a conflict, and we have
+      # not. The re-report is what makes the change auditable.
+      - name: Narrow the Linux ephemeral port range away from the test band
+        id: narrow_ports
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo sysctl -w net.ipv4.ip_local_port_range="49152 60999" || true
+          oneline() { tr '\r\n\t' '   ' | tr -s ' ' | sed 's/^ *//; s/ *$//'; }
+          range="$(cat /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null | oneline || true)"
+          [ -n "${range}" ] || range='unavailable'
+          echo "ephemeral port range (after narrowing): ${range}"
+          echo "PORT_RANGE_EFFECTIVE=${range}" >> "${GITHUB_ENV}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `/external/` is gitignored, so a fresh clone has no Blockbench types and
+      # `npm run check`'s second project (tsconfig.plugin.json) fails on missing
+      # globals. Only `npm run check` needs this.
+      #
+      # The cache holds `external/blockbench/types` rather than just
+      # `types/generated`, because tsconfig.plugin.json includes BOTH
+      # `types/custom/**` (37 files, tracked upstream) and `types/generated/**`
+      # (0 files tracked upstream — it is produced by `npm run generate-types`).
+      # Caching only the generated half would mean the clone still had to run on
+      # a hit, which defeats the point.
+      - name: Restore Blockbench types
+        id: blockbench_types_cache
+        uses: actions/cache@v4
+        with:
+          path: external/blockbench/types
+          key: blockbench-types-${{ env.BLOCKBENCH_REF }}-${{ runner.os }}
+
+      - name: Clone Blockbench at the pinned tag
+        if: steps.blockbench_types_cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "${BLOCKBENCH_REF}" \
+            https://github.com/JannisX11/blockbench.git external/blockbench
+
+      # `--ignore-scripts` is deliberate and load-bearing. Blockbench's
+      # devDependencies include electron, electron-builder and @electron/notarize,
+      # whose postinstall scripts download very large binaries; `generate-types`
+      # is `tsc --project tsconfig.json && node ./scripts/convert_types.js`, which
+      # needs typescript and a JSON read and nothing else. Skipping the scripts
+      # buys several minutes per cold leg and removes a class of network flake
+      # that has nothing to do with this repository. `--no-audit --no-fund` trim
+      # two more pointless network round trips.
+      - name: Generate Blockbench types
+        if: steps.blockbench_types_cache.outputs.cache-hit != 'true'
+        run: |
+          npm --prefix external/blockbench install --ignore-scripts --no-audit --no-fund
+          npm --prefix external/blockbench run generate-types
+
+      # ---------------------------------------------------------------------
+      # Gates. Every gate carries `continue-on-error: true` so that all of them
+      # run and every outcome is observable in one run: a leg that dies at the
+      # first red gate tells you nothing about the four behind it, and on a
+      # platform we cannot reproduce locally that costs a full round trip per
+      # gate. `continue-on-error` makes each step's `conclusion` success while
+      # leaving its `outcome` truthful, so the job's real red/green is restored
+      # by the final enforcement step, which reads `outcome`.
+      #
+      # No gate is ever chained to another with `&&` or a pipe inside one
+      # `run:`. A pipeline that collapses several commands into one status can
+      # report success while an inner gate failed, which is the receipt
+      # integrity problem the plan's verification section calls out.
+      #
+      # Every gate also carries its own `timeout-minutes`. The first run of this
+      # workflow had none, and a hang was the failure mode nobody had planned
+      # for: three of the four legs went silent inside the test gate and burned
+      # 46 minutes before a human cancelled the run, against a whole Linux job
+      # that finishes in 2 minutes 26 seconds. With no step bound, a hung gate
+      # is indistinguishable from a slow one until the job-level bound fires an
+      # hour later, and the leg reports nothing about which gate stopped. The
+      # values below are generous multiples of the observed Linux timings, not
+      # performance budgets: they exist so a hang becomes a bounded failure
+      # attributed to one named gate. The job-level `timeout-minutes: 60`
+      # stays as the outer bound for everything the steps do not cover.
+      # ---------------------------------------------------------------------
+
+      - name: 'Gate: type check'
+        id: gate_check
+        continue-on-error: true
+        timeout-minutes: 15
+        run: npm run check
+
+      - name: 'Gate: build'
+        id: gate_build
+        continue-on-error: true
+        timeout-minutes: 10
+        run: npm run build
+
+      # This is the mode dimension of the matrix, and the only place it is
+      # actually observable. `result.mode` in the MCP `health` result is the one
+      # readback the adapter offers: there is no `--print-config`, and `doctor`
+      # cannot stand in because `src/setup/health-check.ts:57-58` force-sets
+      # BLOCKBENCH_MCP_DIRECT before probing. The script asserts the OBSERVED
+      # mode, not the requested one, so legs 3 and 4 cannot silently become the
+      # same run. It reads `dist/adapter/cli.js`, so it must follow the build —
+      # and it must precede `test:package`, which rebuilds `dist`.
+      #
+      # No mode env is set here on purpose: the script scrubs the mode variables
+      # out of the environment it spawns the adapter with and then pulls exactly
+      # the one lever `--select` names (`default` pulls none, which is what
+      # proves the platform default).
+      - name: 'Gate: adapter mode'
+        id: gate_mode
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          mkdir -p "${CI_LOG_DIR}"
+          # `tee` only mirrors the receipt into a file for the summary step;
+          # `pipefail` (already on for `shell: bash`, restated here so the
+          # property is visible at the point it matters) keeps the gate's status
+          # the script's own exit code, not tee's.
+          set -o pipefail
+          node scripts/assert-adapter-mode.mjs \
+            --expect ${{ matrix.mode }} \
+            --select ${{ matrix.select }} \
+            --label "${{ matrix.os }}-${{ matrix.mode }}" \
+            | tee "${CI_LOG_DIR}/mode-assert.log"
+
+      # NO mode environment variable here, deliberately. Setting
+      # BLOCKBENCH_MCP_BROKER / BLOCKBENCH_MCP_DIRECT around `npm test` is a
+      # no-op for this suite: `tests/helpers/raw-stdio.ts:85-89` builds each
+      # spawned adapter's environment as `{...process.env}` and then deletes
+      # both mode variables (lines 88-89), and `tests/broker-e2e.test.ts:170-171`
+      # does the same; individual tests set the mode they want per spawn. A leg
+      # that exported a mode here would run byte-identically to one that did
+      # not, which is how legs 3 and 4 would collapse into the same run.
+      #
+      # The counts are per-platform inputs, not constants. Asserting only the
+      # exit code would silently accept a platform where far more than the three
+      # reviewed conditional skips began skipping.
+      #
+      # `--test-timeout-ms` bounds a single hung TEST; the step's
+      # `timeout-minutes` above bounds the whole gate. Both are needed: the step
+      # bound stops the leg, but only the per-test bound names the test that
+      # hung, and it is the one this leg's receipt can report.
+      #
+      # 120000 is chosen to sit far ABOVE every legitimate test rather than
+      # close to it. The slowest legitimate cases run about 20.5 seconds on the
+      # development machine and hosted runners are slower, while an aggressive
+      # value is actively harmful: at 2000 the runner produced no output at all
+      # for 120 seconds on `tests/broker-e2e.test.ts`, a file that completes in
+      # 30 seconds untimed and completes identically at 30000. A test that does
+      # trip this timeout is counted as `cancelled` rather than `fail`, which
+      # the count gate already treats as a mismatch, so a bounded hang still
+      # fails loudly instead of passing quietly.
+      - name: 'Gate: test suite and counts'
+        id: gate_tests
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          mkdir -p "${CI_LOG_DIR}"
+          # Same arrangement as the mode gate: `tee` for the receipt, `pipefail`
+          # so the suite's real status is what gates the step. The script itself
+          # already refuses to be a shell pipeline internally — it spawns the
+          # suite as a child and uses the child's exit code.
+          set -o pipefail
+          node scripts/assert-test-counts.mjs \
+            --expect-pass ${{ matrix.expected_pass }} \
+            --expect-skipped ${{ matrix.expected_skipped }} \
+            --test-timeout-ms 120000 \
+            --label "${{ matrix.os }}-${{ matrix.mode }}" \
+            | tee "${CI_LOG_DIR}/test-counts.log"
+
+      # This gate DOES honour an inherited mode variable, unlike the suite
+      # above: `scripts/verify-package.mjs:199-201` builds its probe environment
+      # as `{...process.env}` and deletes only BLOCKBENCH_MCP_SECRET and
+      # BLOCKBENCH_MCP_CONFIG, and its ACCEPTED_SECRETLESS_SETUP_ERRORS map
+      # (`verify-package.mjs:82-92`) is keyed by the mode health actually
+      # reports.
+      #
+      # What that buys leg 4, stated exactly. The probe runs secretless, and in
+      # brokered mode the broker refuses to start without a secret and never
+      # publishes its rendezvous record (the map's own comment says so), so the
+      # adapter reports the broker as unreachable. No pipe is served and no
+      # endpoint is created. What this gate adds is the packaged-binary path
+      # under an explicit brokered selection, exercising the broker-UNAVAILABLE
+      # reporting path. It cannot fail on the mode dimension alone: the map
+      # accepts E_SECRET_MISSING under BOTH modes and the lookup at
+      # `verify-package.mjs:114-116` rejects only an unknown mode, so a leg
+      # where the exported variable never reached the packaged binary is
+      # byte-identically green here.
+      #
+      # The Windows named-pipe broker transport is exercised by `npm test`, on
+      # BOTH Windows legs, not by this gate: `tests/broker-e2e.test.ts:185` sets
+      # BLOCKBENCH_MCP_BROKER='1' per spawn with a real secret and real config
+      # (same pattern at `tests/mcp-tool-contract-dual-era.test.ts:92`,
+      # `tests/mcp-cancellation-wire.test.ts:114`,
+      # `tests/mcp-request-identity-wire.test.ts:161` and
+      # `tests/broker-session-in-use-endpoint-preservation.test.ts:344`), those
+      # tests assert `broker_connected === true` (`broker-e2e.test.ts:692` and
+      # `:730`), and `ipcEndpointFor` returns `\\.\pipe\...` on win32
+      # (`src/adapter/broker/endpoint.ts:37-40`). None of them is
+      # platform-skipped. What separates leg 3 from leg 4 is therefore the mode
+      # gate above, which proves the explicit lever flips the OBSERVED mode on
+      # a platform whose default is direct.
+      #
+      # The variable is exported inside the script rather than declared in an
+      # `env:` block so that it is genuinely UNSET on the other three legs; a
+      # `${{ ... && '1' || '' }}` expression would leave an empty string behind.
+      # `resolveAdapterMode` (`src/adapter/config.ts:229-269`) treats both '' and
+      # '0' as unset anyway — only the exact string '1' selects a mode — so this
+      # is about keeping the receipt honest, not about changing behaviour.
+      #
+      # It runs last because `npm pack` triggers `prepack` -> `npm run build`,
+      # which rebuilds `dist` and would invalidate the mode gate's subject.
+      - name: 'Gate: packaged artifact'
+        id: gate_package
+        continue-on-error: true
+        timeout-minutes: 25
+        env:
+          MATRIX_MODE: ${{ matrix.mode }}
+          MATRIX_SELECT: ${{ matrix.select }}
+        run: |
+          case "${MATRIX_SELECT}:${MATRIX_MODE}" in
+            env:brokered)
+              export BLOCKBENCH_MCP_BROKER=1
+              echo 'BLOCKBENCH_MCP_BROKER=1 exported for this gate'
+              ;;
+            *)
+              echo 'no mode variable exported; the platform default is what gets exercised'
+              ;;
+          esac
+          npm run test:package
+
+      # ---------------------------------------------------------------------
+      # Receipt. Everything the bound plan's `Implementation progress` table
+      # needs for this leg, in one place, on every path including the failures.
+      # ---------------------------------------------------------------------
+      - name: Write leg receipt
+        id: receipt
+        if: always()
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_MODE: ${{ matrix.mode }}
+          MATRIX_SELECT: ${{ matrix.select }}
+          EXPECTED_PASS: ${{ matrix.expected_pass }}
+          EXPECTED_SKIPPED: ${{ matrix.expected_skipped }}
+          # The run identity. `run_attempt` is the re-run marker the handoff's
+          # "Recording the outcome" section asks for, and it is load-bearing
+          # precisely because this workflow has no in-workflow retry: a
+          # hand-triggered second attempt would otherwise produce a summary
+          # structurally identical to a first one. `run_id` and `run_number`
+          # let a receipt be traced back to the exact run it came from.
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          OUTCOME_CHECK: ${{ steps.gate_check.outcome }}
+          OUTCOME_BUILD: ${{ steps.gate_build.outcome }}
+          OUTCOME_MODE: ${{ steps.gate_mode.outcome }}
+          OUTCOME_TESTS: ${{ steps.gate_tests.outcome }}
+          OUTCOME_PACKAGE: ${{ steps.gate_package.outcome }}
+        run: |
+          field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | tail -n 1; }
+
+          counts_line="$(grep -h '^ASSERT-TEST-COUNTS ' "${CI_LOG_DIR}/test-counts.log" 2>/dev/null | tail -n 1 || true)"
+          mode_line="$(grep -h '^ASSERT-ADAPTER-MODE ' "${CI_LOG_DIR}/mode-assert.log" 2>/dev/null | tail -n 1 || true)"
+
+          observed_pass="$(field "${counts_line}" pass)";        observed_pass="${observed_pass:-not reported}"
+          observed_skipped="$(field "${counts_line}" skipped)";  observed_skipped="${observed_skipped:-not reported}"
+          observed_fail="$(field "${counts_line}" fail)";        observed_fail="${observed_fail:-not reported}"
+          counts_verdict="$(field "${counts_line}" verdict)";    counts_verdict="${counts_verdict:-not reported}"
+          # Reported, not assumed: the flag is passed in the gate above, but a
+          # leg whose count gate never got far enough to print a receipt must
+          # not show a timeout it never actually ran under.
+          test_timeout="$(field "${counts_line}" test_timeout_ms)"; test_timeout="${test_timeout:-not reported}"
+          observed_mode="$(field "${mode_line}" observed)";      observed_mode="${observed_mode:-not reported}"
+          mode_verdict="$(field "${mode_line}" verdict)";        mode_verdict="${mode_verdict:-not reported}"
+
+          # The variable's name is not the mode's name: brokered mode is
+          # selected with BLOCKBENCH_MCP_BROKER and direct with
+          # BLOCKBENCH_MCP_DIRECT, so the mode cannot be interpolated into the
+          # name. Derived for both modes rather than hardcoded for the one the
+          # matrix happens to use today.
+          case "${MATRIX_MODE}" in
+            brokered) mode_variable='BLOCKBENCH_MCP_BROKER' ;;
+            direct)   mode_variable='BLOCKBENCH_MCP_DIRECT' ;;
+            *)        mode_variable="unrecognised mode ${MATRIX_MODE}, no variable known" ;;
+          esac
+
+          case "${MATRIX_SELECT}" in
+            default) selection='platform default (no flag, no env)' ;;
+            env)     selection="environment variable (${mode_variable}=1)" ;;
+            flag)    selection='command-line flag' ;;
+            *)       selection="${MATRIX_SELECT}" ;;
+          esac
+
+          # Does the range the suite actually ran under still cover the test
+          # band? Evidence, never a gate: the handoff says to verify a runner's
+          # real range rather than assume a conflict, and the macOS and Windows
+          # knobs are deliberately left alone. Without this row a runner that
+          # refused the sysctl looks exactly like one that accepted it.
+          #
+          # Only the Linux `/proc` shape — exactly two whitespace-separated
+          # integers — is parsed. The macOS `sysctl` and Windows `netsh`
+          # reporters print different text, and netsh's second number is a port
+          # COUNT, not an end port; guessing at those would produce a confident
+          # wrong answer, so they report `unknown`.
+          band_low=40100
+          band_high=47100
+          overlap='unknown (range not reported in a parseable shape)'
+          if [[ "${PORT_RANGE_EFFECTIVE:-}" =~ ^([0-9]+)[[:space:]]+([0-9]+)$ ]]; then
+            range_low="${BASH_REMATCH[1]}"
+            range_high="${BASH_REMATCH[2]}"
+            overlap="no (${range_low}-${range_high} is clear of the band)"
+            if [ "${range_low}" -le "${band_high}" ]; then
+              if [ "${range_high}" -ge "${band_low}" ]; then
+                overlap="yes — flake risk (${range_low}-${range_high} covers part of the band)"
+              fi
+            fi
+          fi
+
+          # Surfaced in the step log as well as the summary, because a re-run
+          # is the one fact a reader of either is most likely to miss.
+          rerun_note=''
+          if [[ "${RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]]; then
+            if [ "${RUN_ATTEMPT}" -gt 1 ]; then
+              rerun_note="RE-RUN: this leg is run attempt ${RUN_ATTEMPT}, not a first attempt. The reason MUST be recorded in the bound plan's \`Implementation progress\` table."
+            fi
+          fi
+          if [ -n "${rerun_note}" ]; then
+            echo "${rerun_note}"
+          fi
+
+          {
+            echo "## ${MATRIX_OS} / ${MATRIX_MODE} (${MATRIX_SELECT})"
+            echo
+            echo '| Field | Value |'
+            echo '| --- | --- |'
+            echo "| Runner label | \`${MATRIX_OS}\` |"
+            echo "| Runner image | ${RUNNER_IMAGE:-unknown} |"
+            echo "| Node (as used) | ${RUNNER_NODE_VERSION:-unknown} |"
+            echo "| npm (as used) | ${RUNNER_NPM_VERSION:-unknown} |"
+            echo "| Run id | ${RUN_ID:-unknown} |"
+            echo "| Run number | ${RUN_NUMBER:-unknown} |"
+            echo "| Run attempt | ${RUN_ATTEMPT:-unknown} |"
+            echo "| Mode requested | ${MATRIX_MODE} |"
+            echo "| Mode selected by | ${selection} |"
+            echo "| Mode observed (health result.mode) | ${observed_mode} (${mode_verdict}) |"
+            echo "| Ephemeral port range (initial) | ${PORT_RANGE_INITIAL:-unavailable} |"
+            echo "| Ephemeral port range (effective) | ${PORT_RANGE_EFFECTIVE:-unavailable} |"
+            echo "| Test band in use | 40100-47100 (fixed literals) |"
+            echo "| Effective range overlaps test band | ${overlap} |"
+            echo "| Pass: expected vs observed | ${EXPECTED_PASS} vs ${observed_pass} |"
+            echo "| Skipped: expected vs observed | ${EXPECTED_SKIPPED} vs ${observed_skipped} |"
+            echo "| Fail: expected vs observed | 0 vs ${observed_fail} |"
+            echo "| Per-test timeout in force (ms) | ${test_timeout} |"
+            echo "| Count verdict | ${counts_verdict} |"
+            echo
+            echo '| Gate | Outcome |'
+            echo '| --- | --- |'
+            echo "| \`npm run check\` | ${OUTCOME_CHECK:-not run} |"
+            echo "| \`npm run build\` | ${OUTCOME_BUILD:-not run} |"
+            echo "| \`assert-adapter-mode.mjs\` | ${OUTCOME_MODE:-not run} |"
+            echo "| \`assert-test-counts.mjs\` | ${OUTCOME_TESTS:-not run} |"
+            echo "| \`npm run test:package\` | ${OUTCOME_PACKAGE:-not run} |"
+            echo
+            echo "Receipts:"
+            echo
+            echo '```'
+            echo "${mode_line:-ASSERT-ADAPTER-MODE (no receipt line captured)}"
+            echo "${counts_line:-ASSERT-TEST-COUNTS (no receipt line captured)}"
+            echo '```'
+            echo
+            echo 'The expected macOS and Windows counts are unverified predictions carried'
+            echo 'over from the handoff, not measurements. A mismatch here is the signal it'
+            echo 'was designed to produce; re-measure and update the matrix rather than'
+            echo 'relaxing the assertion.'
+            echo
+            echo 'This leg says nothing about the live Blockbench smoke, which needs a'
+            echo 'desktop session no hosted runner has.'
+            if [ -n "${rerun_note}" ]; then
+              echo
+              echo "**${rerun_note}**"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # The job's true red/green. Every gate above runs under
+      # `continue-on-error`, so without this step a leg with five failed gates
+      # would report success. `outcome` is read rather than `conclusion` because
+      # `continue-on-error` rewrites the latter to success. A `skipped` outcome
+      # fails here too, on purpose: under the platform-evidence criterion, a
+      # leg that did not run is not a pass.
+      - name: Enforce gate outcomes
+        if: always()
+        env:
+          OUTCOME_CHECK: ${{ steps.gate_check.outcome }}
+          OUTCOME_BUILD: ${{ steps.gate_build.outcome }}
+          OUTCOME_MODE: ${{ steps.gate_mode.outcome }}
+          OUTCOME_TESTS: ${{ steps.gate_tests.outcome }}
+          OUTCOME_PACKAGE: ${{ steps.gate_package.outcome }}
+        run: |
+          failed=0
+          for entry in \
+            "npm run check=${OUTCOME_CHECK:-skipped}" \
+            "npm run build=${OUTCOME_BUILD:-skipped}" \
+            "assert-adapter-mode.mjs=${OUTCOME_MODE:-skipped}" \
+            "assert-test-counts.mjs=${OUTCOME_TESTS:-skipped}" \
+            "npm run test:package=${OUTCOME_PACKAGE:-skipped}"
+          do
+            gate="${entry%%=*}"
+            outcome="${entry##*=}"
+            if [ "${outcome}" = 'success' ]; then
+              echo "ok    ${gate}: ${outcome}"
+            else
+              echo "FAIL  ${gate}: ${outcome}"
+              failed=1
+            fi
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo 'At least one gate did not succeed; this leg is not platform evidence.'
+            exit 1
+          fi
+          echo 'All gates succeeded for this leg.'
+
+  # The platform-evidence criterion at the run level. Every gate inside a leg
+  # is enforced by the step above, but nothing there can fail the RUN when a
+  # whole leg never happened — and under that criterion a leg that is skipped,
+  # cancelled, or never configured is not a pass, it is an unverified result.
+  # Until now that rule was checked by a human reading the Actions UI.
+  #
+  # With `fail-fast: false`, `needs.matrix.result` is `success` only when every
+  # leg succeeded; a leg that failed, was cancelled, or was skipped leaves
+  # `failure`, `cancelled`, or `skipped`. `if: always()` is what lets this job
+  # run at all when a leg did not.
+  ac27-gate:
+    name: 'Platform evidence: every leg ran and passed'
+    needs: matrix
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every leg to have succeeded
+        env:
+          MATRIX_RESULT: ${{ needs.matrix.result }}
+        run: |
+          echo "matrix job result: ${MATRIX_RESULT:-unknown}"
+          if [ "${MATRIX_RESULT}" != 'success' ]; then
+            echo 'Platform evidence remains UNVERIFIED: not every leg ran and passed.'
+            echo 'An absent, skipped, or cancelled runner is not a passing result.'
+            exit 1
+          fi
+          echo 'All four legs ran and passed.'

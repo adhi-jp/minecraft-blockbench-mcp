@@ -4,8 +4,8 @@ import { basename, join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const workDir = mkdtempSync(join(tmpdir(), 'minecraft-blockbench-mcp-package-'));
@@ -37,12 +37,41 @@ function runNpm(args, cwd) {
   return result.stdout;
 }
 
-function parseHealth(result) {
+/** The modern MCP revision the packaged executable must still serve. */
+const MODERN_PROTOCOL_VERSION = '2026-07-28';
+
+/** Tools the packaged catalogue must advertise, whichever era asks for it. */
+const REQUIRED_TOOLS = ['health', 'get_plugin_status', 'get_project_state', 'read_file', 'write_files'];
+
+function parseHealth(result, era) {
   const content = result.content;
   if (!Array.isArray(content) || content.length === 0 || content[0].type !== 'text') {
-    throw new Error('packaged MCP health response did not contain text');
+    throw new Error(`packaged MCP health response over ${era} did not contain text`);
   }
   return JSON.parse(content[0].text);
+}
+
+// The catalogue is era-independent. Checking it on both connections is what
+// stops a build that serves one era from a stale or empty tool registry from
+// passing on the strength of the other era alone.
+function assertToolCatalogue(tools, era) {
+  const names = tools.map(({ name }) => name);
+  const missing = REQUIRED_TOOLS.filter((name) => !names.includes(name));
+  if (missing.length > 0) {
+    throw new Error(`packaged MCP tool catalogue over ${era} is missing ${missing.join(', ')}`);
+  }
+  if (new Set(names).size !== names.length) {
+    throw new Error(`packaged MCP tool catalogue over ${era} advertises a duplicate tool name`);
+  }
+  for (const tool of tools) {
+    if (typeof tool.description !== 'string' || tool.description === '') {
+      throw new Error(`packaged tool ${String(tool.name)} has no description over ${era}`);
+    }
+    const schema = tool.inputSchema;
+    if (schema === null || typeof schema !== 'object' || schema.type !== 'object') {
+      throw new Error(`packaged tool ${String(tool.name)} has no object input schema over ${era}`);
+    }
+  }
 }
 
 // This probe starts the packaged server with no shared secret and an empty
@@ -61,6 +90,67 @@ const ACCEPTED_SECRETLESS_SETUP_ERRORS = new Map([
   // case the broker's underlying reason is ever propagated back to the client.
   ['brokered', ['E_BROKER_UNAVAILABLE', 'E_SECRET_MISSING']],
 ]);
+
+// Fails whenever the packaged server did not start, did not answer with a
+// well-formed health envelope, or did not report a setup error that matches
+// the mode it resolved.
+function assertSecretlessHealth(health, era) {
+  const describe = () => `${era}: ${JSON.stringify(health)}`;
+  if (health === null || typeof health !== 'object' || typeof health.summary !== 'string' || health.ok !== true) {
+    throw new Error(`packaged MCP health check returned a malformed envelope: ${describe()}`);
+  }
+
+  const result = health.result;
+  if (result === null || typeof result !== 'object') {
+    throw new Error(`packaged MCP health check returned no result object: ${describe()}`);
+  }
+  if (typeof result.adapter_version !== 'string' || typeof result.protocol_version !== 'number') {
+    throw new Error(`packaged MCP health result is missing version fields: ${describe()}`);
+  }
+  if (result.plugin_connected !== false) {
+    throw new Error(`packaged MCP health result claims a plugin connection this probe cannot have: ${describe()}`);
+  }
+
+  const accepted = typeof result.mode === 'string' ? ACCEPTED_SECRETLESS_SETUP_ERRORS.get(result.mode) : undefined;
+  if (accepted === undefined) {
+    throw new Error(`packaged MCP health result reported an unknown adapter mode: ${describe()}`);
+  }
+  if (!Array.isArray(result.setup_errors)) {
+    throw new Error(`packaged MCP health result is missing setup_errors: ${describe()}`);
+  }
+
+  const codes = result.setup_errors.map((issue) => (issue === null || typeof issue !== 'object' ? undefined : issue.code));
+  if (!codes.some((code) => accepted.includes(code))) {
+    throw new Error(
+      `packaged MCP health check returned an unexpected result: expected one of ` +
+        `${accepted.join(', ')} in setup_errors for mode ${result.mode}, got ${describe()}`,
+    );
+  }
+}
+
+// The `setup` and `doctor` subcommands are dispatched from `argv[2]` by
+// `routeCli` (`src/setup/route.ts`) and pull in `src/setup/**`, which imports
+// `@modelcontextprotocol/client` at module top level. Nothing in the serving
+// path above touches that package, so only invoking the subcommands proves it
+// is installed for a consumer: when it is missing the entry dies during module
+// resolution with `ERR_MODULE_NOT_FOUND` and the adapter's `Fatal error:` line.
+//
+// Each probe is shaped to stop before any setup effect and without waiting for
+// anything, so this stays a fast, non-interactive check that writes nothing:
+//   - `setup` is given an invalid `--scope` value, so `parseFlags` rejects it,
+//     usage is printed and the command exits 2 before it reads or writes a
+//     config file, registers anything with `claude`, or probes a port; and
+//   - `doctor` runs against the same empty config home as the MCP health
+//     probes, finds no config file, and exits 1 without starting a health check.
+// Both exit codes are reached only after every module on the subcommand's
+// import chain has resolved and executed.
+const SETUP_SUBCOMMAND_PROBES = [
+  { label: 'setup', args: ['setup', '--scope', 'not-a-scope'], expectedStatus: 2, expectedStdout: 'Usage:' },
+  { label: 'doctor', args: ['doctor'], expectedStatus: 1, expectedStdout: 'Not configured' },
+];
+
+/** Neither probe waits for anything, so exceeding this means it hung. */
+const SETUP_SUBCOMMAND_TIMEOUT_MS = 30_000;
 
 try {
   mkdirSync(packDir, { recursive: true });
@@ -117,36 +207,75 @@ try {
   env.HOME = emptyConfigHome;
   env.APPDATA = emptyConfigHome;
   env.USERPROFILE = emptyConfigHome;
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [cliPath],
-    cwd: installedRoot,
-    env,
-    stderr: 'pipe',
-  });
-  const client = new Client({ name: 'package-verifier', version: '1.0.0' });
-  try {
-    await client.connect(transport);
-    const tools = await client.listTools();
-    if (!tools.tools.some(({ name }) => name === 'health')) throw new Error('packaged MCP server did not expose health');
-    const health = parseHealth(await client.callTool({ name: 'health', arguments: {} }));
-    const mode = health.result?.mode;
-    const accepted = typeof mode === 'string' ? ACCEPTED_SECRETLESS_SETUP_ERRORS.get(mode) : undefined;
-    if (accepted === undefined) {
-      throw new Error(`packaged MCP health result reported an unknown adapter mode: ${JSON.stringify(health)}`);
+  // The packaged executable serves two MCP wire eras, so the smoke has to open
+  // the packaged bin on each of them. `legacy` is the client default and is
+  // what negotiates a 2025-era handshake; pinning the modern revision fails
+  // loudly rather than falling back, so a build that lost modern support does
+  // not quietly pass as legacy.
+  const eras = [
+    { label: 'MCP 2025-era handshake', negotiation: { mode: 'legacy' } },
+    { label: `MCP ${MODERN_PROTOCOL_VERSION}`, negotiation: { mode: { pin: MODERN_PROTOCOL_VERSION } } },
+  ];
+  const verifiedEras = [];
+  for (const era of eras) {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [cliPath],
+      cwd: installedRoot,
+      env,
+      stderr: 'pipe',
+    });
+    const client = new Client(
+      { name: 'package-verifier', version: '1.0.0' },
+      { versionNegotiation: era.negotiation },
+    );
+    try {
+      await client.connect(transport);
+      const tools = await client.listTools();
+      if (!tools.tools.some(({ name }) => name === 'health')) {
+        throw new Error(`packaged MCP server did not expose health over ${era.label}`);
+      }
+      assertToolCatalogue(tools.tools, era.label);
+      const health = parseHealth(await client.callTool({ name: 'health', arguments: {} }), era.label);
+      assertSecretlessHealth(health, era.label);
+      verifiedEras.push(era.label);
+    } finally {
+      await client.close();
     }
-    if (!health.ok || !health.result?.setup_errors?.some(({ code }) => accepted.includes(code))) {
+  }
+  if (verifiedEras.length !== eras.length) {
+    throw new Error(`only ${verifiedEras.length} of ${eras.length} MCP era smoke(s) ran`);
+  }
+
+  for (const probe of SETUP_SUBCOMMAND_PROBES) {
+    const started = spawnSync(process.execPath, [cliPath, ...probe.args], {
+      cwd: installedRoot,
+      encoding: 'utf8',
+      env,
+      timeout: SETUP_SUBCOMMAND_TIMEOUT_MS,
+    });
+    const output = `${started.stdout ?? ''}${started.stderr ?? ''}`;
+    if (started.error) {
+      throw new Error(`packaged \`${probe.label}\` could not be spawned: ${started.error.message}`);
+    }
+    if (started.status !== probe.expectedStatus) {
       throw new Error(
-        `packaged MCP health check returned an unexpected result: expected one of ` +
-          `${accepted.join(', ')} in setup_errors for mode ${mode}, got ${JSON.stringify(health)}`,
+        `packaged \`${probe.label}\` did not start: expected exit ${probe.expectedStatus}, got ` +
+          `exit ${started.status}${started.signal ? ` (signal ${started.signal})` : ''}.\n${output || '(no output)'}`,
       );
     }
-  } finally {
-    await client.close();
+    if (!started.stdout.includes(probe.expectedStdout)) {
+      throw new Error(
+        `packaged \`${probe.label}\` exited ${probe.expectedStatus} without reaching its command logic: ` +
+          `stdout does not contain ${JSON.stringify(probe.expectedStdout)}.\n${output || '(no output)'}`,
+      );
+    }
   }
 
   process.stdout.write(
-    `Verified ${pack.name}@${pack.version}: ${actual.size} package files, clean install, npm bin, MCP startup, and plugin bundle\n`,
+    `Verified ${pack.name}@${pack.version}: ${actual.size} package files, clean install, npm bin, ` +
+      `plugin bundle, MCP startup over ${verifiedEras.join(' and ')}, and ` +
+      `${SETUP_SUBCOMMAND_PROBES.map(({ label }) => label).join('/')} startup\n`,
   );
 } finally {
   rmSync(workDir, { recursive: true, force: true });

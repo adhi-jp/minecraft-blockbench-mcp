@@ -10,6 +10,7 @@ import WebSocket from 'ws';
 
 import { BrokerClient } from '../src/adapter/broker/broker-client.js';
 import { BrokerServer, type BrokerServerOptions } from '../src/adapter/broker/broker-server.js';
+import { computeConfigIdentity, ipcEndpointFor } from '../src/adapter/broker/endpoint.js';
 import {
   IPC_PROTOCOL_VERSION,
   encodeIpcMessage,
@@ -171,8 +172,14 @@ interface Harness {
 async function createHarness(t: TestContext, overrides: Partial<BrokerServerOptions> = {}): Promise<Harness> {
   const port = nextPort++;
   assert.ok(port <= 41_399, 'broker tests must stay inside the reserved 41200-41399 port range');
-  const directory = await mkdtemp(join(tmpdir(), 'minecraft-blockbench-broker-'));
-  const endpoint = join(directory, 'broker.sock');
+  const directory = await mkdtemp(join(tmpdir(), 'bbsrv-'));
+  // A Windows named pipe name is machine-wide, so the identity is derived from
+  // this harness's own mkdtemp directory: no two live harnesses can collide.
+  const endpoint = ipcEndpointFor({
+    platform: process.platform,
+    runtimeDir: directory,
+    identity: computeConfigIdentity(directory),
+  });
   const recordPath = join(directory, 'broker.json');
   const instanceId = `broker-test-${port}`;
   await writeBrokerRecordAtomic(recordPath, {
@@ -231,6 +238,13 @@ async function createHarness(t: TestContext, overrides: Partial<BrokerServerOpti
       const plugin = new FakePlugin(port);
       plugins.push(plugin);
       await plugin.connect();
+      // The bridge revokes any scoped directory the plugin still holds as soon
+      // as a session authenticates. Settle that before handing the plugin back,
+      // so a test that changes revocation behaviour afterwards cannot race it.
+      await waitFor(
+        () => plugin.requests('revoke_scope').length >= 1,
+        'the scope revocation that starts every authenticated plugin session',
+      );
       return plugin;
     },
   };
@@ -348,7 +362,8 @@ test('controller handoff waits for exactly one revoke_scope acknowledgement befo
     settled = true;
     return outcome;
   });
-  await waitFor(() => plugin.requests('revoke_scope').length === 1, 'the handoff revocation request');
+  // Two in total: one when the plugin session authenticated, one for this handoff.
+  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'the handoff revocation request');
   assert.equal(plugin.requests('get_elements').length, 0);
   await new Promise<void>((resolve) => setTimeout(resolve, 20));
   assert.equal(settled, false, 'the triggering request must remain pending before revocation acknowledgement');
@@ -356,10 +371,10 @@ test('controller handoff waits for exactly one revoke_scope acknowledgement befo
   plugin.acknowledgeLatestRevocation();
   const outcome = await requested;
   assert.equal(outcome.ok, true);
-  const revokeIndex = plugin.frames.findIndex((frame) => frame.command === 'revoke_scope');
+  const revokeIndex = plugin.frames.findLastIndex((frame) => frame.command === 'revoke_scope');
   const commandIndex = plugin.frames.findIndex((frame) => frame.command === 'get_elements');
   assert.ok(revokeIndex >= 0 && commandIndex > revokeIndex);
-  assert.equal(plugin.requests('revoke_scope').length, 1);
+  assert.equal(plugin.requests('revoke_scope').length, 2);
 });
 
 test('a disconnected pending acquirer is not granted or relayed after revocation acknowledgement', async (t) => {
@@ -373,7 +388,7 @@ test('a disconnected pending acquirer is not granted or relayed after revocation
   await waitFor(() => a.brokerStatus()?.controller_state === 'idle', 'Client A lease idle expiry');
 
   const requested = b.request('get_elements', {});
-  await waitFor(() => plugin.requests('revoke_scope').length === 1, 'Client B handoff revocation request');
+  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'Client B handoff revocation request');
   assert.equal(plugin.requests('get_elements').length, 0);
 
   await b.close();
@@ -411,10 +426,50 @@ test('an invalid revocation acknowledgement keeps recovery tainted and does not 
   plugin.revocationResult = { state: 'revoked' };
   await plugin.disconnectCurrent();
   await plugin.connect();
-  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'valid revocation after tainted reconnect');
+  await waitFor(() => plugin.requests('revoke_scope').length === 3, 'valid revocation after tainted reconnect');
   const recovered = await b.request('get_elements', {});
   assert.equal(recovered.ok, true);
-  assert.equal(plugin.requests('revoke_scope').length, 2);
+  // Session start, the rejected handoff attempt, then the reconnected session.
+  assert.equal(plugin.requests('revoke_scope').length, 3);
+  assert.equal(plugin.requests('get_elements').length, 1);
+});
+
+test('a revocation acknowledged with a scope state that still grants access is refused and hands over nothing', async (t) => {
+  // The reply parses against the scope status schema, so only its VALUE says
+  // whether the scoped directory was actually given up. `confirmed` is the
+  // state that hands out the directory handle: accepting it as proof of
+  // revocation would clear the lease taint and grant control to the waiting
+  // client while the plugin still held the previous client's directory.
+  const harness = await createHarness(t);
+  const plugin = await harness.addPlugin();
+  const { client: a } = await harness.addClient('session-a', 'Client A');
+  const { client: b } = await harness.addClient('session-b', 'Client B');
+  assert.equal((await a.request('get_project_state', {})).ok, true);
+  await a.close();
+  await waitFor(() => b.brokerStatus()?.client_count === 1, 'Client A to deregister');
+
+  plugin.revocationResult = { state: 'confirmed', normalized_path: '/' };
+  const rejected = await b.request('get_elements', {});
+  assert.equal(
+    rejected.ok,
+    false,
+    'the waiting client was served on the strength of a revocation acknowledged as still granting access',
+  );
+  assert.equal(rejected.error?.code, 'E_PROTOCOL_MISMATCH');
+  assert.equal(
+    plugin.requests('get_elements').length,
+    0,
+    'the waiting command was relayed on the strength of a scope state that still grants access',
+  );
+  assert.equal(b.brokerStatus()?.controller_state, 'recovering', 'the lease left recovery without a real revocation');
+
+  // A genuine revocation still completes the handoff, so the refusal above is
+  // the value check and not a wedged lease.
+  plugin.revocationResult = { state: 'revoked' };
+  await plugin.disconnectCurrent();
+  await plugin.connect();
+  await waitFor(() => plugin.requests('revoke_scope').length === 3, 'valid revocation after the refused acknowledgement');
+  assert.equal((await b.request('get_elements', {})).ok, true);
   assert.equal(plugin.requests('get_elements').length, 1);
 });
 
@@ -429,14 +484,14 @@ test('a lost revocation acknowledgement is retried after plugin authentication b
   await waitFor(() => b.brokerStatus()?.client_count === 1, 'Client A to deregister');
 
   const firstAttempt = b.request('get_elements', {});
-  await waitFor(() => plugin.requests('revoke_scope').length === 1, 'the first revocation request');
+  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'the first revocation request');
   await plugin.disconnectCurrent();
   const disconnected = await firstAttempt;
   assert.equal(disconnected.error?.code, 'E_PLUGIN_NOT_CONNECTED');
   assert.equal(plugin.requests('get_elements').length, 0);
 
   await plugin.connect();
-  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'revocation retry after authentication');
+  await waitFor(() => plugin.requests('revoke_scope').length === 3, 'revocation retry after authentication');
   const retry = b.request('get_elements', {});
   await new Promise<void>((resolve) => setTimeout(resolve, 20));
   assert.equal(plugin.requests('get_elements').length, 0, 'the command must still wait for the retry acknowledgement');
@@ -445,7 +500,8 @@ test('a lost revocation acknowledgement is retried after plugin authentication b
   const secondRevokeIndex = plugin.frames.findLastIndex((frame) => frame.command === 'revoke_scope');
   const commandIndex = plugin.frames.findIndex((frame) => frame.command === 'get_elements');
   assert.ok(commandIndex > secondRevokeIndex);
-  assert.equal(plugin.requests('revoke_scope').length, 2);
+  // Session start, the unacknowledged handoff attempt, then the reconnected session.
+  assert.equal(plugin.requests('revoke_scope').length, 3);
 });
 
 test('mutating command timeouts pass through the direct bridge reconciliation payload', async (t) => {
@@ -480,6 +536,43 @@ test('plugin-not-connected errors pass through the complete direct bridge payloa
     code: 'E_PLUGIN_NOT_CONNECTED',
     message: 'Blockbench plugin is not connected.',
   });
+});
+
+test('while Blockbench is not connected every client is answered E_PLUGIN_NOT_CONNECTED rather than E_CLIENT_BUSY', async (t) => {
+  // A broker that has just started holds its scoped-directory state as unknown,
+  // so the first command from any client asks for a revocation before anything
+  // checks whether there is a plugin to revoke against. With Blockbench not
+  // running there is nothing to revoke, and the lease has no idle timer in
+  // `recovering`: whoever asked first must not be left holding a reservation
+  // that no timeout can reclaim.
+  const harness = await createHarness(t);
+  const { client: a } = await harness.addClient('session-a', 'Client A');
+  const { client: b } = await harness.addClient('session-b', 'Client B');
+
+  const first = await a.request('get_project_state', {});
+  assert.equal(first.ok, false);
+  assert.equal(first.error?.code, 'E_PLUGIN_NOT_CONNECTED');
+
+  const second = await b.request('get_elements', {});
+  assert.equal(second.ok, false);
+  assert.deepEqual(
+    second.error,
+    { code: 'E_PLUGIN_NOT_CONNECTED', message: 'Blockbench plugin is not connected.' },
+    'a client was told another client controls a session no plugin is connected to',
+  );
+
+  // The same answer keeps being given, to either client, for as long as
+  // Blockbench is not running.
+  assert.equal((await a.request('get_elements', {})).error?.code, 'E_PLUGIN_NOT_CONNECTED');
+  assert.equal((await b.request('get_project_state', {})).error?.code, 'E_PLUGIN_NOT_CONNECTED');
+
+  // Once Blockbench connects, control goes to whoever asks for it, not to the
+  // client that happened to ask first while nothing could be served.
+  const plugin = await harness.addPlugin();
+  const granted = await b.request('get_elements', {});
+  assert.equal(granted.ok, true, 'control was held for a client that was refused and never granted it');
+  assert.equal(plugin.requests('get_elements').length, 1);
+  await waitFor(() => b.brokerStatus()?.controller_owner === 'Client B', 'Client B to be reported as the owner');
 });
 
 test('identity and IPC version mismatches are rejected with their precise reasons and closed', async (t) => {
@@ -580,10 +673,11 @@ test('idle shutdown revokes a connected plugin exactly once before closing the b
 
   await waitForAsync(() => access(harness.recordPath).then(() => false, () => true), 'idle shutdown record removal');
   await waitFor(() => plugin.events.includes('close'), 'plugin bridge closure');
-  assert.equal(plugin.requests('revoke_scope').length, 1);
+  // One when the session authenticated, one on the way out.
+  assert.equal(plugin.requests('revoke_scope').length, 2);
   assert.ok(
-    plugin.events.indexOf('request:revoke_scope') < plugin.events.indexOf('close'),
-    'revoke_scope must arrive before the plugin bridge closes',
+    plugin.events.lastIndexOf('request:revoke_scope') < plugin.events.indexOf('close'),
+    'the shutdown revoke_scope must arrive before the plugin bridge closes',
   );
 });
 

@@ -1,0 +1,221 @@
+{
+  "note": "What this corpus contains and which behaviour class each file covers. The replay test compares this index against the files on disk, so an added or deleted fixture cannot go unnoticed.",
+  "provenance": {
+    "note": "Recorded from the built stdio MCP executable before any dependency change. Regenerate with `node scripts/capture-premigration-baseline.mjs`. No capture timestamp is stored so that re-recording an unchanged build produces byte-identical files.",
+    "gitHead": "93a203ee825161c747bb50a5df8258f43119f65f",
+    "packageVersion": "0.1.0",
+    "declaredDependencies": {
+      "@modelcontextprotocol/sdk": "^1.29.0",
+      "ws": "^8.18.0",
+      "zod": "^3.25.0"
+    },
+    "installedSdkVersion": "1.29.0",
+    "installedZodVersion": "3.25.76",
+    "nodeVersion": "v24.13.0",
+    "platform": "linux",
+    "adapterMode": "direct (pinned with --direct; POSIX defaults to brokered)",
+    "environment": "isolated-empty-config-home"
+  },
+  "requiredClasses": [
+    "legacy-negotiation",
+    "method-inventory",
+    "tool-inventory",
+    "tool-input-schemas",
+    "tool-success-envelope",
+    "tool-error-envelope",
+    "omitted-arguments",
+    "invalid-arguments",
+    "unknown-method",
+    "unknown-tool",
+    "plugin-absent",
+    "framing",
+    "cancellation",
+    "shutdown",
+    "named-test-inventory"
+  ],
+  "files": [
+    {
+      "path": "named-test-inventory.json",
+      "kind": "inventory",
+      "covers": [
+        "named-test-inventory"
+      ]
+    },
+    {
+      "path": "scenarios/cancellation-notifications.json",
+      "kind": "scenario",
+      "covers": [
+        "cancellation"
+      ]
+    },
+    {
+      "path": "scenarios/initialize-2024-10-07.json",
+      "kind": "scenario",
+      "covers": [
+        "legacy-negotiation"
+      ]
+    },
+    {
+      "path": "scenarios/initialize-2024-11-05.json",
+      "kind": "scenario",
+      "covers": [
+        "legacy-negotiation"
+      ]
+    },
+    {
+      "path": "scenarios/initialize-2025-03-26.json",
+      "kind": "scenario",
+      "covers": [
+        "legacy-negotiation"
+      ]
+    },
+    {
+      "path": "scenarios/initialize-2025-06-18.json",
+      "kind": "scenario",
+      "covers": [
+        "legacy-negotiation"
+      ]
+    },
+    {
+      "path": "scenarios/initialize-2025-11-25.json",
+      "kind": "scenario",
+      "covers": [
+        "legacy-negotiation"
+      ]
+    },
+    {
+      "path": "scenarios/initialize-missing-params.json",
+      "kind": "scenario",
+      "covers": [
+        "legacy-negotiation",
+        "invalid-arguments"
+      ]
+    },
+    {
+      "path": "scenarios/initialize-unsupported-version.json",
+      "kind": "scenario",
+      "covers": [
+        "legacy-negotiation"
+      ]
+    },
+    {
+      "path": "scenarios/malformed-and-unframed-input.json",
+      "kind": "scenario",
+      "covers": [
+        "framing",
+        "unknown-method"
+      ]
+    },
+    {
+      "path": "scenarios/method-inventory.json",
+      "kind": "scenario",
+      "covers": [
+        "method-inventory"
+      ]
+    },
+    {
+      "path": "scenarios/plugin-absent-health-and-relay.json",
+      "kind": "scenario",
+      "covers": [
+        "plugin-absent",
+        "tool-error-envelope"
+      ]
+    },
+    {
+      "path": "scenarios/shutdown-sigint.json",
+      "kind": "scenario",
+      "covers": [
+        "shutdown"
+      ]
+    },
+    {
+      "path": "scenarios/shutdown-sigterm.json",
+      "kind": "scenario",
+      "covers": [
+        "shutdown"
+      ]
+    },
+    {
+      "path": "scenarios/shutdown-stdin-eof.json",
+      "kind": "scenario",
+      "covers": [
+        "shutdown"
+      ]
+    },
+    {
+      "path": "scenarios/stdout-framing.json",
+      "kind": "scenario",
+      "covers": [
+        "framing"
+      ]
+    },
+    {
+      "path": "scenarios/tool-arguments-invalid-dependency-layer.json",
+      "kind": "scenario",
+      "covers": [
+        "invalid-arguments"
+      ]
+    },
+    {
+      "path": "scenarios/tool-arguments-invalid-handler-layer.json",
+      "kind": "scenario",
+      "covers": [
+        "invalid-arguments",
+        "tool-error-envelope"
+      ]
+    },
+    {
+      "path": "scenarios/tool-arguments-omitted.json",
+      "kind": "scenario",
+      "covers": [
+        "omitted-arguments"
+      ]
+    },
+    {
+      "path": "scenarios/tool-call-health-success.json",
+      "kind": "scenario",
+      "covers": [
+        "tool-success-envelope",
+        "plugin-absent"
+      ]
+    },
+    {
+      "path": "scenarios/tools-list-before-initialize.json",
+      "kind": "scenario",
+      "covers": [
+        "tool-inventory",
+        "method-inventory"
+      ]
+    },
+    {
+      "path": "scenarios/tools-list-inventory.json",
+      "kind": "scenario",
+      "covers": [
+        "tool-inventory",
+        "tool-input-schemas"
+      ]
+    },
+    {
+      "path": "scenarios/unknown-method-and-unknown-tool.json",
+      "kind": "scenario",
+      "covers": [
+        "unknown-method",
+        "unknown-tool"
+      ]
+    },
+    {
+      "path": "tool-input-schemas.json",
+      "kind": "derived",
+      "covers": [
+        "tool-input-schemas"
+      ]
+    },
+    {
+      "path": "tool-order.json",
+      "kind": "derived",
+      "covers": [
+        "tool-inventory"
+      ]
+    }
+  ]
+}

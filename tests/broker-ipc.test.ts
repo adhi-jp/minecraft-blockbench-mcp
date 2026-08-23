@@ -190,7 +190,7 @@ test('message schemas expose no secret field while opaque payloads remain conten
     helloAckMessageSchema.shape,
     helloRejectMessageSchema.shape,
     ipcRequestMessageSchema.shape,
-    ipcResponseMessageSchema.innerType().shape,
+    ipcResponseMessageSchema.shape,
     statusEventMessageSchema.shape,
     pingMessageSchema.shape,
     pongMessageSchema.shape,

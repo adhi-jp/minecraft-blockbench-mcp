@@ -1,0 +1,144 @@
+{
+  "name": "tool-arguments-invalid-handler-layer",
+  "proves": "Two tools whose shared schema carries a top-level refinement advertise the unwrapped inner object, so arguments that satisfy the advertised schema still reach the handler and are rejected there with an E_INVALID_PARAMS envelope. This is the dual-layer validation contract.",
+  "covers": [
+    "invalid-arguments",
+    "tool-error-envelope"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize with protocolVersion 2025-11-25",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "premigration-wire-recorder",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {
+                  "listChanged": true
+                }
+              },
+              "serverInfo": {
+                "name": "minecraft-blockbench-mcp",
+                "version": "0.1.0"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": 1
+          },
+          "rawSha256": "cfd279481b15c2356cba73a613a7a2973c2b409f079fb43d40cf59df5a5c3064"
+        }
+      ]
+    },
+    {
+      "label": "notifications/initialized carries no response",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "awaitStdoutMessages": 0,
+      "expect": []
+    },
+    {
+      "label": "validate_geckolib_file with neither optional path, accepted by the advertised schema",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+          "name": "validate_geckolib_file",
+          "arguments": {}
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\n  \"summary\": \"Rejected validate_geckolib_file: parameters failed validation.\",\n  \"ok\": false,\n  \"command\": \"validate_geckolib_file\",\n  \"error\": {\n    \"code\": \"E_INVALID_PARAMS\",\n    \"message\": \"Parameters failed schema validation.\",\n    \"details\": [\n      {\n        \"code\": \"custom\",\n        \"message\": \"At least one of geo_path or animation_path is required.\",\n        \"path\": []\n      }\n    ]\n  }\n}"
+                }
+              ],
+              "isError": true
+            },
+            "jsonrpc": "2.0",
+            "id": 2
+          },
+          "rawSha256": "8fca8d3764b006b9517be085d631ab39ab237032905b66fd90d98882c49e90b9"
+        }
+      ]
+    },
+    {
+      "label": "set_cube_uv with only uuid, accepted by the advertised schema",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+          "name": "set_cube_uv",
+          "arguments": {
+            "uuid": "cube-uuid"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\n  \"summary\": \"Rejected set_cube_uv: parameters failed validation.\",\n  \"ok\": false,\n  \"command\": \"set_cube_uv\",\n  \"error\": {\n    \"code\": \"E_INVALID_PARAMS\",\n    \"message\": \"Parameters failed schema validation.\",\n    \"details\": [\n      {\n        \"code\": \"custom\",\n        \"message\": \"At least one of box_uv, uv_offset, mirror_uv, or faces is required.\",\n        \"path\": []\n      }\n    ]\n  }\n}"
+                }
+              ],
+              "isError": true
+            },
+            "jsonrpc": "2.0",
+            "id": 3
+          },
+          "rawSha256": "e3c83ebd20785fa51fe3f0f97759925c42196c2c2d4654b95024898db38da4ca"
+        }
+      ]
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 3,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

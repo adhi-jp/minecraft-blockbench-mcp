@@ -73,6 +73,14 @@ export interface ControllerLeaseOptions<TimerHandle> {
   idleTimeoutMs: number;
   setTimer: (callback: () => void, ms: number) => TimerHandle;
   clearTimer: (handle: TimerHandle) => void;
+  /**
+   * Start with the scoped-directory state unknown. A broker process that has
+   * just started cannot know what an earlier broker was granted, and a plugin
+   * keeps its confirmed directory across reconnects, so a broker that owns the
+   * plugin connection sets this and has to clear the state with an
+   * acknowledged revocation before it grants control to anyone.
+   */
+  initiallyTainted?: boolean;
 }
 
 export interface ControllerLeaseSnapshot {
@@ -89,7 +97,7 @@ export class ControllerLease<TimerHandle> {
   private owner: string | null = null;
   private requestInFlight = false;
   private scopeEraOwner: string | null = null;
-  private taint = false;
+  private taint: boolean;
   private pendingAcquirer: string | null = null;
   private recoverAfterRelease = false;
   private idleTimer: TimerHandle | undefined;
@@ -99,6 +107,7 @@ export class ControllerLease<TimerHandle> {
     if (!Number.isInteger(options.idleTimeoutMs) || options.idleTimeoutMs <= 0) {
       throw new RangeError('idleTimeoutMs must be a positive integer.');
     }
+    this.taint = options.initiallyTainted ?? false;
   }
 
   get state(): ControllerLeaseState {

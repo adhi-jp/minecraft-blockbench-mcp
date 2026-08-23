@@ -4,6 +4,7 @@ import { createConnection, type Socket } from 'node:net';
 import { z } from 'zod';
 
 import { makeError } from '../../shared/protocol.js';
+import { RequestCancelledError, type RequestCancellationStage } from '../request-cancellation.js';
 import type { BridgeRequestResult, PluginInfo } from '../ws-bridge.js';
 import {
   IpcLineDecoder,
@@ -31,6 +32,8 @@ export interface BrokerClientOptions {
 
 interface PendingResponse {
   resolve: (outcome: BridgeRequestResult) => void;
+  reject: (error: Error) => void;
+  detachSignal: () => void;
 }
 
 interface PendingHandshake {
@@ -44,6 +47,25 @@ export class BrokerHandshakeError extends Error {
   constructor(readonly reason: HelloRejectMessage['reason']) {
     super(`Broker rejected the client hello: ${reason}.`);
     this.name = 'BrokerHandshakeError';
+  }
+}
+
+/**
+ * Raised instead of a result when the caller withdrew a request through the
+ * `signal` it passed to `request()`. `stage` says how far the request had
+ * travelled, which is all this side can honestly know:
+ *
+ * - `before_send`: nothing was written to the broker, so the request was never
+ *   enqueued and the plugin can never see it.
+ * - `after_send`: the request reached the broker and a `cancel_request` naming
+ *   its internal UUID was written. Whether the broker had already relayed it to
+ *   the plugin is deliberately not reported here; a relayed command may have
+ *   executed, is never rolled back, and is never replayed.
+ */
+export class BrokerRequestCancelledError extends RequestCancelledError {
+  constructor(requestId: string, stage: RequestCancellationStage) {
+    super(requestId, stage, `Broker request ${requestId} was cancelled by the caller (${stage}).`);
+    this.name = 'BrokerRequestCancelledError';
   }
 }
 
@@ -134,14 +156,44 @@ export class BrokerClient {
     return acknowledgement;
   }
 
-  async request(command: string, params: unknown, timeoutMs?: number): Promise<BridgeRequestResult> {
+  /**
+   * Relay one command through the broker.
+   *
+   * `signal` withdraws the request. The internal UUID allocated here is the only
+   * identity the broker ever sees for it, so cancellation cannot be aimed at
+   * another shim's request even when two shims reuse the same outer JSON-RPC id.
+   * A withdrawn request rejects with `BrokerRequestCancelledError` and never
+   * resolves to a result, so no late outcome can reach the caller.
+   */
+  async request(
+    command: string,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<BridgeRequestResult> {
+    const id = randomUUID();
+    const cancelled = (): boolean => signal !== undefined && signal.aborted;
+    if (cancelled()) throw new BrokerRequestCancelledError(id, 'before_send');
+
     if (!this.listening) await this.#attemptReattach();
     const socket = this.#socket;
     if (!this.listening || socket === null) return this.#brokerUnavailable();
+    // Reattaching can await; re-check before writing so a request cancelled
+    // during that wait is still never enqueued.
+    if (cancelled()) throw new BrokerRequestCancelledError(id, 'before_send');
 
-    const id = randomUUID();
-    const response = new Promise<BridgeRequestResult>((resolve) => {
-      this.#pending.set(id, { resolve });
+    let detachSignal = (): void => undefined;
+    const response = new Promise<BridgeRequestResult>((resolve, reject) => {
+      if (signal !== undefined) {
+        const onAbort = () => {
+          if (!this.#pending.delete(id)) return;
+          this.#sendCancel(id);
+          reject(new BrokerRequestCancelledError(id, 'after_send'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        detachSignal = () => signal.removeEventListener('abort', onAbort);
+      }
+      this.#pending.set(id, { resolve, reject, detachSignal });
     });
     try {
       socket.write(
@@ -156,11 +208,29 @@ export class BrokerClient {
         ),
       );
     } catch {
-      this.#pending.delete(id);
+      this.#discardPending(id);
       socket.destroy();
       return this.#brokerUnavailable();
     }
     return response;
+  }
+
+  #sendCancel(id: string): void {
+    const socket = this.#socket;
+    if (socket === null || socket.destroyed) return;
+    try {
+      socket.write(encodeIpcMessage({ type: 'cancel_request', id }));
+    } catch {
+      // A broker that cannot receive the withdrawal is already gone; its queue
+      // dies with it, so there is nothing left to tombstone.
+    }
+  }
+
+  #discardPending(id: string): void {
+    const pending = this.#pending.get(id);
+    if (pending === undefined) return;
+    this.#pending.delete(id);
+    pending.detachSignal();
   }
 
   async close(): Promise<void> {
@@ -205,8 +275,11 @@ export class BrokerClient {
 
   #resolveResponse(message: IpcResponseMessage): void {
     const pending = this.#pending.get(message.id);
+    // A response for an unknown id is late, withdrawn, or already terminal.
+    // Dropping it keeps one request to exactly one outcome.
     if (pending === undefined) return;
     this.#pending.delete(message.id);
+    pending.detachSignal();
     pending.resolve(
       message.ok
         ? { ok: true, result: message.result }
@@ -250,6 +323,7 @@ export class BrokerClient {
     const unavailable = this.#brokerUnavailable();
     for (const [id, pending] of this.#pending) {
       this.#pending.delete(id);
+      pending.detachSignal();
       pending.resolve(unavailable);
     }
   }

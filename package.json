@@ -25,6 +25,7 @@
     "test:coverage": "node --test --import tsx --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=70 --test-coverage-functions=80 tests/*.test.ts",
     "test:coverage:lcov": "node --input-type=module -e \"import { mkdirSync } from 'node:fs'; mkdirSync('coverage', { recursive: true });\" && node --test --import tsx --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-coverage-lines=80 --test-coverage-branches=70 --test-coverage-functions=80 tests/*.test.ts",
     "smoke:geckolib-live": "node scripts/smoke-geckolib-animation-frame.mjs",
+    "smoke:scope-isolation-live": "node scripts/smoke-scope-isolation.mjs",
     "dev": "tsx src/adapter/cli.ts"
   },
   "engines": {
@@ -49,9 +50,10 @@
   "bugs": "https://github.com/adhi-jp/minecraft-blockbench-mcp/issues",
   "homepage": "https://github.com/adhi-jp/minecraft-blockbench-mcp#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "ws": "^8.18.0",
-    "zod": "^3.25.0"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -4,6 +4,7 @@ import { once } from 'node:events';
 
 import WebSocket from 'ws';
 
+import { isRequestCancelled } from '../src/adapter/request-cancellation.js';
 import { WsBridge, CLOSE_CODES, listenerSetupIssue } from '../src/adapter/ws-bridge.js';
 import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
 
@@ -48,21 +49,49 @@ function helloFrame(secret: string = SECRET, protocolVersion: number = PROTOCOL_
   });
 }
 
-/** Connect and authenticate a fake plugin; resolves after hello_ack. */
+/**
+ * Connect and authenticate a fake plugin, then answer the `revoke_scope` the
+ * bridge sends every newly authenticated session. Resolves once that
+ * acknowledgement is on the wire, so the caller's own responders are installed
+ * before any public command is relayed. A real Blockbench plugin answers this
+ * command (src/plugin/commands/scope-commands.ts); a fake that ignored it would
+ * simply never be allowed to run a command.
+ */
 async function connectAuthenticated(port: number): Promise<{ socket: WebSocket; frames: unknown[] }> {
   const socket = new WebSocket(`ws://127.0.0.1:${port}`);
   const frames: unknown[] = [];
   await once(socket, 'open');
-  const ackPromise = new Promise<void>((resolve) => {
+  const ready = new Promise<void>((resolve) => {
+    let acknowledged = false;
+    let revoked = false;
     socket.on('message', (data) => {
       const parsed = JSON.parse(String(data));
       frames.push(parsed);
-      if (parsed.type === 'hello_ack') resolve();
+      if (parsed.type === 'hello_ack') acknowledged = true;
+      if (parsed.type === 'request' && parsed.command === 'revoke_scope') {
+        socket.send(JSON.stringify({ type: 'response', id: parsed.id, ok: true, result: { state: 'revoked' } }));
+        revoked = true;
+      }
+      if (acknowledged && revoked) resolve();
     });
   });
   socket.send(helloFrame());
-  await ackPromise;
+  await ready;
   return { socket, frames };
+}
+
+/** Wait until the fake plugin has recorded a relayed `request` frame for `command`. */
+async function waitUntilFrame(frames: readonly unknown[], command: string, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const seen = (): boolean =>
+    frames.some((frame) => {
+      const record = frame as { type?: string; command?: string };
+      return record.type === 'request' && record.command === command;
+    });
+  while (!seen()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for a relayed ${command} frame.`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function closeInfo(socket: WebSocket): Promise<{ code: number; reason: string }> {
@@ -376,6 +405,99 @@ test('disconnect while a request is in flight resolves it with E_PLUGIN_NOT_CONN
   assert.equal(outcome.error?.code, 'E_PLUGIN_NOT_CONNECTED');
 });
 
+/**
+ * How a withdrawn request comes back out of the direct bridge.
+ *
+ * The wire-level cancellation tests observe silence on stdout, and silence is
+ * also what `@modelcontextprotocol/server` produces on its own: it drops the
+ * result and the thrown error of any request whose abort signal has fired. So
+ * those tests would pass over a bridge that ignored the signal entirely and
+ * simply answered late. This is the assertion that constrains this adapter: the
+ * bridge itself has to reject, and it has to say how far the command got, since
+ * `before_send` and `after_send` are the difference between "Blockbench never
+ * saw this" and "Blockbench may have run it and nothing was rolled back".
+ */
+test('a withdrawn direct bridge request rejects and reports that nothing was sent', async (t) => {
+  const { bridge, port } = await startBridge({ requestTimeoutMs: 5_000 });
+  t.after(() => bridge.stop());
+  const { socket, frames } = await connectAuthenticated(port);
+  t.after(() => socket.close());
+
+  const controller = new AbortController();
+  controller.abort();
+  const relayedBefore = frames.filter(
+    (frame) => (frame as { type?: string; command?: string }).type === 'request',
+  ).length;
+
+  await assert.rejects(
+    bridge.request('get_project_state', {}, undefined, controller.signal),
+    (error: unknown) => {
+      assert.ok(
+        isRequestCancelled(error),
+        `a withdrawn request settled with something other than a cancellation: ${String(error)}`,
+      );
+      assert.equal(error.stage, 'before_send', 'a request withdrawn before any relay reported the wrong stage');
+      assert.equal(
+        error.requestId,
+        'get_project_state',
+        'a withdrawn request that never got an internal id must be identified by its command name, never by a ' +
+          'client-supplied JSON-RPC id',
+      );
+      return true;
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(
+    frames.filter((frame) => (frame as { type?: string }).type === 'request').length,
+    relayedBefore,
+    'a request withdrawn before it was sent still reached the plugin',
+  );
+});
+
+test('a direct bridge request withdrawn after it reached the plugin rejects, reports after_send, and is never recalled', async (t) => {
+  const { bridge, port } = await startBridge({ requestTimeoutMs: 5_000 });
+  t.after(() => bridge.stop());
+  const { socket, frames } = await connectAuthenticated(port);
+  t.after(() => socket.close());
+
+  const controller = new AbortController();
+  const pending = bridge.request('get_project_state', {}, undefined, controller.signal);
+  await waitUntilFrame(frames, 'get_project_state');
+  const relayed = frames.filter(
+    (frame): frame is { type: string; command: string; id: string } =>
+      (frame as { type?: string }).type === 'request',
+  );
+  controller.abort();
+
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(isRequestCancelled(error), `expected a cancellation, saw ${String(error)}`);
+    assert.equal(
+      error.stage,
+      'after_send',
+      'a request already handed to Blockbench reported that nothing was sent, which would claim an undo the ' +
+        'adapter cannot perform',
+    );
+    assert.equal(
+      error.requestId,
+      relayed.at(-1)?.id,
+      'the withdrawn request was not identified by the internal correlation id it was relayed under',
+    );
+    return true;
+  });
+
+  // Nothing is recalled and nothing is repeated: the command list the plugin
+  // saw is compared whole, so a rollback or a retry under any command name
+  // fails here rather than only the one name a spot check would look for.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(
+    frames
+      .filter((frame) => (frame as { type?: string }).type === 'request')
+      .map((frame) => (frame as { command: string }).command),
+    ['revoke_scope', 'get_project_state'],
+    'the plugin received a command after the withdrawal; a withdrawn request is neither rolled back nor replayed',
+  );
+});
+
 test('scope_changed events update the cached plugin scope status', async (t) => {
   const { bridge, port } = await startBridge();
   t.after(() => bridge.stop());
@@ -432,4 +554,58 @@ test('no frame sent by the bridge ever contains the shared secret in raw or enco
   assert.ok(!everything.includes(SECRET), 'raw secret leaked');
   assert.ok(!everything.includes(Buffer.from(SECRET, 'utf8').toString('base64')), 'base64 secret leaked');
   assert.ok(!everything.includes(encodeURIComponent(SECRET)), 'URL-encoded secret leaked');
+});
+
+test('a revoke_scope acknowledgement naming a scope state that still grants access is refused with E_PROTOCOL_MISMATCH', async (t) => {
+  // The bridge re-validates this one reply because it does not trust the
+  // payload. Parsing it is not enough: `confirmed` and `proposed` are members
+  // of the scope status enum that still carry a live grant, so accepting one
+  // as an acknowledgement would open the gate on a directory the plugin never
+  // gave up.
+  for (const stillGranting of [
+    { state: 'confirmed', normalized_path: '/tmp/scoped' },
+    { state: 'proposed', normalized_path: '/tmp/scoped' },
+  ]) {
+    const harness = await startBridge();
+    t.after(() => harness.bridge.stop());
+    const socket = new WebSocket(`ws://127.0.0.1:${harness.port}`);
+    t.after(() => socket.close());
+    await once(socket, 'open');
+    const relayed: string[] = [];
+    let authenticated: () => void;
+    const acknowledged = new Promise<void>((resolve) => {
+      authenticated = resolve;
+    });
+    socket.on('message', (data) => {
+      const parsed = JSON.parse(String(data)) as { type?: string; id?: string; command?: string };
+      if (parsed.type === 'hello_ack') {
+        authenticated();
+        return;
+      }
+      if (parsed.type !== 'request') return;
+      relayed.push(parsed.command ?? '');
+      if (parsed.command === 'revoke_scope') {
+        socket.send(JSON.stringify({ type: 'response', id: parsed.id, ok: true, result: stillGranting }));
+        return;
+      }
+      socket.send(JSON.stringify({ type: 'response', id: parsed.id, ok: true, result: { relayed: true } }));
+    });
+    socket.send(helloFrame());
+    await acknowledged;
+
+    const outcome = await harness.bridge.request('get_project_state', {});
+    assert.equal(
+      outcome.ok,
+      false,
+      `a command was served after revoke_scope was acknowledged with scope state ${stillGranting.state}`,
+    );
+    assert.equal(outcome.error?.code, 'E_PROTOCOL_MISMATCH');
+    assert.deepEqual(outcome.error?.details, { state: stillGranting.state });
+    assert.equal(harness.bridge.scopeCleared, false, `scope state ${stillGranting.state} was recorded as cleared`);
+    assert.deepEqual(
+      relayed.filter((command) => command !== 'revoke_scope'),
+      [],
+      `a command was relayed after a revocation acknowledged as ${stillGranting.state}`,
+    );
+  }
 });

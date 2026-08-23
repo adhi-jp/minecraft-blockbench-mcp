@@ -9,11 +9,12 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import WebSocket from 'ws';
 
 import { COMMAND_NAMES, PROTOCOL_VERSION, type CommandName } from '../src/shared/protocol.js';
+import { MODERN_PROTOCOL_VERSION } from './helpers/mcp-era-wire.ts';
 
 const SECRET = 'e2e-secret-xyz789';
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,10 +26,31 @@ let nextPort = 40200;
 // `minecraft-blockbench-mcp setup` state cannot leak into these tests.
 const emptyConfigHome = mkdtempSync(join(tmpdir(), 'bbmcp-empty-config-home-'));
 
+/**
+ * Which MCP wire era the SDK client negotiates.
+ *
+ * `@modelcontextprotocol/client` defaults to the 2025-era latest, so a test
+ * that constructs a client without saying otherwise only ever exercises the
+ * legacy era. Pinning the modern revision fails loudly instead of falling back,
+ * which is what makes a modern arm a real second observation rather than a
+ * second legacy run. `scripts/verify-package.mjs` opens the packaged executable
+ * the same way.
+ */
+type WireEra = 'legacy' | 'modern';
+
+const ERAS: readonly WireEra[] = ['legacy', 'modern'];
+
+function negotiationFor(era: WireEra): { mode: 'legacy' | { pin: string } } {
+  return era === 'legacy' ? { mode: 'legacy' } : { mode: { pin: MODERN_PROTOCOL_VERSION } };
+}
+
 async function startClient(options: {
   port: number;
   secret?: string | undefined;
   configPath?: string | undefined;
+  era?: WireEra;
+  requestTimeoutMs?: number;
+  maxMessageBytes?: number;
 }): Promise<{ client: Client; close: () => Promise<void>; stderrText: () => string }> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -45,7 +67,10 @@ async function startClient(options: {
   if (options.configPath !== undefined) env.BLOCKBENCH_MCP_CONFIG = options.configPath;
   env.BLOCKBENCH_MCP_PORT = String(options.port);
   // Keep test timing fast; these are the same knobs users can configure.
-  env.BLOCKBENCH_MCP_REQUEST_TIMEOUT_MS = '2000';
+  env.BLOCKBENCH_MCP_REQUEST_TIMEOUT_MS = String(options.requestTimeoutMs ?? 2000);
+  if (options.maxMessageBytes !== undefined) {
+    env.BLOCKBENCH_MCP_MAX_MESSAGE_BYTES = String(options.maxMessageBytes);
+  }
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -55,7 +80,10 @@ async function startClient(options: {
     stderr: 'pipe',
   });
   const stderrChunks: string[] = [];
-  const client = new Client({ name: 'stdio-e2e-test', version: '0.0.0' });
+  const client = new Client(
+    { name: 'stdio-e2e-test', version: '0.0.0' },
+    { versionNegotiation: negotiationFor(options.era ?? 'legacy') },
+  );
   await client.connect(transport);
   transport.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(String(chunk)));
   return {
@@ -256,12 +284,21 @@ test('with a fake plugin attached: responses are plugin-generated, health shows 
 
   const socket = new WebSocket(`ws://127.0.0.1:${port}`);
   await once(socket, 'open');
+  // Every newly authenticated adapter session revokes any scoped directory the
+  // plugin still holds and relays nothing until that is acknowledged, so this
+  // fake answers revoke_scope the way the shipped plugin does and reports ready
+  // only once it has.
   const ack = new Promise<void>((resolve) => {
+    let acknowledged = false;
+    let revoked = false;
     socket.on('message', (data) => {
       const frame = JSON.parse(String(data));
-      if (frame.type === 'hello_ack') resolve();
+      if (frame.type === 'hello_ack') acknowledged = true;
       if (frame.type === 'request') {
-        if (frame.command === 'get_project_state') {
+        if (frame.command === 'revoke_scope') {
+          socket.send(JSON.stringify({ type: 'response', id: frame.id, ok: true, result: { state: 'revoked' } }));
+          revoked = true;
+        } else if (frame.command === 'get_project_state') {
           socket.send(
             JSON.stringify({
               type: 'response',
@@ -281,6 +318,7 @@ test('with a fake plugin attached: responses are plugin-generated, health shows 
           );
         }
       }
+      if (acknowledged && revoked) resolve();
     });
   });
   socket.send(
@@ -331,12 +369,19 @@ test('plugin result schemas preserve valid results and reject structurally inval
 
   const socket = new WebSocket(`ws://127.0.0.1:${port}`);
   await once(socket, 'open');
+  // See the note on the other fake: the adapter withholds public commands until
+  // this revocation is acknowledged.
   const ack = new Promise<void>((resolve) => {
+    let acknowledged = false;
+    let revoked = false;
     socket.on('message', (data) => {
       const frame = JSON.parse(String(data));
-      if (frame.type === 'hello_ack') resolve();
+      if (frame.type === 'hello_ack') acknowledged = true;
       if (frame.type === 'request') {
-        if (frame.command === 'get_project_state') {
+        if (frame.command === 'revoke_scope') {
+          socket.send(JSON.stringify({ type: 'response', id: frame.id, ok: true, result: { state: 'revoked' } }));
+          revoked = true;
+        } else if (frame.command === 'get_project_state') {
           socket.send(
             JSON.stringify({
               type: 'response',
@@ -349,6 +394,7 @@ test('plugin result schemas preserve valid results and reject structurally inval
           socket.send(JSON.stringify({ type: 'response', id: frame.id, ok: true, result: 'not a status object' }));
         }
       }
+      if (acknowledged && revoked) resolve();
     });
   });
   socket.send(
@@ -379,4 +425,176 @@ test('plugin result schemas preserve valid results and reject structurally inval
   assert.equal(invalid.error?.code, 'E_PROTOCOL_MISMATCH');
   assert.match(invalid.error?.message ?? '', /get_plugin_status.*result.*protocol result schema/i);
   assert.ok(Array.isArray(invalid.error?.details));
+});
+
+// ---------------------------------------------------------------------------
+// Direct-mode regression behaviour, on both MCP wire eras
+// ---------------------------------------------------------------------------
+
+/** Connect to the adapter's plugin listener, retrying while it is still binding. */
+async function openPluginSocket(port: number, timeoutMs = 10_000): Promise<WebSocket> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+    const opened = await new Promise<boolean>((resolve) => {
+      socket.once('open', () => resolve(true));
+      socket.once('error', () => resolve(false));
+    });
+    if (opened) return socket;
+    socket.terminate();
+    if (Date.now() >= deadline) throw new Error(`Timed out connecting to the plugin listener on port ${port}.`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/** A Blockbench stand-in that authenticates and can be told to stay silent. */
+async function attachSilentPlugin(port: number, options: { answer: boolean }): Promise<WebSocket> {
+  // The MCP handshake can complete a moment before the WebSocket listener has
+  // finished binding, so the plugin retries rather than racing it.
+  const socket = await openPluginSocket(port);
+  const ready = new Promise<void>((resolve) => {
+    socket.on('message', (data) => {
+      const frame = JSON.parse(String(data)) as { type?: string; id?: string; command?: string };
+      if (frame.type !== 'request') return;
+      if (frame.command === 'revoke_scope') {
+        socket.send(JSON.stringify({ type: 'response', id: frame.id, ok: true, result: { state: 'revoked' } }));
+        resolve();
+        return;
+      }
+      // Every other command is deliberately left unanswered when `answer` is
+      // false, which is what makes the adapter's own request timeout the thing
+      // under test.
+      if (!options.answer) return;
+      socket.send(
+        JSON.stringify({
+          type: 'response',
+          id: frame.id,
+          ok: true,
+          result: { open: true, format: 'java_block', counts: { cubes: 1, groups: 0, textures: 0 } },
+        }),
+      );
+    });
+  });
+  socket.send(
+    JSON.stringify({
+      type: 'hello',
+      protocol_version: PROTOCOL_VERSION,
+      secret: SECRET,
+      plugin_version: '0.1.0',
+      blockbench_version: '5.1.4',
+      capabilities: ['java_block'],
+    }),
+  );
+  await ready;
+  return socket;
+}
+
+async function waitUntil(predicate: () => boolean, description: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${description}.`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/**
+ * Every direct-mode failure the migration contract requires to be unchanged,
+ * observed on one wire era: a listener that could not bind, a request the
+ * plugin never answers, and a plugin frame past the size limit.
+ *
+ * Returned as plain data so the two eras can be compared against each other
+ * rather than against two separately written expectations.
+ */
+async function observeDirectRegressions(
+  t: import('node:test').TestContext,
+  era: WireEra,
+): Promise<Record<string, unknown>> {
+  // Listener/setup failure: something else already holds the port.
+  const blockedPort = nextPort++;
+  const blocker: Server = createServer();
+  blocker.listen(blockedPort, '127.0.0.1');
+  await once(blocker, 'listening');
+  t.after(() => new Promise<void>((resolve) => blocker.close(() => resolve())));
+  const blocked = await startClient({ port: blockedPort, secret: SECRET, era });
+  t.after(blocked.close);
+  const blockedHealth = parseEnvelope(await blocked.client.callTool({ name: 'health', arguments: {} }));
+  const listenerFailure = {
+    healthOk: blockedHealth.ok,
+    wsListening: blockedHealth.result?.ws_listening,
+    setupErrorCodes: (blockedHealth.result?.setup_errors as Array<{ code: string }>).map((issue) => issue.code),
+    toolCount: (await blocked.client.listTools()).tools.length,
+    relayCode: parseEnvelope(await blocked.client.callTool({ name: 'get_project_state', arguments: {} })).error?.code,
+  };
+
+  // Timeout: the plugin is attached and simply never answers.
+  const timeoutPort = nextPort++;
+  const timeoutClient = await startClient({ port: timeoutPort, secret: SECRET, era, requestTimeoutMs: 1_000 });
+  t.after(timeoutClient.close);
+  const silent = await attachSilentPlugin(timeoutPort, { answer: false });
+  t.after(() => silent.close());
+  const timedOut = parseEnvelope(await timeoutClient.client.callTool({ name: 'get_project_state', arguments: {} }));
+  const timeout = { ok: timedOut.ok, code: timedOut.error?.code, command: timedOut.command };
+
+  // Size limit: the plugin sends a frame larger than the configured maximum,
+  // which closes its session and leaves the adapter with no plugin.
+  const sizePort = nextPort++;
+  const sizeClient = await startClient({
+    port: sizePort,
+    secret: SECRET,
+    era,
+    requestTimeoutMs: 1_000,
+    maxMessageBytes: 2_048,
+  });
+  t.after(sizeClient.close);
+  const chatty = await attachSilentPlugin(sizePort, { answer: true });
+  t.after(() => chatty.close());
+  // Positive control before the oversize frame: this plugin does serve commands.
+  const beforeOversize = parseEnvelope(
+    await sizeClient.client.callTool({ name: 'get_project_state', arguments: {} }),
+  );
+  let closeCode: number | null = null;
+  chatty.on('close', (code) => (closeCode = code));
+  chatty.send(JSON.stringify({ type: 'event', event: 'noise', data: 'x'.repeat(10_000) }));
+  await waitUntil(() => closeCode !== null, `${era}: the oversized plugin frame to close the session`);
+  const afterOversize = parseEnvelope(await sizeClient.client.callTool({ name: 'get_project_state', arguments: {} }));
+  const sizeLimit = {
+    beforeOk: beforeOversize.ok,
+    closeCode,
+    afterOk: afterOversize.ok,
+    afterCode: afterOversize.error?.code,
+  };
+
+  return { listenerFailure, timeout, sizeLimit };
+}
+
+test('direct-mode listener failure, request timeout, and plugin frame size limits behave identically on a 2026-07-28 connection and a 2025-era one', async (t) => {
+  const observed: Partial<Record<WireEra, Record<string, unknown>>> = {};
+  for (const era of ERAS) observed[era] = await observeDirectRegressions(t, era);
+
+  // Each era observed the real behaviour, not an empty run.
+  for (const era of ERAS) {
+    const listener = observed[era]?.listenerFailure as Record<string, unknown>;
+    assert.equal(listener.healthOk, true, `${era}: health failed instead of reporting the listener failure`);
+    assert.equal(listener.wsListening, false, `${era}: the listener bound a port that was already taken`);
+    assert.deepEqual(listener.setupErrorCodes, ['E_PORT_IN_USE'], `${era}: the listener failure changed shape`);
+    assert.equal(listener.toolCount, COMMAND_NAMES.length + 1, `${era}: the catalogue shrank on a failed listener`);
+    assert.equal(listener.relayCode, 'E_PLUGIN_NOT_CONNECTED', `${era}: a relay with no listener changed its code`);
+
+    const timeout = observed[era]?.timeout as Record<string, unknown>;
+    assert.equal(timeout.ok, false, `${era}: an unanswered command reported success`);
+    assert.equal(timeout.code, 'E_TIMEOUT', `${era}: an unanswered command did not time out`);
+
+    const sizeLimit = observed[era]?.sizeLimit as Record<string, unknown>;
+    assert.equal(sizeLimit.beforeOk, true, `${era}: the plugin was not serving before the oversized frame`);
+    assert.equal(sizeLimit.closeCode, 1009, `${era}: an oversized plugin frame did not close the session with 1009`);
+    assert.equal(sizeLimit.afterOk, false, `${era}: a command succeeded after the plugin session was closed`);
+    assert.equal(sizeLimit.afterCode, 'E_PLUGIN_NOT_CONNECTED', `${era}: the post-oversize code changed`);
+  }
+
+  // And the two eras agree with each other, member for member.
+  assert.deepEqual(
+    observed.modern,
+    observed.legacy,
+    'direct-mode listener, timeout, or size-limit behaviour differs between the two MCP wire eras',
+  );
 });

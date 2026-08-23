@@ -11,12 +11,13 @@ import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { serveStdio, StdioServerTransport, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 
 import { makeError } from '../shared/protocol.js';
 import { resolveDefaultConfigPath } from '../shared/config-path.js';
 import { routeCli } from '../setup/route.js';
 import { BrokerClient, BrokerHandshakeError, type BrokerClientHello } from './broker/broker-client.js';
+import { HybridOpeningInitializeNormalizer } from './hybrid-opening-normalizer.js';
 import { BrokerServer } from './broker/broker-server.js';
 import { electOrAttach } from './broker/election.js';
 import { computeConfigIdentity, ensureRuntimeDirectory, ipcEndpointFor, resolveRuntimeDirectory } from './broker/endpoint.js';
@@ -159,6 +160,28 @@ class BrokerVersionMismatchError extends Error {
   }
 }
 
+/**
+ * Raised when the broker answered `client_hello` with `hello_reject` naming
+ * `session_in_use`. Every other handshake failure leaves the broker's liveness
+ * unknown; this one is positive proof the broker is alive and healthy, because
+ * only a running broker holding a still-connected client on that `session_id`
+ * can produce it.
+ *
+ * A shim allocates a fresh `session_id` per process (`randomUUID()` in
+ * `attachBroker` below), so it can never collide with itself. The refusal
+ * therefore means either a genuine duplicate session or the narrow reattach
+ * window where the broker has not yet processed the previous socket's close. In
+ * both cases the broker owns its endpoint and is serving other clients, so this
+ * must never be mistaken for a stale record: unlinking that endpoint and
+ * spawning a replacement would destroy a working broker.
+ */
+class BrokerSessionInUseError extends Error {
+  constructor() {
+    super('The running broker already has a connected client holding this session id.');
+    this.name = 'BrokerSessionInUseError';
+  }
+}
+
 function clientLabel(argv: string[]): string {
   const { values } = parseArgs({
     args: argv,
@@ -242,6 +265,14 @@ async function attachBroker(
       if (error instanceof BrokerHandshakeError && error.reason === 'version_mismatch') {
         throw new BrokerVersionMismatchError();
       }
+      // `session_in_use` is refused *because* the broker is alive and already
+      // has that session connected. Returning null here would report "no broker
+      // answered", which sends electOrAttach into startBroker and costs a
+      // healthy broker its endpoint; throw instead, so the refusal travels out
+      // as a live-broker condition.
+      if (error instanceof BrokerHandshakeError && error.reason === 'session_in_use') {
+        throw new BrokerSessionInUseError();
+      }
       return null;
     }
   }
@@ -253,9 +284,15 @@ async function attachBroker(
       return probe(record, candidate);
     };
     const startBroker = async (): Promise<BrokerRecord> => {
-      // This callback runs while holding the startup lock and only after the
-      // endpoint probe failed, so a leftover socket file from a dead broker is
-      // provably stale and must be removed or the new broker cannot bind.
+      // This callback runs while holding the startup lock, and only after a
+      // probe that neither attached nor proved a broker alive. A probe that
+      // reached a live broker which refused this shim does not arrive here at
+      // all: it throws out of `probe` (BrokerVersionMismatchError or
+      // BrokerSessionInUseError) and past electOrAttach entirely. So by the time
+      // this runs, a socket file still sitting at the endpoint is a leftover
+      // from a dead broker, and must be removed or the new broker cannot bind.
+      // A failed probe alone does not prove that; the absence of those throws is
+      // what does.
       if (process.platform !== 'win32') {
         await unlink(location.endpoint).catch(() => undefined);
       }
@@ -298,11 +335,49 @@ async function attachBroker(
       return null;
     } catch (error) {
       if (error instanceof BrokerVersionMismatchError) throw error;
+      if (error instanceof BrokerSessionInUseError) throw error;
       return null;
     }
   }
 
   return electBroker();
+}
+
+/**
+ * The stdio serving options shared by direct and brokered mode.
+ *
+ * `legacy: 'serve'` keeps every supported 2025-era `initialize` revision
+ * negotiating exactly as before, alongside 2026-07-28 clients that open with
+ * `server/discover` and never send `initialize` at all.
+ *
+ * The transport is wrapped so that an `initialize` carrying the reserved
+ * 2026-07-28 `_meta` claims is still served as a 2025-era connection instead of
+ * being classified as 2026-07-28 and answered with `-32601`; see
+ * `hybrid-opening-normalizer.ts` for the exact, closed rewrite it performs.
+ *
+ * No `onerror` is installed: out-of-band transport errors stay off stderr, the
+ * way they always have, so a malformed inbound frame is dropped silently rather
+ * than emitting a diagnostic line the wire contract never carried.
+ */
+function serveStdioOptions(): { legacy: 'serve'; transport: HybridOpeningInitializeNormalizer } {
+  return {
+    legacy: 'serve',
+    transport: new HybridOpeningInitializeNormalizer(new StdioServerTransport()),
+  };
+}
+
+/**
+ * Closes the stdio serving handle at most once and never lets a teardown error
+ * stop the rest of the shutdown: the process is exiting either way, and the
+ * bridge/broker client still have to be released.
+ */
+async function closeStdio(handle: StdioServerHandle | null): Promise<void> {
+  if (handle === null) return;
+  try {
+    await handle.close();
+  } catch {
+    // The connection is going away regardless; nothing here is recoverable.
+  }
 }
 
 async function serveDirect(config: AdapterConfig, issues: SetupIssue[]): Promise<void> {
@@ -323,11 +398,16 @@ async function serveDirect(config: AdapterConfig, issues: SetupIssue[]): Promise
     logLine(`Setup issue (${startResult.issue.code}): ${startResult.issue.message}`);
   }
 
-  const server = buildMcpServer({ bridge, config, setupIssues: issues, mode: 'direct' });
-  const transport = new StdioServerTransport();
+  let stdioHandle: StdioServerHandle | null = null;
+  let shuttingDown = false;
 
   const shutdown = async (reason: string) => {
+    // SIGINT/SIGTERM and both stdin end-of-input events can all fire for the
+    // same teardown; run the teardown once and log it once.
+    if (shuttingDown) return;
+    shuttingDown = true;
     logLine(`Shutting down (${reason}).`);
+    await closeStdio(stdioHandle);
     await bridge.stop();
     process.exit(0);
   };
@@ -338,7 +418,10 @@ async function serveDirect(config: AdapterConfig, issues: SetupIssue[]): Promise
   process.stdin.once('end', () => void shutdown('stdio closed'));
   process.stdin.once('close', () => void shutdown('stdio closed'));
 
-  await server.connect(transport);
+  stdioHandle = serveStdio(
+    (ctx) => buildMcpServer({ bridge, config, setupIssues: issues, mode: 'direct', era: ctx.era }),
+    serveStdioOptions(),
+  );
   logLine('MCP server connected over stdio.');
 }
 
@@ -350,6 +433,11 @@ async function serveBrokered(
 ): Promise<void> {
   let client: BrokerClient | null = null;
   let failureCode: 'E_BROKER_UNAVAILABLE' | 'E_BROKER_VERSION_MISMATCH' = 'E_BROKER_UNAVAILABLE';
+  // E_BROKER_UNAVAILABLE's default message asserts something this shim cannot
+  // always know. When the broker refused us with `session_in_use` it is running
+  // and healthy, so "No healthy broker could be reached or started." would be
+  // false; the code is still right, because no broker is available *to us*.
+  let failureMessage = 'No healthy broker could be reached or started.';
   try {
     if (resolvedConfigPath === null) {
       throw new Error('No configuration path could be resolved for the broker runtime.');
@@ -357,32 +445,30 @@ async function serveBrokered(
     const location = await resolveBrokerLocation(resolvedConfigPath);
     client = await attachBroker(config, resolvedConfigPath, location, clientLabel(argv));
   } catch (error) {
-    if (error instanceof BrokerVersionMismatchError) failureCode = 'E_BROKER_VERSION_MISMATCH';
+    if (error instanceof BrokerVersionMismatchError) {
+      failureCode = 'E_BROKER_VERSION_MISMATCH';
+      failureMessage = 'The running broker is incompatible with this adapter version.';
+    } else if (error instanceof BrokerSessionInUseError) {
+      // The broker stays untouched and keeps serving its other clients; only
+      // this shim is shut out, and it says so without claiming the broker died.
+      failureMessage = 'The running broker refused this session id because a connected client already holds it.';
+    }
   }
 
   if (client === null) {
-    issues.push({
-      code: failureCode,
-      message:
-        failureCode === 'E_BROKER_VERSION_MISMATCH'
-          ? 'The running broker is incompatible with this adapter version.'
-          : 'No healthy broker could be reached or started.',
-    });
-    logLine(`Setup issue (${failureCode}): ${issues.at(-1)!.message}`);
+    issues.push({ code: failureCode, message: failureMessage });
+    logLine(`Setup issue (${failureCode}): ${failureMessage}`);
   }
 
   const bridge = client ?? unavailableBridge(failureCode);
-  const server = buildMcpServer({
-    bridge,
-    config,
-    setupIssues: issues,
-    mode: 'brokered',
-    brokerStatus: client === null ? undefined : () => brokerStatus(client!),
-  });
-  const transport = new StdioServerTransport();
+  let stdioHandle: StdioServerHandle | null = null;
+  let shuttingDown = false;
 
   const shutdown = async (reason: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logLine(`Shutting down (${reason}).`);
+    await closeStdio(stdioHandle);
     await client?.close();
     process.exit(0);
   };
@@ -391,7 +477,18 @@ async function serveBrokered(
   process.stdin.once('end', () => void shutdown('stdio closed'));
   process.stdin.once('close', () => void shutdown('stdio closed'));
 
-  await server.connect(transport);
+  stdioHandle = serveStdio(
+    (ctx) =>
+      buildMcpServer({
+        bridge,
+        config,
+        setupIssues: issues,
+        mode: 'brokered',
+        brokerStatus: client === null ? undefined : () => brokerStatus(client!),
+        era: ctx.era,
+      }),
+    serveStdioOptions(),
+  );
   logLine('MCP server connected over stdio.');
 }
 

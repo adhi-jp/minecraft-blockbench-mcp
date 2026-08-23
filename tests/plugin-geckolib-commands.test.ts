@@ -18,10 +18,17 @@ import { PluginSession, type WebSocketLike } from '../src/plugin/session.js';
 import { ScopeManager, type ScopedFsLike } from '../src/plugin/scope-manager.js';
 import { registerGeckolibCommands } from '../src/plugin/commands/geckolib-commands.js';
 import { registerModelCommands } from '../src/plugin/commands/model-commands.js';
+import { registerScopeCommands } from '../src/plugin/commands/scope-commands.js';
 import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
 
 const SECRET = 'geckolib-cmd-secret-42';
-let nextPort = 47000;
+// Reserved band: 42800-42899. This file used to start at 47000, which put its
+// second harness on 47001 — the port the WinRM HTTP compatibility listener
+// already holds on Windows, so binding it failed with EACCES on both Windows
+// legs. 42800-42899 is the free slot inside the 40100-42799 range the rest of
+// the suite reserves, and CI keeps the ephemeral range above it on every
+// platform, so nothing else can be sitting there.
+let nextPort = 42_800;
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'geckolib');
 
@@ -262,6 +269,7 @@ interface Harness {
 
 async function makeHarness(): Promise<Harness> {
   const port = nextPort++;
+  assert.ok(port <= 42_899, 'the GeckoLib command tests must stay inside the reserved 42800-42899 port range');
   const scopeDir = nodeFs.mkdtempSync(join(tmpdir(), 'bbmcp-geckolib-'));
 
   const bridge = new WsBridge({
@@ -299,6 +307,9 @@ async function makeHarness(): Promise<Harness> {
   });
   registerModelCommands(session, scope);
   registerGeckolibCommands(session, scope);
+  // The shipped plugin registers this too (src/plugin/main.ts); the adapter
+  // revokes any inherited scoped directory before it relays a first command.
+  registerScopeCommands(session, scope);
   session.start();
 
   const start = Date.now();

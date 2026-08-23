@@ -1,0 +1,145 @@
+{
+  "name": "malformed-and-unframed-input",
+  "proves": "A line that is not JSON, a JSON-RPC batch array, and a frame missing the jsonrpc member are each dropped without any stdout output, and the connection keeps answering afterwards.",
+  "covers": [
+    "framing",
+    "unknown-method"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize with protocolVersion 2025-11-25",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "premigration-wire-recorder",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {
+                  "listChanged": true
+                }
+              },
+              "serverInfo": {
+                "name": "minecraft-blockbench-mcp",
+                "version": "0.1.0"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": 1
+          },
+          "rawSha256": "cfd279481b15c2356cba73a613a7a2973c2b409f079fb43d40cf59df5a5c3064"
+        }
+      ]
+    },
+    {
+      "label": "notifications/initialized carries no response",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "awaitStdoutMessages": 0,
+      "expect": []
+    },
+    {
+      "label": "a line that is not JSON",
+      "sendRawLine": "{not json",
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "a JSON-RPC batch array",
+      "send": [
+        {
+          "jsonrpc": "2.0",
+          "id": 2,
+          "method": "ping",
+          "params": {}
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 3,
+          "method": "ping",
+          "params": {}
+        }
+      ],
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "a frame missing the jsonrpc member",
+      "send": {
+        "id": 4,
+        "method": "ping",
+        "params": {}
+      },
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "an empty line",
+      "sendRawLine": "",
+      "awaitStdoutMessages": 0,
+      "settleMs": 250,
+      "expect": []
+    },
+    {
+      "label": "the connection still answers a following request",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "ping",
+        "params": {}
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {},
+            "jsonrpc": "2.0",
+            "id": 5
+          },
+          "rawSha256": "12637917152649c13a5081a4b69986b7a7d6012e7615ddd7e38a003306161083"
+        }
+      ]
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 2,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

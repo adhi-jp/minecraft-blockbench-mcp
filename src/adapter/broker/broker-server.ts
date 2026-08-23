@@ -5,7 +5,6 @@ import { z } from 'zod';
 
 import {
   COMMAND_SPECS,
-  INTERNAL_COMMAND_SPECS,
   isCommandName,
   makeError,
   type CommandSpec,
@@ -20,6 +19,7 @@ import {
   type BrokerToClientMessage,
   type ClientHelloMessage,
   type ClientToBrokerMessage,
+  type HelloRejectMessage,
   type IpcRequestMessage,
   type IpcResponseMessage,
   type StatusEventMessage,
@@ -45,6 +45,16 @@ export interface BrokerServerOptions extends Omit<BridgeOptions, 'onSessionChang
   clearInterval?: (handle: TimerHandle) => void;
 }
 
+/**
+ * One request this broker accepted from a client and has not answered yet.
+ * `relayed` flips the instant the command is handed to the plugin bridge, which
+ * is the boundary past which withdrawal can no longer prevent execution.
+ */
+interface TrackedRequest {
+  relayed: boolean;
+  cancelled: boolean;
+}
+
 interface ClientConnection {
   socket: Socket;
   decoder: IpcLineDecoder<ClientToBrokerMessage>;
@@ -54,6 +64,8 @@ interface ClientConnection {
   heartbeatTimer: TimerHandle | null;
   missedPongs: number;
   pendingPingId: string | null;
+  /** Keyed by the client's internal request UUID; scoped to this connection. */
+  tracked: Map<string, TrackedRequest>;
 }
 
 function fallbackBridgeError(): ErrorPayload {
@@ -106,6 +118,10 @@ export class BrokerServer {
 
     this.#lease = new ControllerLease<TimerHandle>({
       idleTimeoutMs: this.#options.leaseIdleTimeoutMs,
+      // This process has just started and cannot know which scoped directory
+      // the plugin still holds from an earlier broker, so control is withheld
+      // until a revocation is acknowledged.
+      initiallyTainted: true,
       setTimer: (callback, ms) =>
         this.#setTimer(() => {
           const before = this.#lease.state;
@@ -230,6 +246,7 @@ export class BrokerServer {
       heartbeatTimer: null,
       missedPongs: 0,
       pendingPingId: null,
+      tracked: new Map(),
     };
     this.#clients.add(client);
 
@@ -268,6 +285,16 @@ export class BrokerServer {
       client.socket.end();
       return;
     }
+    if (message.type === 'cancel_request') {
+      // Only this connection's own request ids are cancellable, and only while
+      // this broker still holds them. An id that is unknown, already answered,
+      // or owned by another client is ignored: withdrawing a finished or
+      // foreign request has nothing to undo.
+      const tracked = client.tracked.get(message.id);
+      if (tracked === undefined) return;
+      tracked.cancelled = true;
+      return;
+    }
     if (message.type === 'request') {
       if (this.#stopping) {
         this.#sendResponse(client, {
@@ -301,6 +328,21 @@ export class BrokerServer {
       this.#rejectHello(client, 'identity_mismatch');
       return;
     }
+    // A `session_id` is the only name the controller lease and the plugin's
+    // scoped-directory era are keyed by, so a second connection that merely
+    // declares the one a connected client already holds would inherit both with
+    // no `revoke_scope` acknowledged in between.
+    //
+    // The refusal is keyed on a *currently connected* registered client, never
+    // on a `session_id` seen at some point in the past. A client whose socket
+    // dropped leaves `#clients` in `#deregisterClient` before anything else can
+    // hello, and reconnecting with the same `session_id` is the documented
+    // recovery path `BrokerClient` takes, so that hello still has to be
+    // acknowledged and still has to keep its own scope era.
+    if (this.#sessionHeldByAnotherClient(hello.session_id, client)) {
+      this.#rejectHello(client, 'session_in_use');
+      return;
+    }
 
     client.registered = true;
     client.sessionId = hello.session_id;
@@ -319,7 +361,20 @@ export class BrokerServer {
     this.#broadcastStatus();
   }
 
-  #rejectHello(client: ClientConnection, reason: 'version_mismatch' | 'identity_mismatch'): void {
+  /**
+   * Whether some other connection in `#clients` is registered under
+   * `sessionId` right now. `#clients` loses a connection in `#deregisterClient`
+   * as soon as its socket closes, sends `bye`, or fails its heartbeat, so this
+   * asks about live state rather than about arrival order.
+   */
+  #sessionHeldByAnotherClient(sessionId: string, incoming: ClientConnection): boolean {
+    for (const other of this.#clients) {
+      if (other !== incoming && other.registered && other.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
+  #rejectHello(client: ClientConnection, reason: HelloRejectMessage['reason']): void {
     this.#send(client, {
       type: 'hello_reject',
       reason,
@@ -332,6 +387,21 @@ export class BrokerServer {
   async #handleRequest(client: ClientConnection, request: IpcRequestMessage): Promise<void> {
     const sessionId = client.sessionId;
     if (!client.registered || sessionId === null) return;
+    const tracked: TrackedRequest = { relayed: false, cancelled: false };
+    client.tracked.set(request.id, tracked);
+    try {
+      await this.#dispatchRequest(client, request, sessionId, tracked);
+    } finally {
+      client.tracked.delete(request.id);
+    }
+  }
+
+  async #dispatchRequest(
+    client: ClientConnection,
+    request: IpcRequestMessage,
+    sessionId: string,
+    tracked: TrackedRequest,
+  ): Promise<void> {
     const command = request.command;
     if (!isCommandName(command)) {
       this.#sendResponse(client, {
@@ -358,7 +428,7 @@ export class BrokerServer {
       return;
     }
     if (acquisition.outcome === 'revocation_required') {
-      const revocation = await this.#runRevocation();
+      const revocation = await this.#runRevocation(sessionId);
       if (!revocation.ok) {
         this.#sendResponse(client, {
           type: 'response',
@@ -370,7 +440,13 @@ export class BrokerServer {
       }
     }
 
+    if (tracked.cancelled) return;
+
     const outcome = await this.#enqueueLane(async () => {
+      // Reached only once this request is at the head of the plugin lane. A
+      // withdrawal that arrived while it waited here removes this attempt
+      // outright: nothing is relayed, so the plugin never observes it.
+      if (tracked.cancelled) return null;
       if (!client.registered || !this.#clients.has(client)) {
         const beforeRelease = this.#lease.state;
         if (
@@ -393,6 +469,7 @@ export class BrokerServer {
         } satisfies BridgeRequestResult;
       }
       this.#lease.requestStarted(sessionId);
+      tracked.relayed = true;
       try {
         return await this.#bridge.request(
           command,
@@ -412,6 +489,11 @@ export class BrokerServer {
       }
     });
 
+    // A relayed command is always awaited to completion above so the controller
+    // lease is released and scope bookkeeping stays correct, but a withdrawn
+    // request gets no response: its outcome, known or unknown, stops here.
+    if (outcome === null || tracked.cancelled) return;
+
     this.#sendResponse(client, {
       type: 'response',
       id: request.id,
@@ -420,31 +502,55 @@ export class BrokerServer {
     });
   }
 
-  async #runRevocation(): Promise<BridgeRequestResult> {
+  /**
+   * Clear the scoped-directory taint, granting control to whoever is waiting
+   * for it. `waitingSessionId`, when given, is the session whose own request
+   * triggered this attempt.
+   *
+   * With no plugin connected there is nothing to revoke against, so the lease
+   * cannot leave `recovering` and the caller is told the plugin is absent. The
+   * waiting session has to be released along with that answer: `recovering`
+   * runs no idle timer — `scheduleIdleTimer` is reached only from a grant, from
+   * an `acquire` on an already-owned lease, and from a finished request — so a
+   * pending acquirer recorded here is not reclaimed by anything except that
+   * client disconnecting. Leaving it in place is what made a broker whose
+   * Blockbench has not started yet answer the first client
+   * `E_PLUGIN_NOT_CONNECTED` and then every other client `E_CLIENT_BUSY`
+   * naming that first client as the owner, for as long as it stayed connected,
+   * and hand it control unasked once Blockbench finally connected.
+   */
+  async #runRevocation(waitingSessionId?: string): Promise<BridgeRequestResult> {
     if (this.#revocationPromise !== null) return this.#revocationPromise;
     if (!this.#bridge.connected) {
-      if (this.#lease.state === 'recovering') this.#lease.revocationResolved(false);
+      if (this.#lease.state === 'recovering') {
+        this.#lease.revocationResolved(false);
+        // `revocationResolved(false)` re-taints and keeps the lease in
+        // `recovering`, deliberately leaving the pending acquirer alone so a
+        // revocation that merely failed can be retried for the same client.
+        // This one cannot be retried at all until a plugin connects, so the
+        // waiting session is withdrawn here. `acquirerDisconnected` is the
+        // only event that clears it and is legal in `recovering` alone, so
+        // both the state and the identity are checked first.
+        if (
+          waitingSessionId !== undefined &&
+          this.#lease.state === 'recovering' &&
+          this.#lease.snapshot().pendingAcquirerSessionId === waitingSessionId
+        ) {
+          this.#lease.acquirerDisconnected(waitingSessionId);
+        }
+      }
       return {
         ok: false,
         error: makeError('E_PLUGIN_NOT_CONNECTED', 'Blockbench plugin is not connected.'),
       };
     }
 
-    const running = this.#enqueueLane(() => this.#bridge.request('revoke_scope', {}, 10_000)).then((outcome) => {
-      let resolved = outcome;
-      if (outcome.ok) {
-        const validated = INTERNAL_COMMAND_SPECS.revoke_scope.result.safeParse(outcome.result);
-        if (!validated.success) {
-          resolved = {
-            ok: false,
-            error: makeError(
-              'E_PROTOCOL_MISMATCH',
-              'revoke_scope plugin result did not match the protocol result schema.',
-              validated.error.issues,
-            ),
-          };
-        }
-      }
+    // The bridge owns revocation for the plugin session it authenticated, so
+    // the lane joins that work instead of sending a second `revoke_scope`; a
+    // clearance the bridge already obtained and no relay has invalidated
+    // satisfies this broker's own unknown starting state.
+    const running = this.#enqueueLane(() => this.#bridge.revokeScope()).then((outcome) => {
+      const resolved = outcome;
       if (this.#lease.state === 'recovering') {
         const before = this.#lease.state;
         this.#lease.revocationResolved(resolved.ok);
@@ -511,6 +617,9 @@ export class BrokerServer {
     const wasRegistered = client.registered;
     const sessionId = client.sessionId;
     client.registered = false;
+    // The client is gone, so nothing it queued may still be relayed and no
+    // response has anywhere to go.
+    for (const tracked of client.tracked.values()) tracked.cancelled = true;
 
     if (
       wasRegistered &&

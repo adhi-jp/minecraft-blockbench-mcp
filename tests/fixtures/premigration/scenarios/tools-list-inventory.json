@@ -1,0 +1,1438 @@
+{
+  "name": "tools-list-inventory",
+  "proves": "tools/list returns the complete advertised tool inventory: names, order, descriptions, every input schema, and the per-tool execution metadata the recorded build emits.",
+  "covers": [
+    "tool-inventory",
+    "tool-input-schemas"
+  ],
+  "process": {
+    "args": [
+      "--direct"
+    ],
+    "environment": "isolated-empty-config-home"
+  },
+  "steps": [
+    {
+      "label": "initialize with protocolVersion 2025-11-25",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "premigration-wire-recorder",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {
+                "tools": {
+                  "listChanged": true
+                }
+              },
+              "serverInfo": {
+                "name": "minecraft-blockbench-mcp",
+                "version": "0.1.0"
+              }
+            },
+            "jsonrpc": "2.0",
+            "id": 1
+          },
+          "rawSha256": "cfd279481b15c2356cba73a613a7a2973c2b409f079fb43d40cf59df5a5c3064"
+        }
+      ]
+    },
+    {
+      "label": "notifications/initialized carries no response",
+      "send": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "awaitStdoutMessages": 0,
+      "expect": []
+    },
+    {
+      "label": "tools/list",
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+      },
+      "awaitStdoutMessages": 1,
+      "expect": [
+        {
+          "message": {
+            "result": {
+              "tools": [
+                {
+                  "name": "health",
+                  "description": "Report adapter status: WebSocket listener state, plugin connection, plugin versions/capabilities, scoped-directory status, and machine-readable setup errors. Read-only; works while Blockbench is closed.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "get_plugin_status",
+                  "description": "Report plugin/Blockbench versions, capabilities, and scoped-directory status. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "get_project_state",
+                  "description": "Inspect the currently open project: format, name, object counts, and object identifiers. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "include_objects": {
+                        "type": "boolean",
+                        "description": "Include per-object identifier lists (default true)."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "get_elements",
+                  "description": "Read back cube and group state: geometry (from/to/origin/rotation), visibility, UV state (box_uv, uv_offset, mirror_uv, per-face uv/rotation/texture reference), and parent/child hierarchy. Cube name/from/to/origin/visibility values are valid update_cube input verbatim; cube rotation reads back as the stored per-axis degree vector. Mesh and locator elements are not returned. Responses share the 16 MiB message limit; pass uuids to bound the response on large projects. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "uuids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1,
+                        "description": "Cube/group UUIDs to read back; any unknown UUID fails with E_NOT_FOUND and returns nothing. Omit to return every element."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "create_cubes",
+                  "description": "Create new cube elements. Always creates new objects and returns their UUIDs.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "cubes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "from": {
+                              "type": "array",
+                              "minItems": 3,
+                              "maxItems": 3,
+                              "items": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "$ref": "#/properties/cubes/items/properties/from/items/0"
+                                },
+                                {
+                                  "$ref": "#/properties/cubes/items/properties/from/items/0"
+                                }
+                              ]
+                            },
+                            "to": {
+                              "$ref": "#/properties/cubes/items/properties/from"
+                            },
+                            "origin": {
+                              "$ref": "#/properties/cubes/items/properties/from"
+                            },
+                            "rotation": {
+                              "type": "object",
+                              "properties": {
+                                "axis": {
+                                  "type": "string",
+                                  "enum": [
+                                    "x",
+                                    "y",
+                                    "z"
+                                  ]
+                                },
+                                "angle": {
+                                  "$ref": "#/properties/cubes/items/properties/from/items/0"
+                                },
+                                "origin": {
+                                  "$ref": "#/properties/cubes/items/properties/from"
+                                }
+                              },
+                              "required": [
+                                "axis",
+                                "angle"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "group_uuid": {
+                              "type": "string"
+                            },
+                            "box_uv": {
+                              "type": "boolean",
+                              "description": "Per-cube UV mode (default: the project setting)."
+                            },
+                            "uv_offset": {
+                              "type": "array",
+                              "minItems": 2,
+                              "maxItems": 2,
+                              "items": [
+                                {
+                                  "$ref": "#/properties/cubes/items/properties/from/items/0"
+                                },
+                                {
+                                  "$ref": "#/properties/cubes/items/properties/from/items/0"
+                                }
+                              ],
+                              "description": "Box-UV texture offset. Providing UV state disables auto-UV for the cube."
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "to"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "cubes"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "update_cube",
+                  "description": "Update one existing cube addressed by UUID. Fails with E_NOT_FOUND for unknown UUIDs.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "uuid": {
+                        "type": "string"
+                      },
+                      "set": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "from": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "$ref": "#/properties/set/properties/from/items/0"
+                              },
+                              {
+                                "$ref": "#/properties/set/properties/from/items/0"
+                              }
+                            ]
+                          },
+                          "to": {
+                            "$ref": "#/properties/set/properties/from"
+                          },
+                          "origin": {
+                            "$ref": "#/properties/set/properties/from"
+                          },
+                          "rotation": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "axis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "x",
+                                      "y",
+                                      "z"
+                                    ]
+                                  },
+                                  "angle": {
+                                    "$ref": "#/properties/set/properties/from/items/0"
+                                  },
+                                  "origin": {
+                                    "$ref": "#/properties/set/properties/from"
+                                  }
+                                },
+                                "required": [
+                                  "axis",
+                                  "angle"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "visibility": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "uuid",
+                      "set"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "set_cube_uv",
+                  "description": "Set one cube's UV state: box-UV offset/mirroring, per-face UV rectangles with optional quarter-turn rotation, and the UV mode switch (via the cube setUVMode API, honoring the format's optional per-cube box UV). Box fields need box UV mode, faces need per-face mode, mismatches fail with E_INVALID_PARAMS. Explicit UV state disables auto-UV for the cube. One undo step.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "uuid": {
+                        "type": "string"
+                      },
+                      "box_uv": {
+                        "type": "boolean",
+                        "description": "Switch the cube UV mode. A mode differing from the format default needs a format with optional per-cube box UV; otherwise the call fails with E_FORMAT_UNSUPPORTED."
+                      },
+                      "uv_offset": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "$ref": "#/properties/uv_offset/items/0"
+                          }
+                        ],
+                        "description": "Box-UV texture offset; valid in box UV mode only."
+                      },
+                      "mirror_uv": {
+                        "type": "boolean",
+                        "description": "Box-UV X mirroring; valid in box UV mode only."
+                      },
+                      "faces": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "uv": {
+                              "type": "array",
+                              "minItems": 4,
+                              "maxItems": 4,
+                              "items": [
+                                {
+                                  "$ref": "#/properties/uv_offset/items/0"
+                                },
+                                {
+                                  "$ref": "#/properties/uv_offset/items/0"
+                                },
+                                {
+                                  "$ref": "#/properties/uv_offset/items/0"
+                                },
+                                {
+                                  "$ref": "#/properties/uv_offset/items/0"
+                                }
+                              ]
+                            },
+                            "rotation": {
+                              "type": "number",
+                              "enum": [
+                                0,
+                                90,
+                                180,
+                                270
+                              ],
+                              "description": "Face texture rotation in degrees (quarter turns)."
+                            }
+                          },
+                          "required": [
+                            "uv"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "propertyNames": {
+                          "enum": [
+                            "north",
+                            "south",
+                            "east",
+                            "west",
+                            "up",
+                            "down"
+                          ]
+                        },
+                        "description": "Per-face UV rectangles plus optional rotation; valid in per-face UV mode only."
+                      }
+                    },
+                    "required": [
+                      "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "set_texture_resolution",
+                  "description": "Set the project texture resolution (texture_width/texture_height) through the native Blockbench resolution utility, optionally rescaling existing UV coordinates. Resolves the validate_project texture-size mismatch warning. One undo step.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "height": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0
+                      },
+                      "rescale_existing_uv": {
+                        "type": "boolean",
+                        "description": "Scale existing UV coordinates to the new resolution. Supported only when Blockbench itself can rescale: the new size is square, the width changes, and old/new widths are integer multiples; otherwise the call fails with E_INVALID_PARAMS before changing anything."
+                      }
+                    },
+                    "required": [
+                      "width",
+                      "height"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "delete_cubes",
+                  "description": "Delete existing cubes addressed by UUID.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "uuids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "uuids"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "create_group",
+                  "description": "Create a new group/bone. Always creates a new object and returns its UUID.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "parent_uuid": {
+                        "type": "string"
+                      },
+                      "origin": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "$ref": "#/properties/origin/items/0"
+                          },
+                          {
+                            "$ref": "#/properties/origin/items/0"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "update_group",
+                  "description": "Update one existing group addressed by UUID. Fails with E_NOT_FOUND for unknown UUIDs.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "uuid": {
+                        "type": "string"
+                      },
+                      "set": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "$ref": "#/properties/set/properties/origin/items/0"
+                              },
+                              {
+                                "$ref": "#/properties/set/properties/origin/items/0"
+                              }
+                            ]
+                          },
+                          "parent_uuid": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "uuid",
+                      "set"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "delete_group",
+                  "description": "Delete an existing group addressed by UUID; children move to the parent when keep_children is true.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "uuid": {
+                        "type": "string"
+                      },
+                      "keep_children": {
+                        "type": "boolean",
+                        "description": "Move children to the parent instead of deleting them (default false)."
+                      }
+                    },
+                    "required": [
+                      "uuid"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "assign_texture",
+                  "description": "Add a texture from a scoped file path or data URL and apply it to all cubes or to selected cubes/faces. Creates a new texture object.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "path"
+                              },
+                              "path": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "path"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "data_url"
+                              },
+                              "data_url": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "data_url"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "apply_to": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "all"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "cube_uuids": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "minItems": 1
+                              },
+                              "faces": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "north",
+                                    "south",
+                                    "east",
+                                    "west",
+                                    "up",
+                                    "down"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "cube_uuids"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "apply_to"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "read_file",
+                  "description": "Read a file inside the confirmed scoped directory. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "encoding": {
+                        "type": "string",
+                        "enum": [
+                          "utf8",
+                          "base64"
+                        ]
+                      },
+                      "max_bytes": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 8388608
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "write_files",
+                  "description": "Write one or more files inside the confirmed scoped directory. Preflights all destinations and writes nothing when any blocker exists; each overwrite must be explicitly flagged per file.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "content": {
+                              "type": "string"
+                            },
+                            "encoding": {
+                              "type": "string",
+                              "enum": [
+                                "utf8",
+                                "base64"
+                              ]
+                            },
+                            "overwrite": {
+                              "type": "boolean",
+                              "description": "Required to replace an existing file at this destination; applies to this file only."
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "content"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "files"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "save_project",
+                  "description": "Save the open project of any format as a .bbmodel file inside the confirmed scoped directory. Compiles through the project codec, whose compile hooks other installed plugins may use to adjust the output. A project without a save path adopts the destination and is marked saved; saving to a path that differs from the current save path leaves the save target and unsaved indicator untouched. Overwrite must be explicitly flagged.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "pattern": "\\.bbmodel$",
+                        "description": "Destination ending in .bbmodel inside the confirmed scoped directory (absolute or scope-relative)."
+                      },
+                      "overwrite": {
+                        "type": "boolean",
+                        "description": "Required to replace an existing file at the destination; applies to this write only."
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "capture_screenshot",
+                  "description": "Capture a bounded screenshot of the model preview as a data URL, optionally from a named camera preset rendered offscreen (the visible viewport camera is never modified; \"front\" depends on the format's forward_direction). Preset renders share the offscreen preview that Blockbench's own screenshot dialog and recorder use; captures are serialized and fail while a recording is running. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 1920
+                      },
+                      "height": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 1920
+                      },
+                      "angle_preset": {
+                        "type": "string",
+                        "enum": [
+                          "initial",
+                          "top",
+                          "bottom",
+                          "south",
+                          "north",
+                          "east",
+                          "west",
+                          "isometric_right",
+                          "isometric_left",
+                          "true_isometric_right",
+                          "true_isometric_left"
+                        ],
+                        "description": "Render from a native Blockbench camera preset through the offscreen preview; the visible viewport camera is never modified. Compass directions are model-space (the model's \"front\" depends on the format's forward_direction). Omit to capture the currently visible view."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "validate_project",
+                  "description": "Run Blockbench validation checks and return structured diagnostics. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "propose_scoped_directory",
+                  "description": "Propose a directory for session-scoped AI file access. The Blockbench user must confirm inside Blockbench; rejection returns E_SCOPE_NOT_CONFIRMED.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Absolute directory path proposed for session-scoped AI file access."
+                      },
+                      "reason": {
+                        "type": "string",
+                        "description": "Shown to the Blockbench user in the confirmation dialog."
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "create_project",
+                  "description": "Create a new Minecraft Java block/item project (Blockbench format java_block) in a new project tab. When an unsaved project is open, force:true is required.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "format": {
+                        "type": "string",
+                        "const": "java_block"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "force": {
+                        "type": "boolean",
+                        "description": "Required when an unsaved project is open; the new project opens in a separate tab."
+                      }
+                    },
+                    "required": [
+                      "format"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "open_model",
+                  "description": "Open a Java block/item model JSON file from the confirmed scoped directory via the java_block codec, in a new project tab. When an unsaved project is open, force:true is required.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Model JSON path inside the confirmed scoped directory (absolute or scope-relative)."
+                      },
+                      "force": {
+                        "type": "boolean",
+                        "description": "Required when an unsaved project is open; the model opens in a separate tab."
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "set_display_transform",
+                  "description": "Set the Java display transform (translation/rotation/scale) for one display slot. Updates in place.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "slot": {
+                        "type": "string",
+                        "enum": [
+                          "thirdperson_righthand",
+                          "thirdperson_lefthand",
+                          "firstperson_righthand",
+                          "firstperson_lefthand",
+                          "ground",
+                          "gui",
+                          "head",
+                          "fixed"
+                        ]
+                      },
+                      "translation": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "$ref": "#/properties/translation/items/0"
+                          },
+                          {
+                            "$ref": "#/properties/translation/items/0"
+                          }
+                        ]
+                      },
+                      "rotation": {
+                        "$ref": "#/properties/translation"
+                      },
+                      "scale": {
+                        "$ref": "#/properties/translation"
+                      }
+                    },
+                    "required": [
+                      "slot"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "export_model",
+                  "description": "Export the current project through the java_block codec to a file inside the confirmed scoped directory. Overwrite must be explicitly flagged.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "overwrite": {
+                        "type": "boolean",
+                        "description": "Required to replace an existing file at the destination; applies to this write only."
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "create_geckolib_project",
+                  "description": "Create a new GeckoLib animated model project (Blockbench format geckolib_model; requires the third-party GeckoLib plugin) in a new project tab. When an unsaved project is open, force:true is required.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "modid": {
+                        "type": "string",
+                        "pattern": "^[_\\-.a-z0-9]+$",
+                        "description": "Mod namespace (lowercase letters, digits, `_`, `-`, `.`), stored as geckolib_modid."
+                      },
+                      "model_type": {
+                        "type": "string",
+                        "enum": [
+                          "Entity",
+                          "Block",
+                          "Item",
+                          "Armor",
+                          "Object"
+                        ]
+                      },
+                      "identifier": {
+                        "type": "string",
+                        "pattern": "^[_\\-.a-z0-9]+$",
+                        "description": "Object ID used for `geometry.<identifier>` and recommended export file names."
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "force": {
+                        "type": "boolean",
+                        "description": "Required when an unsaved project is open; the new project opens in a separate tab."
+                      }
+                    },
+                    "required": [
+                      "modid",
+                      "model_type",
+                      "identifier"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "open_geckolib_model",
+                  "description": "Open a GeckoLib .bbmodel project file from the confirmed scoped directory in a new project tab; rejects .bbmodel files whose format is not geckolib_model. When an unsaved project is open, force:true is required.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "GeckoLib .bbmodel path inside the confirmed scoped directory (absolute or scope-relative)."
+                      },
+                      "force": {
+                        "type": "boolean",
+                        "description": "Required when an unsaved project is open; the model opens in a separate tab."
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "export_geckolib_model",
+                  "description": "Export the current geckolib_model project geometry as Bedrock-format geo JSON (format_version 1.12.0) to a file inside the confirmed scoped directory; the recommended file name is <identifier>.geo.json. Overwrite must be explicitly flagged.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "overwrite": {
+                        "type": "boolean",
+                        "description": "Required to replace an existing file at the destination; applies to this write only."
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "export_geckolib_animations",
+                  "description": "Export the current geckolib_model project animations as GeckoLib animation JSON to a file inside the confirmed scoped directory; the recommended file name is <identifier>.animation.json. Fails with E_NOT_FOUND when the project has no animations. Overwrite must be explicitly flagged.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "overwrite": {
+                        "type": "boolean",
+                        "description": "Required to replace an existing file at the destination; applies to this write only."
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "validate_geckolib_file",
+                  "description": "Validate a Bedrock geometry JSON file and/or a GeckoLib animation JSON file inside the confirmed scoped directory against GeckoLib 4 baseline rules; animation content checks run without geometry, bone cross-checks need both paths. At least one path is required. Returns structured diagnostics. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "geo_path": {
+                        "type": "string",
+                        "description": "Bedrock geometry JSON (.geo.json) path inside the confirmed scoped directory."
+                      },
+                      "animation_path": {
+                        "type": "string",
+                        "description": "GeckoLib animation JSON path inside the confirmed scoped directory; content checks need no geometry, bone cross-checks also need geo_path."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "upsert_geckolib_animation",
+                  "description": "Create or replace one whole GeckoLib animation clip (keyed by name) on the current geckolib_model project: clip properties plus bone keyframes with easing and molang values, applied atomically in one undo step. Times are seconds; values use the GeckoLib .animation.json convention; molang strings are never evaluated. Overwriting an existing name requires replace:true (fails with E_FILE_EXISTS otherwise); unknown or ambiguous bone names fail with E_INVALID_PARAMS before any project change.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Animation name (the clip key), e.g. animation.<entity>.<action>."
+                      },
+                      "loop": {
+                        "type": "string",
+                        "enum": [
+                          "once",
+                          "loop",
+                          "hold_on_last_frame"
+                        ],
+                        "description": "GeckoLib loop mode (default once)."
+                      },
+                      "length": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Clip length in seconds."
+                      },
+                      "override": {
+                        "type": "boolean",
+                        "description": "Override lower-priority animations (default false)."
+                      },
+                      "anim_time_update": {
+                        "type": "string",
+                        "description": "Molang expression driving clip time (passed through, never evaluated)."
+                      },
+                      "bones": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "rotation": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "time": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "description": "Keyframe time in seconds from clip start."
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "array",
+                                        "minItems": 3,
+                                        "maxItems": 3,
+                                        "items": [
+                                          {
+                                            "anyOf": [
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "A number or a molang expression string (molang is passed through, never evaluated)."
+                                          },
+                                          {
+                                            "$ref": "#/properties/bones/additionalProperties/properties/rotation/items/properties/value/anyOf/2/items/0"
+                                          },
+                                          {
+                                            "$ref": "#/properties/bones/additionalProperties/properties/rotation/items/properties/value/anyOf/2/items/0"
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "description": "Keyframe value in the GeckoLib .animation.json convention: a number or molang string (applied to all three axes) or an [x, y, z] array of number|molang-string."
+                                  },
+                                  "interpolation": {
+                                    "type": "string",
+                                    "enum": [
+                                      "linear",
+                                      "catmullrom",
+                                      "step"
+                                    ],
+                                    "description": "Interpolation to the next keyframe (default linear)."
+                                  },
+                                  "easing": {
+                                    "type": "string",
+                                    "enum": [
+                                      "linear",
+                                      "step",
+                                      "easeInQuad",
+                                      "easeOutQuad",
+                                      "easeInOutQuad",
+                                      "easeInCubic",
+                                      "easeOutCubic",
+                                      "easeInOutCubic",
+                                      "easeInQuart",
+                                      "easeOutQuart",
+                                      "easeInOutQuart",
+                                      "easeInQuint",
+                                      "easeOutQuint",
+                                      "easeInOutQuint",
+                                      "easeInSine",
+                                      "easeOutSine",
+                                      "easeInOutSine",
+                                      "easeInExpo",
+                                      "easeOutExpo",
+                                      "easeInOutExpo",
+                                      "easeInCirc",
+                                      "easeOutCirc",
+                                      "easeInOutCirc",
+                                      "easeInBack",
+                                      "easeOutBack",
+                                      "easeInOutBack",
+                                      "easeInElastic",
+                                      "easeOutElastic",
+                                      "easeInOutElastic",
+                                      "easeInBounce",
+                                      "easeOutBounce",
+                                      "easeInOutBounce"
+                                    ],
+                                    "description": "GeckoLib per-keyframe easing name (absent means linear)."
+                                  },
+                                  "easingArgs": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    },
+                                    "description": "Numeric easing arguments; used by the Back/Elastic/Bounce families and step."
+                                  }
+                                },
+                                "required": [
+                                  "time",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "position": {
+                              "$ref": "#/properties/bones/additionalProperties/properties/rotation"
+                            },
+                            "scale": {
+                              "$ref": "#/properties/bones/additionalProperties/properties/rotation"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "description": "Bone name → rotation/position/scale keyframe lists. Bone names must match current group names. Values use the GeckoLib .animation.json convention (what export_geckolib_animations writes): rotation X/Y and position X are stored inverted relative to the Blockbench UI; the handler applies that mapping."
+                      },
+                      "replace": {
+                        "type": "boolean",
+                        "description": "Must be true to overwrite an existing animation with the same name; applies to this call only."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "length",
+                      "bones"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "delete_geckolib_animation",
+                  "description": "Delete one animation clip by name from the current geckolib_model project in one undo step without opening any dialog. Fails with E_NOT_FOUND when no clip has the given name.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "get_geckolib_animation",
+                  "description": "Read one animation clip by name from the current geckolib_model project, returned in exactly the upsert_geckolib_animation payload shape (keyframes sorted by time, linear interpolation omitted, times in seconds, GeckoLib .animation.json value convention). Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                },
+                {
+                  "name": "capture_geckolib_animation_frame",
+                  "description": "Capture a bounded screenshot of one named GeckoLib animation posed at a still timestamp. The command temporarily sets only that animation playing for preview, applies GeckoLib loop timing (loop wraps, hold clamps, once rejects out-of-range time), renders through the existing screenshot path, rejects active timeline playback, suppresses effect keyframes during the still preview, and restores animation/timeline state after success or failure. Read-only.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "animation": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Name of the GeckoLib animation clip to pose and capture."
+                      },
+                      "time": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Timestamp in seconds to render within the named clip."
+                      },
+                      "width": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 1920
+                      },
+                      "height": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 1920
+                      },
+                      "angle_preset": {
+                        "type": "string",
+                        "enum": [
+                          "initial",
+                          "top",
+                          "bottom",
+                          "south",
+                          "north",
+                          "east",
+                          "west",
+                          "isometric_right",
+                          "isometric_left",
+                          "true_isometric_right",
+                          "true_isometric_left"
+                        ],
+                        "description": "Render the posed GeckoLib model from a native Blockbench camera preset through the offscreen preview; omit to capture the currently visible view."
+                      }
+                    },
+                    "required": [
+                      "animation",
+                      "time"
+                    ],
+                    "additionalProperties": false,
+                    "$schema": "http://json-schema.org/draft-07/schema#"
+                  },
+                  "execution": {
+                    "taskSupport": "forbidden"
+                  }
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 2
+          },
+          "rawSha256": "86c8940021faa2d6473d1902930683b964e10bea73ebc30b36e2ea4f0eeab2e6"
+        }
+      ]
+    }
+  ],
+  "termination": {
+    "kind": "stdin-eof",
+    "exitCode": 0,
+    "signal": null,
+    "trailingStdoutMessages": []
+  },
+  "stdout": {
+    "lineCount": 2,
+    "everyLineIsOneJsonRpcObject": true,
+    "normalizationRewroteStdout": false
+  },
+  "stderrLines": [
+    "[minecraft-blockbench-mcp] Config source: no config file (CLI/env/defaults only).",
+    "[minecraft-blockbench-mcp] Setup issue (E_SECRET_MISSING): No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.",
+    "[minecraft-blockbench-mcp] MCP server connected over stdio.",
+    "[minecraft-blockbench-mcp] Shutting down (stdio closed)."
+  ]
+}

@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import WsClient from 'ws';
 
 import { WsBridge } from '../src/adapter/ws-bridge.js';
+import { registerScopeCommands } from '../src/plugin/commands/scope-commands.js';
+import { ScopeManager } from '../src/plugin/scope-manager.js';
 import { PluginSession, CommandError, type WebSocketLike, type SessionStatus } from '../src/plugin/session.js';
 
 const SECRET = 'session-secret-q1w2e3';
@@ -43,6 +45,17 @@ function makeSession(
     onStatusChange: (status) => statuses.push(status),
     ...overrides,
   });
+  // Every real plugin answers revoke_scope (src/plugin/main.ts), and the adapter
+  // clears inherited scoped-directory state before relaying its first command,
+  // so a session without this handler would never receive one.
+  registerScopeCommands(
+    session,
+    new ScopeManager({
+      confirmDialog: () => Promise.resolve(true),
+      acquireScopedFs: () => null,
+      memo: { get: () => null, set: () => undefined },
+    }),
+  );
   return { session, statuses };
 }
 
