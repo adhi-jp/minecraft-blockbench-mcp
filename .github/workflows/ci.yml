@@ -1,0 +1,265 @@
+# General CI — the gate that runs on this repository's ordinary commits.
+#
+# Until this file existed there was none. The only workflow was
+# `platform-matrix.yml`, which triggers exclusively on `ci/**` throwaway
+# branches and exists to collect four-platform evidence for one migration
+# criterion; a normal push or pull request ran nothing at all. That gap had a
+# measurable cost. `scripts/verify-package.mjs` asserted E_SECRET_MISSING from
+# its secretless probe long after 43ade3c made brokered the POSIX default, so
+# `npm run test:package` was red on `main` from that commit until 616fb31
+# repaired it, and nothing noticed, because nothing ran it. The package gate
+# below is in this workflow for exactly that reason.
+#
+# WHAT THIS GATE COVERS, on native Linux only
+#   * `npm run check` — both TypeScript projects, adapter and plugin.
+#   * `npm run build` — which must precede `npm test`. Eight test files and the
+#     shared stdio helper `tests/helpers/raw-stdio.ts` spawn the BUILT
+#     `dist/adapter/cli.js` as a child process and speak real newline-delimited
+#     JSON-RPC to it. A stale `dist` does not fail loudly there; it silently
+#     tests the wrong bytes.
+#   * `npm test` — the whole suite.
+#   * `npm run test:package` — pack a tarball, install it clean, drive the
+#     packaged MCP server. The only gate here that exercises what a user
+#     installs rather than what the working tree contains.
+#
+# WHAT THIS GATE DOES NOT COVER — and must never be read as covering
+#   * Any platform but native Linux. Windows and macOS behaviour is
+#     `platform-matrix.yml`'s job and nothing here is evidence about either.
+#     See the `runs-on` note in the `check` job for why that split is
+#     deliberate rather than an omission.
+#   * The live scope-isolation criterion, and the live Blockbench smokes
+#     (`npm run smoke:scope-isolation-live`, `npm run smoke:geckolib-live`).
+#     They need the Blockbench desktop application running with the plugin
+#     loaded and a human to confirm a scoped directory. A hosted runner has no
+#     desktop session and nothing to answer the confirmation dialog with. No
+#     amount of green here closes them.
+#   * Exact per-platform pass and skip counts. `platform-matrix.yml` asserts
+#     those through `scripts/assert-test-counts.mjs` because a count is the
+#     only way to catch a platform that silently started skipping. This
+#     workflow asserts only that the suite is green: a count assertion on every
+#     push to every branch would make every legitimately added test a red build.
+#   * Coverage. `npm run test:coverage` and its thresholds are not run here.
+
+name: ci
+
+on:
+  # Push covers every branch that is not `ci/**`. Those are excluded because
+  # `platform-matrix.yml` already runs a strict superset there — the same
+  # check/build/test gates plus the package and adapter-mode gates, on four
+  # platforms — so a general run on a `ci/**` push costs a runner and adds no
+  # signal. Nothing is lost by the exclusion: `ci/**` branches are throwaway
+  # and never merged, and if one ever did open a pull request the
+  # `pull_request` trigger below would still gate it.
+  #
+  # Deliberately NOT filtered by path. A `paths-ignore` for docs would leave a
+  # required status check permanently pending on a docs-only pull request under
+  # branch protection, which blocks the merge instead of speeding it up.
+  push:
+    branches-ignore: ['ci/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A same-repository pull request produces two runs, one per event, because
+  # `github.ref` differs between them (`refs/heads/<branch>` vs
+  # `refs/pull/<n>/merge`). That duplication is accepted rather than collapsed:
+  # normalising the key so both events share a group would let the push run
+  # cancel the pull-request run, and a cancelled `pull_request` check blocks a
+  # merge under branch protection. What the key does buy is that successive
+  # pushes to one branch or one pull request supersede each other.
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Superseded runs are cancelled everywhere EXCEPT on `main`, where every
+  # commit needs its own recorded result — a merge whose run was cancelled by
+  # the next merge leaves no evidence for the commit it was actually about.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    # Not redundant on a Linux runner: the implicit shell is `bash -e`, while
+    # `shell: bash` is `bash --noprofile --norc -eo pipefail`. The `pipefail`
+    # is what stops a failing command inside a pipeline from being masked by a
+    # later one, and it matches how `platform-matrix.yml` runs every step.
+    shell: bash
+
+env:
+  # Same pin, same reason, as `platform-matrix.yml`: an unpinned clone would
+  # make the plugin typecheck track an upstream project this repository does
+  # not control, so an unrelated upstream change would show up as a red run
+  # here. Keep this value in step with that workflow's.
+  BLOCKBENCH_REF: v5.1.4
+
+jobs:
+  # The cheap gate runs first and alone, because a type error is the most
+  # common way this workflow goes red and finding it costs about a minute
+  # against the test job's several. `test` needs this job, so a red typecheck
+  # never pays for a build, a suite run and a tarball install.
+  check:
+    name: 'Type check (adapter + plugin)'
+    # Linux-only, deliberately, for the whole workflow. `platform-matrix.yml`
+    # already owns cross-platform evidence, with exact per-platform
+    # expectations, and it is expensive: four legs, macOS and Windows minutes
+    # billed at a multiple of Linux. Duplicating even part of that on every
+    # push to every branch buys no signal that workflow does not already
+    # produce on demand. Two further reasons this is not merely the cheap
+    # option: the port-band cause removal below is Linux-only on purpose —
+    # `platform-matrix.yml` records that the macOS and Windows ephemeral-range
+    # knobs are deliberately unverified — so a Windows or macOS leg here would
+    # be the flakier one; and `.gitattributes` has to keep working
+    # (`tests/fixtures/premigration/** -text`, against Git for Windows'
+    # `core.autocrlf`) for a Windows checkout to hash the frozen corpus
+    # correctly, which is a property worth testing where it is designed to be
+    # tested rather than incidentally here.
+    runs-on: ubuntu-latest
+    # Outer backstop only. The per-step bound below is what actually names a
+    # hung gate; this catches anything the steps do not cover, such as a cold
+    # Blockbench clone that never finishes.
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # `engines.node` is ">=22", so 22 is what CI pins: the floor is the
+      # version the package promises to run on, and it is the one a green run
+      # should be a statement about. Newer Node is exercised daily on the
+      # development machine.
+      #
+      # `cache: npm` is safe with `npm ci`. It caches the npm download cache
+      # (`~/.npm`) keyed on `package-lock.json`, not `node_modules`, so the
+      # install stays a clean lockfile install and only the network fetch is
+      # skipped.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `/external/` is gitignored, so a fresh clone has no Blockbench types
+      # and `npm run check`'s second project (tsconfig.plugin.json) fails on
+      # missing globals. Only `npm run check` needs this, which is the other
+      # reason the typecheck is its own job: the `test` job never pays for it.
+      #
+      # The cache covers `external/blockbench/types` rather than just
+      # `types/generated`, because tsconfig.plugin.json includes BOTH
+      # `types/custom/**` (tracked upstream) and `types/generated/**` (produced
+      # by `npm run generate-types`). Caching only the generated half would
+      # still force the clone on a hit.
+      - name: Restore Blockbench types
+        id: blockbench_types_cache
+        uses: actions/cache@v4
+        with:
+          path: external/blockbench/types
+          key: blockbench-types-${{ env.BLOCKBENCH_REF }}-${{ runner.os }}
+
+      - name: Clone Blockbench at the pinned tag
+        if: steps.blockbench_types_cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "${BLOCKBENCH_REF}" \
+            https://github.com/JannisX11/blockbench.git external/blockbench
+
+      # `--ignore-scripts` is load-bearing: Blockbench's devDependencies pull
+      # electron, electron-builder and @electron/notarize, whose postinstall
+      # scripts download very large binaries, while `generate-types` needs only
+      # typescript and a JSON read. Skipping them saves minutes on a cold cache
+      # and removes a class of network flake unrelated to this repository.
+      - name: Generate Blockbench types
+        if: steps.blockbench_types_cache.outputs.cache-hit != 'true'
+        run: |
+          npm --prefix external/blockbench install --ignore-scripts --no-audit --no-fund
+          npm --prefix external/blockbench run generate-types
+
+      # Every gate carries its own `timeout-minutes`, following
+      # `platform-matrix.yml`: with no step bound a hang is indistinguishable
+      # from a slow run until the job bound fires, and the failure does not say
+      # which gate stopped. The values are generous multiples of the observed
+      # Linux timings — a full Linux leg of the matrix finishes in about two
+      # and a half minutes — not performance budgets.
+      - name: 'Gate: npm run check'
+        timeout-minutes: 10
+        run: npm run check
+
+  test:
+    name: 'Build, test, package'
+    # The cheap gate gates the expensive one. This is also why the two are not
+    # run in parallel: parallel would return a verdict sooner but would always
+    # pay for both.
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Cause removal for a known, reproduced flake — not a precaution.
+      #
+      # The suite allocates its listening ports from fixed module-level
+      # counters in the 40100-42899 band (`tests/ws-bridge.test.ts:12` starts
+      # the band at 40100; `tests/plugin-geckolib-commands.test.ts:272` caps it
+      # at 42899), and the packaged-server probe uses DEFAULT_WS_PORT 39731.
+      # Linux's default ephemeral range is 32768-60999, which covers all of
+      # that, so the kernel can hand a port inside the band to an unrelated
+      # process between the test's choice and its bind. During the migration
+      # that produced rotating E_PORT_IN_USE / ECONNREFUSED / MCP-init-timeout
+      # failures with no code change behind them. Narrowing the ephemeral range
+      # to 49152-60999 leaves the whole band, and 39731, exclusively to the
+      # suite. `platform-matrix.yml` applies the same fix for the same reason.
+      #
+      # Evidence, never a gate: `continue-on-error` plus `|| true`, so a runner
+      # image that refuses the sysctl produces a slightly flakier run rather
+      # than a red one, and the before/after echo is what makes the difference
+      # visible instead of silent. There is deliberately no automatic re-run of
+      # a failed suite — a retry that GitHub records as one green run is how a
+      # real regression gets hidden.
+      #
+      # The `check` job needs none of this; `tsc` binds no ports.
+      - name: Narrow the ephemeral port range away from the test band
+        continue-on-error: true
+        run: |
+          echo "ephemeral port range (initial): $(cat /proc/sys/net/ipv4/ip_local_port_range)"
+          sudo sysctl -w net.ipv4.ip_local_port_range="49152 60999" || true
+          echo "ephemeral port range (effective): $(cat /proc/sys/net/ipv4/ip_local_port_range)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Must come before the suite: see this file's header. `npm test` drives
+      # `dist/adapter/cli.js` as a real child process in eight files.
+      - name: 'Gate: npm run build'
+        timeout-minutes: 10
+        run: npm run build
+
+      # `--test-timeout-ms` is deliberately NOT passed here. The matrix passes
+      # it because it needs a hung test named in a per-platform receipt; this
+      # workflow has no receipt to write, the step bound below already turns a
+      # hang into a bounded failure, and an untimed run is the one whose
+      # output most closely matches what a developer sees locally.
+      - name: 'Gate: npm test'
+        timeout-minutes: 20
+        run: npm test
+
+      # The gate this workflow exists for, kept despite its cost: it is the
+      # only one that leaves the working tree behind. It runs `npm pack`, which
+      # fires `prepack` -> `npm run build`, installs the resulting tarball into
+      # a throwaway directory with its own npm cache, and drives the installed
+      # MCP server over stdio. Roughly a minute of pack-and-install on top of
+      # the suite, against a bug class — a `files` entry that stops shipping a
+      # needed file, a `bin` path that no longer resolves, a probe that asserts
+      # something the packaged default can no longer produce — that no other
+      # gate here can see at all, and that has already reached `main` once.
+      #
+      # It runs last because `npm pack` rebuilds `dist`, so anything asserting
+      # against the build above has to come first.
+      - name: 'Gate: npm run test:package'
+        timeout-minutes: 20
+        run: npm run test:package
