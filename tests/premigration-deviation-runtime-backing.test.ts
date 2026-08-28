@@ -85,6 +85,7 @@ const PROPERTY_NAMES_ID = 'record-key-schema-advertised-as-property-names';
 const TUPLE_ID = 'fixed-length-tuple-advertised-with-prefix-items';
 const MEMBER_ORDER_ID = 'advertised-schema-member-order-changed';
 const HEALTH_STRICT_ID = 'no-parameter-tool-health-now-rejects-unrecognized-arguments';
+const PACKAGE_VERSION_ID = 'reported-package-version-is-0-2-0';
 
 /**
  * Every ledger entry whose justification rests on runtime behaviour, and where
@@ -152,6 +153,18 @@ const RUNTIME_BACKING: ReadonlyMap<string, Backing> = new Map<string, Backing>([
       kind: 'delegated',
       delegatedTo: [
         'tools/call health rejects an unrecognized argument key, which the accepted deviation ledger declares and the corpus does not record',
+      ],
+    },
+  ],
+  [
+    PACKAGE_VERSION_ID,
+    {
+      claim:
+        'the reported package version at every declared serverInfo.version and health adapter_version site is what the current build actually emits, not merely what the ledger says it must be',
+      kind: 'delegated',
+      delegatedTo: [
+        'every accepted wire deviation is still exercised, at exactly the recorded locations it declares',
+        'the accepted wire deviation ledger applies nothing it has not declared',
       ],
     },
   ],

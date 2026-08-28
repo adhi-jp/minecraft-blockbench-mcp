@@ -131,6 +131,45 @@ const OMITTED_ARGUMENTS_ID = 'no-parameter-tool-accepts-omitted-arguments-member
 const ISSUE_ORDER_ID = 'refined-tool-issue-member-order';
 /** Exported so the live probe records usage under the entry's own identifier. */
 export const HEALTH_STRICT_ID = 'no-parameter-tool-health-now-rejects-unrecognized-arguments';
+const PACKAGE_VERSION_ID = 'reported-package-version-is-0-2-0';
+const RECORDED_PACKAGE_VERSION = '0.1.0';
+const PACKAGE_VERSION_NOW = '0.2.0';
+
+/**
+ * Every recorded location that reports the package version: the `initialize`
+ * response's `serverInfo.version`, once per scenario, and the `health` tool
+ * result's `adapter_version`, in every scenario that calls `health`.
+ */
+const PACKAGE_VERSION_SITES: readonly string[] = [
+  'cancellation-notifications :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'cancellation-notifications :: the connection still answers a following request :: message 0',
+  'initialize-2024-10-07 :: initialize with protocolVersion 2024-10-07 :: message 0',
+  'initialize-2024-11-05 :: initialize with protocolVersion 2024-11-05 :: message 0',
+  'initialize-2025-03-26 :: initialize with protocolVersion 2025-03-26 :: message 0',
+  'initialize-2025-06-18 :: initialize with protocolVersion 2025-06-18 :: message 0',
+  'initialize-2025-11-25 :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'initialize-unsupported-version :: initialize with an unsupported protocolVersion :: message 0',
+  'malformed-and-unframed-input :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'method-inventory :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'plugin-absent-health-and-relay :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'plugin-absent-health-and-relay :: health without Blockbench :: message 0',
+  'shutdown-sigint :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'shutdown-sigint :: health before shutdown :: message 0',
+  'shutdown-sigterm :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'shutdown-sigterm :: health before shutdown :: message 0',
+  'shutdown-stdin-eof :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'shutdown-stdin-eof :: health before shutdown :: message 0',
+  'stdout-framing :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'stdout-framing :: successful health tool result :: message 0',
+  'tool-arguments-invalid-dependency-layer :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'tool-arguments-invalid-handler-layer :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'tool-arguments-omitted :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'tool-arguments-omitted :: tools/call health with no arguments member :: message 0',
+  'tool-call-health-success :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'tool-call-health-success :: tools/call health :: message 0',
+  'tools-list-inventory :: initialize with protocolVersion 2025-11-25 :: message 0',
+  'unknown-method-and-unknown-tool :: initialize with protocolVersion 2025-11-25 :: message 0',
+];
 
 /**
  * The one location the `health` strictness entry is exercised at.
@@ -536,6 +575,16 @@ export const ACCEPTED_DEVIATIONS: readonly AcceptedDeviation[] = [
       'Cosmetic member order inside the preserved envelope, and only where the check is written with `.refine()`. The `E_*` code, the summary, `ok`, `command`, the issue member set, and every issue value are unchanged, and both validation layers still behave as recorded.',
     expectedSites: [...ISSUE_ORDER_SITES],
   },
+  {
+    id: PACKAGE_VERSION_ID,
+    authority: 'escalated-for-adjudication',
+    appliesTo: 'the `initialize` response\'s `serverInfo.version` and the `health` tool result\'s `adapter_version`',
+    was: RECORDED_PACKAGE_VERSION,
+    now: PACKAGE_VERSION_NOW,
+    reason:
+      'The package version was centralized to one exported constant and bumped to 0.2.0 for four release-blocking fixes and a plugin compatibility correction (docs/plans/2026-08-28-0.2.0-release-blockers-implementation-plan.md); every reported identity now derives from that constant instead of the independently hardcoded 0.1.0 the corpus predates. No wire shape, schema, or enforcement changed.',
+    expectedSites: PACKAGE_VERSION_SITES,
+  },
 ];
 
 /**
@@ -551,6 +600,7 @@ export const ESCALATED_DEVIATION_IDS: readonly string[] = [
   MEMBER_ORDER_ID,
   NUMERIC_UNION_ID,
   ONE_OF_ID,
+  PACKAGE_VERSION_ID,
   PROPERTY_NAMES_ID,
   SAFE_INTEGER_ID,
 ].sort();
@@ -784,6 +834,45 @@ function withText(message: Record<string, unknown>, text: string): Record<string
   return rewritten;
 }
 
+/** Rewrite a recorded `initialize` response's `serverInfo.version`, if present and recorded. */
+function withRewrittenServerInfoVersion(recordedMessage: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(recordedMessage)) return null;
+  const result = recordedMessage.result;
+  if (!isPlainObject(result)) return null;
+  const serverInfo = result.serverInfo;
+  if (!isPlainObject(serverInfo) || serverInfo.version !== RECORDED_PACKAGE_VERSION) return null;
+  const rewritten = clone(recordedMessage) as Record<string, unknown>;
+  const rewrittenResult = rewritten.result as Record<string, unknown>;
+  (rewrittenResult.serverInfo as Record<string, unknown>).version = PACKAGE_VERSION_NOW;
+  return rewritten;
+}
+
+/** Rewrite a recorded `health` tool result's `adapter_version`, if present and recorded. */
+function withRewrittenHealthAdapterVersion(recordedMessage: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(recordedMessage)) return null;
+  const result = recordedMessage.result;
+  if (!isPlainObject(result) || result.isError === true) return null;
+  const content = result.content;
+  if (!Array.isArray(content) || content.length !== 1) return null;
+  const entry = content[0] as unknown;
+  if (!isPlainObject(entry) || entry.type !== 'text' || typeof entry.text !== 'string') return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(entry.text);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  const parsedResult = parsed.result;
+  if (!isPlainObject(parsedResult) || parsedResult.adapter_version !== RECORDED_PACKAGE_VERSION) return null;
+  parsedResult.adapter_version = PACKAGE_VERSION_NOW;
+  const rewritten = clone(recordedMessage) as Record<string, unknown>;
+  const rewrittenResult = rewritten.result as Record<string, unknown>;
+  const rewrittenContent = rewrittenResult.content as Array<Record<string, unknown>>;
+  rewrittenContent[0] = { ...rewrittenContent[0], text: JSON.stringify(parsed, null, 2) };
+  return rewritten;
+}
+
 /**
  * Rewrite one recorded JSON-RPC message into the message that must be observed
  * now. Anything no entry describes is returned unchanged, which is what makes
@@ -817,6 +906,18 @@ export function applyAcceptedDeviationsToRecordedMessage(
     }
   }
 
+  const serverInfoRewrite = withRewrittenServerInfoVersion(recordedMessage);
+  if (serverInfoRewrite !== null) {
+    usage.note(PACKAGE_VERSION_ID, site);
+    return serverInfoRewrite;
+  }
+
+  const healthVersionRewrite = withRewrittenHealthAdapterVersion(recordedMessage);
+  if (healthVersionRewrite !== null) {
+    usage.note(PACKAGE_VERSION_ID, site);
+    return healthVersionRewrite;
+  }
+
   const textResult = textResultOf(recordedMessage);
   if (textResult === null) return recordedMessage;
   const message = recordedMessage as Record<string, unknown>;
@@ -837,7 +938,13 @@ export function applyAcceptedDeviationsToRecordedMessage(
     if (omittedArguments && recordedToolTakesNoParameters(context.fixtureRoot, toolName)) {
       usage.note(OMITTED_ARGUMENTS_ID, site);
       usage.note(MEMBER_ORDER_ID, site);
-      return readRecordedReferenceResult(context.fixtureRoot);
+      const reference = readRecordedReferenceResult(context.fixtureRoot);
+      const referenceVersionRewrite = withRewrittenHealthAdapterVersion(reference);
+      if (referenceVersionRewrite !== null) {
+        usage.note(PACKAGE_VERSION_ID, site);
+        return referenceVersionRewrite;
+      }
+      return reference;
     }
     const replacement = VALIDATION_TEXT_REPLACEMENTS.get(site);
     if (replacement === undefined) {

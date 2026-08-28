@@ -25,6 +25,7 @@ import type { TestContext } from 'node:test';
 
 import { computeConfigIdentity, ensureRuntimeDirectory, ipcEndpointFor } from '../src/adapter/broker/endpoint.js';
 import { IPC_PROTOCOL_VERSION } from '../src/adapter/broker/ipc-protocol.js';
+import { ADAPTER_VERSION } from '../src/adapter/mcp-server.js';
 import { readBrokerRecord, writeBrokerRecordAtomic } from '../src/adapter/broker/rendezvous.js';
 import {
   advertisedTools,
@@ -99,8 +100,14 @@ const ADVERSARIAL_CLIENT_LABELS: readonly string[] = [
   'label-with-`command` $(substitution) ${expansion}',
 ];
 
-/** The package version the adapter reports over broker IPC. */
-const ADAPTER_PACKAGE_VERSION = '0.1.0';
+/**
+ * The package version the adapter reports over broker IPC. Must track the real
+ * `ADAPTER_VERSION`: the client's handshake probe rejects a broker whose
+ * acknowledged `package_version` does not match it (see `probe()` in
+ * `src/adapter/cli.ts`), so a stale local literal here silently fails every
+ * exchange in this file at the handshake layer instead of relaying anything.
+ */
+const ADAPTER_PACKAGE_VERSION = ADAPTER_VERSION;
 
 /**
  * Distinctive values placed in a tool argument to prove a scan reaches the

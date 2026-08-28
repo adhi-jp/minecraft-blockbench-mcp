@@ -79,7 +79,7 @@ const SHUTDOWN_LOG_PREFIX = '[minecraft-blockbench-mcp] Shutting down';
  * of everything that is not exempt, and it is pinned rather than floored so
  * that widening the ledger has to be a deliberate, visible edit here.
  */
-const BYTE_IDENTITY_MESSAGE_COUNT = 50;
+const BYTE_IDENTITY_MESSAGE_COUNT = 23;
 
 /**
  * `properties` maps compared across every advertised tool input schema,
