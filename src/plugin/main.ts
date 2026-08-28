@@ -2,7 +2,7 @@
 // settings, the connection status / scope revocation actions, and wires the
 // WebSocket session core to Blockbench. Command handlers attach to the
 // session via registerHandler.
-import { DEFAULT_WS_PORT, PROTOCOL_VERSION } from '../shared/protocol.js';
+import { DEFAULT_WS_PORT, PACKAGE_VERSION, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { defaultConfigPathFromUserData } from '../shared/config-path.js';
 import { PluginSession } from './session.js';
 import { RendezvousSource, type RendezvousFsLike, type RendezvousSnapshot } from './rendezvous.js';
@@ -14,7 +14,7 @@ import { geckolibFormatRegistered, detectGeckolibPluginVersion } from './command
 import { sanitizeDialogText, SCOPE_REASON_MAX_LENGTH } from './dialog-text.js';
 
 const PLUGIN_ID = 'minecraft_blockbench_mcp';
-const PLUGIN_VERSION = '0.1.0';
+const PLUGIN_VERSION = PACKAGE_VERSION;
 const SETTING_PORT = `${PLUGIN_ID}_port`;
 const SETTING_SECRET = `${PLUGIN_ID}_secret`;
 const SETTING_CONFIG_PATH = `${PLUGIN_ID}_config_path`;
@@ -271,8 +271,8 @@ BBPlugin.register(PLUGIN_ID, {
   version: PLUGIN_VERSION,
   variant: 'desktop',
   // The UV commands rely on the UVSizeUtil window global, which older
-  // Blockbench versions do not expose; the README requires 5.1.x anyway.
-  min_version: '5.1.0',
+  // Blockbench versions do not expose; the README requires 5.1.4+ anyway.
+  min_version: '5.1.4',
   onload() {
     runtime = setupRuntime();
     runtime.session.start();

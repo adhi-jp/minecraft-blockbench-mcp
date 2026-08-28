@@ -6,6 +6,8 @@ import type { Readable } from 'node:stream';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
+import { PACKAGE_VERSION } from '../shared/protocol.js';
+
 export type HealthStateName = 'broken' | 'port-held' | 'waiting' | 'connected';
 
 export interface HealthState {
@@ -63,7 +65,7 @@ export async function checkAdapterHealth(
     env,
     stderr: 'pipe',
   });
-  const client = new Client({ name: 'minecraft-blockbench-mcp-setup', version: '0.1.0' });
+  const client = new Client({ name: 'minecraft-blockbench-mcp-setup', version: PACKAGE_VERSION });
 
   const withTimeout = async <T>(work: Promise<T>): Promise<T> => {
     let timer: NodeJS.Timeout | undefined;

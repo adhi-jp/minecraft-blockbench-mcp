@@ -4,6 +4,7 @@
 import { z } from 'zod';
 
 export const PROTOCOL_VERSION = 6;
+export const PACKAGE_VERSION = '0.2.0';
 
 export const DEFAULT_WS_PORT = 39731;
 

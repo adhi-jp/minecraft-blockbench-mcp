@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import {
   COMMAND_SPECS,
+  PACKAGE_VERSION,
   PROTOCOL_VERSION,
   makeError,
   type CommandName,
@@ -16,7 +17,7 @@ import type { AdapterConfig, SetupIssue } from './config.js';
 import { isRequestCancelled } from './request-cancellation.js';
 import type { BridgeRequestResult, PluginInfo } from './ws-bridge.js';
 
-export const ADAPTER_VERSION = '0.1.0';
+export const ADAPTER_VERSION = PACKAGE_VERSION;
 
 export interface PluginBridge {
   connected: boolean;

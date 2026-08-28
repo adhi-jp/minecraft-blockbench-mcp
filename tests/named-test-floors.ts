@@ -73,6 +73,7 @@ export const TEST_FILE_FLOORS: Readonly<Record<string, TestFileFloor>> = {
   'plugin-dialog-text.test.ts': { tests: 5, assertions: 6, inventoried: true },
   'plugin-file-commands.test.ts': { tests: 13, assertions: 54, inventoried: true },
   'plugin-geckolib-commands.test.ts': { tests: 27, assertions: 189, inventoried: true },
+  'plugin-min-version.test.ts': { tests: 1, assertions: 2, inventoried: false },
   'plugin-model-commands.test.ts': { tests: 45, assertions: 200, inventoried: true },
   'plugin-scope-commands.test.ts': { tests: 3, assertions: 10, inventoried: true },
   'plugin-session.test.ts': { tests: 18, assertions: 30, inventoried: true },

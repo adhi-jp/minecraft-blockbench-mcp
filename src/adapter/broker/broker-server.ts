@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import {
   COMMAND_SPECS,
+  PACKAGE_VERSION,
   isCommandName,
   makeError,
   type CommandSpec,
@@ -105,7 +106,7 @@ export class BrokerServer {
     this.#options = {
       ...options,
       instanceId: options.instanceId ?? randomUUID(),
-      packageVersion: options.packageVersion ?? '0.1.0',
+      packageVersion: options.packageVersion ?? PACKAGE_VERSION,
       brokerPid: options.brokerPid ?? process.pid,
       leaseIdleTimeoutMs: options.leaseIdleTimeoutMs ?? 60_000,
       brokerIdleTimeoutMs: options.brokerIdleTimeoutMs ?? 30_000,

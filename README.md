@@ -60,7 +60,7 @@ load the desktop plugin.
 ## Development prerequisites
 
 - Node.js >= 22
-- Blockbench 5.1.x **desktop** (this repository expects its source checkout at
+- Blockbench 5.1.4+ **desktop** (this repository expects its source checkout at
   `external/blockbench` for TypeScript types)
 - One-time type generation for the plugin typecheck:
 
