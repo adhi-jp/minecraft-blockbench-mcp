@@ -1,12 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renameSync, writeFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { electOrAttach, type ElectOrAttachOptions } from '../src/adapter/broker/election.js';
+import {
+  acquireStartupLock,
+  electOrAttach,
+  type ElectOrAttachOptions,
+} from '../src/adapter/broker/election.js';
 import { readBrokerRecord, writeBrokerRecordAtomic, type BrokerRecord } from '../src/adapter/broker/rendezvous.js';
 
 interface Attachment {
@@ -393,5 +397,70 @@ test('startup failure releases the exclusive lock', async () => {
       /injected startup failure/,
     );
     assert.equal(await pathExists(lockPath), false);
+  });
+});
+
+test('a malformed startup lock is immediately taken over without clock advancement', async () => {
+  await withTempDirectory(async (dir) => {
+    const lockPath = join(dir, 'broker.lock');
+    const startedRecord = brokerRecord('broker-after-malformed-lock');
+    await writeFile(lockPath, '{', { mode: 0o600 });
+    let startCalls = 0;
+
+    const result = await electOrAttach({
+      lockPath,
+      readRecord: async () => null,
+      probe: async () => null,
+      startBroker: async () => {
+        startCalls += 1;
+        return startedRecord;
+      },
+      publish: async () => undefined,
+      now: () => 50_000,
+      lockStaleMs: 10_000,
+      waitTimeoutMs: 0,
+      pid: 601,
+    });
+
+    assert.deepEqual(result, { kind: 'started', record: startedRecord });
+    assert.equal(startCalls, 1);
+  });
+});
+
+test('a successful election leaves no startup-lock temporary file behind', async () => {
+  await withTempDirectory(async (dir) => {
+    const lockPath = join(dir, 'broker.lock');
+
+    const result = await electOrAttach({
+      lockPath,
+      readRecord: async () => null,
+      probe: async () => null,
+      startBroker: async () => brokerRecord('broker-with-clean-lock-directory'),
+      publish: async () => undefined,
+      now: () => 60_000,
+      pid: 602,
+    });
+
+    assert.equal(result.kind, 'started');
+    assert.deepEqual(
+      (await readdir(dir)).filter((entry) => entry.endsWith('.tmp')),
+      [],
+    );
+  });
+});
+
+test('concurrent startup-lock acquisitions have exactly one winner', async () => {
+  await withTempDirectory(async (dir) => {
+    const lockPath = join(dir, 'broker.lock');
+
+    const locks = await Promise.all([
+      acquireStartupLock({ lockPath, pid: 701, now: () => 70_000 }),
+      acquireStartupLock({ lockPath, pid: 702, now: () => 70_000 }),
+    ]);
+    const winners = locks.filter((lock) => lock !== null);
+
+    assert.equal(winners.length, 1);
+    assert.equal(locks.filter((lock) => lock === null).length, 1);
+    await winners[0]?.release();
   });
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { open, readFile, rename, stat, unlink } from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
+import { link, open, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 export interface StartupLock {
   release(): Promise<void>;
@@ -17,20 +17,35 @@ function isNodeError(error: unknown, code: string): boolean {
 }
 
 export async function acquireStartupLock(options: AcquireStartupLockOptions): Promise<StartupLock | null> {
-  let file: FileHandle | undefined;
-  try {
-    file = await open(options.lockPath, 'wx', 0o600);
-  } catch (error) {
-    if (isNodeError(error, 'EEXIST')) return null;
-    throw error;
-  }
+  const tempPath = join(
+    dirname(options.lockPath),
+    `.${basename(options.lockPath)}.${options.pid}.${randomUUID()}.tmp`,
+  );
+  let tempExists = false;
+  let lockPublished = false;
 
   try {
-    await file.writeFile(JSON.stringify({ pid: options.pid, created_at: options.now() }), 'utf8');
-    await file.sync();
-    const acquiredStats = await file.stat();
-    await file.close();
-    file = undefined;
+    const file = await open(tempPath, 'wx', 0o600);
+    tempExists = true;
+    const acquiredStats = await (async () => {
+      try {
+        await file.writeFile(JSON.stringify({ pid: options.pid, created_at: options.now() }), 'utf8');
+        await file.sync();
+        return await file.stat();
+      } finally {
+        await file.close();
+      }
+    })();
+
+    try {
+      await link(tempPath, options.lockPath);
+    } catch (error) {
+      if (isNodeError(error, 'EEXIST')) return null;
+      throw error;
+    }
+    lockPublished = true;
+    await unlink(tempPath);
+    tempExists = false;
 
     return {
       release: async () => {
@@ -45,9 +60,10 @@ export async function acquireStartupLock(options: AcquireStartupLockOptions): Pr
       },
     };
   } catch (error) {
-    if (file !== undefined) await file.close().catch(() => undefined);
-    await unlink(options.lockPath).catch(() => undefined);
+    if (lockPublished) await unlink(options.lockPath).catch(() => undefined);
     throw error;
+  } finally {
+    if (tempExists) await unlink(tempPath).catch(() => undefined);
   }
 }
 
@@ -96,7 +112,7 @@ async function readLockCreatedAt(lockPath: string): Promise<number | null> {
       return (value as { created_at: number }).created_at;
     }
   } catch {
-    // An unreadable or malformed lock is treated conservatively as non-stale.
+    // An unreadable or malformed lock has no usable creation time.
   }
   return null;
 }
@@ -180,11 +196,8 @@ export async function electOrAttach<RecordType, AttachType>(
 
   const createdAt = await readLockCreatedAt(options.lockPath);
   const lockStaleMs = options.lockStaleMs ?? 10_000;
-  if (
-    createdAt !== null &&
-    options.now() - createdAt > lockStaleMs &&
-    !inProcessTakeovers.has(options.lockPath)
-  ) {
+  const eligibleForTakeover = createdAt === null || options.now() - createdAt > lockStaleMs;
+  if (eligibleForTakeover && !inProcessTakeovers.has(options.lockPath)) {
     inProcessTakeovers.add(options.lockPath);
     try {
       const takeoverPath = `${options.lockPath}.takeover.${options.pid}.${randomUUID()}`;
