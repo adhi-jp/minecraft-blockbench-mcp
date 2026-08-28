@@ -136,6 +136,28 @@ jobs:
         # them, and the two Windows failures were repaired rather than
         # absorbed. A mismatch here is still the signal this gate exists to
         # produce — re-measure and update the row, never relax the assertion.
+        #
+        # 2026-08-28, third increase: the 0.2.0 release-blocker work
+        # (docs/plans/2026-08-28-0.2.0-release-blockers-implementation-plan.md)
+        # added tests in three slices, none with platform branching (verified,
+        # and enforced by the registry guard in `tests/platform-capabilities.ts`):
+        #   * +1 — `plugin metadata requires Blockbench 5.1.4 or newer` in
+        #     `tests/plugin-min-version.test.ts`, a static source-text scan.
+        #   * +5 — the sun_path length guard: 4 in `tests/broker-endpoint.test.ts`
+        #     (boundary-over, boundary-exact, UTF-8-vs-UTF-16 length, win32
+        #     unaffected) and 1 e2e test in `tests/broker-e2e.test.ts` proving the
+        #     guard surfaces through `health`'s `setup_errors`.
+        #   * +3 — the atomic startup lock: `tests/broker-election.test.ts` gained
+        #     immediate malformed-lock recovery, temp-file cleanup, and
+        #     concurrent-acquisition mutual-exclusion regressions.
+        # MEASURED DIRECTLY: Linux 616 -> 625 (+9 total), on the development
+        # machine, across all three slices. DERIVED, the same way the second
+        # increase was: every leg gains exactly the same +9 — 615->624 (macOS),
+        # 613->622 (both Windows legs). The macOS and Windows rows are not
+        # re-measured against a real runner in this change, because doing so
+        # means pushing a throwaway `ci/**` branch — an external, GitHub-visible
+        # action outside this change's own scope. Re-run the `ci/**` matrix
+        # before trusting these two rows as more than a derivation.
         include:
           # Leg 1 — native Linux, brokered by platform default.
           # Satisfies the Linux scenario. The runner is native Linux, not
@@ -144,21 +166,21 @@ jobs:
           - os: ubuntu-latest
             mode: brokered
             select: default
-            expected_pass: 616
+            expected_pass: 625
             expected_skipped: 0
           # Leg 2 — macOS default behaviour, which is brokered.
           # Satisfies the macOS scenario.
           - os: macos-latest
             mode: brokered
             select: default
-            expected_pass: 615
+            expected_pass: 624
             expected_skipped: 1
           # Leg 3 — native-Windows direct behaviour, platform default.
           # Satisfies the native-Windows direct scenario.
           - os: windows-latest
             mode: direct
             select: default
-            expected_pass: 613
+            expected_pass: 622
             expected_skipped: 3
           # Leg 4 — explicit native-Windows broker behaviour.
           # Satisfies the explicit-broker scenario. What this leg adds over
@@ -170,7 +192,7 @@ jobs:
           - os: windows-latest
             mode: brokered
             select: env
-            expected_pass: 613
+            expected_pass: 622
             expected_skipped: 3
 
     steps:
