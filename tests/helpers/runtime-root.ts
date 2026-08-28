@@ -28,9 +28,10 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MAX_UNIX_SOCKET_PATH_LENGTH } from '../../src/adapter/broker/endpoint.js';
 
 /** `sun_path` holds 104 bytes including the terminating NUL. */
-export const MAX_UNIX_SOCKET_PATH_LENGTH = 103;
+export { MAX_UNIX_SOCKET_PATH_LENGTH };
 
 /**
  * The length of `/minecraft-blockbench-mcp/broker-<16 hex>.sock`, the tail the

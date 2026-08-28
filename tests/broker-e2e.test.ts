@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { access, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -22,7 +22,7 @@ import { ADAPTER_VERSION } from '../src/adapter/mcp-server.js';
 import { COMMAND_NAMES, PROTOCOL_VERSION } from '../src/shared/protocol.js';
 import { MODERN_PROTOCOL_VERSION } from './helpers/mcp-era-wire.ts';
 import { processCommandLine } from './helpers/process-scan.ts';
-import { createRuntimeRoot, removeRuntimeRoot } from './helpers/runtime-root.ts';
+import { createRuntimeRoot, MAX_UNIX_SOCKET_PATH_LENGTH, removeRuntimeRoot } from './helpers/runtime-root.ts';
 
 const SECRET = 'broker-e2e-secret-1234567890';
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,6 +58,7 @@ interface ManagedClient {
 interface StartClientOptions {
   label: string;
   mode?: 'brokered' | 'direct' | 'default';
+  initializationTimeoutMs?: number;
   leaseIdleTimeoutMs?: number;
   requestTimeoutMs?: number;
   trackBroker?: boolean;
@@ -213,7 +214,11 @@ async function launchClient(
     },
   );
   try {
-    await withDeadline(client.connect(transport), `${options.label} MCP initialization`);
+    await withDeadline(
+      client.connect(transport),
+      `${options.label} MCP initialization`,
+      options.initializationTimeoutMs,
+    );
   } catch (error) {
     await client.close().catch(() => undefined);
     const stderr = stderrChunks.join('');
@@ -676,6 +681,59 @@ async function waitForHealth(
 function setupErrorCodes(health: Envelope): string[] {
   return ((health.result?.setup_errors ?? []) as Array<{ code: string }>).map((issue) => issue.code);
 }
+
+test('an over-length broker endpoint is reported through health with its actionable setup issue', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'bbmcp-broker-path-guard-'));
+  const configPath = join(root, 'config.json');
+  const port = allocatePort();
+  await writeFile(
+    configPath,
+    `${JSON.stringify({ version: 1, mode: 'shared-secret', port, secret: SECRET }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  const identity = configIdentity(configPath);
+  const endpointTail = join('minecraft-blockbench-mcp', `broker-${identity}.sock`);
+  const paddingLength = Math.max(
+    1,
+    MAX_UNIX_SOCKET_PATH_LENGTH + 1 - Buffer.byteLength(root, 'utf8') - Buffer.byteLength(endpointTail, 'utf8') - 2,
+  );
+  const runtimeRoot = join(root, 'r'.repeat(paddingLength));
+  await mkdir(runtimeRoot);
+  const brokerRuntime = join(runtimeRoot, 'minecraft-blockbench-mcp');
+  const endpoint = join(brokerRuntime, `broker-${identity}.sock`);
+  const endpointLength = Buffer.byteLength(endpoint, 'utf8');
+  const fixture: ConfigFixture = {
+    path: configPath,
+    port,
+    recordPath: join(brokerRuntime, `broker-${identity}.json`),
+    lockPath: join(brokerRuntime, `broker-${identity}.lock`),
+    endpoint,
+  };
+  let managedClient: ManagedClient | null = null;
+  t.after(async () => {
+    await managedClient?.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  assert.ok(endpointLength > MAX_UNIX_SOCKET_PATH_LENGTH);
+  managedClient = await launchClient(fixture, runtimeRoot, {
+    label: 'Over-length endpoint client',
+    mode: 'brokered',
+    initializationTimeoutMs: 15_000,
+    trackBroker: false,
+  });
+  const health = await callEnvelope(managedClient.client, 'health');
+  const setupErrors = (health.result?.setup_errors ?? []) as Array<{ code: string; message: string }>;
+  const issue = setupErrors.find(({ code }) => code === 'E_UNIX_SOCKET_PATH_TOO_LONG');
+  assert.equal(health.ok, true);
+  assert.equal(health.result?.mode, 'brokered');
+  assert.equal(health.result?.broker_connected, false);
+  assert.ok(issue, `expected E_UNIX_SOCKET_PATH_TOO_LONG, got ${JSON.stringify(setupErrors)}`);
+  assert.ok(issue.message.includes(endpoint));
+  assert.ok(issue.message.includes(String(endpointLength)));
+  assert.ok(issue.message.includes(String(MAX_UNIX_SOCKET_PATH_LENGTH)));
+  assert.ok(managedClient.stderrText().includes(`Setup issue (E_UNIX_SOCKET_PATH_TOO_LONG): ${issue.message}`));
+});
 
 test('concurrent MCP clients share one broker and retain partial availability without Blockbench', async (t) => {
   const port = allocatePort();

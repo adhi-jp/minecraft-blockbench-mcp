@@ -34,9 +34,26 @@ export interface IpcEndpointOptions {
   identity: string;
 }
 
+export const MAX_UNIX_SOCKET_PATH_LENGTH = 103;
+
+export class UnixSocketPathTooLongError extends Error {
+  constructor(composedPath: string, measuredByteLength: number, maxByteLength: number) {
+    super(
+      `The Unix socket path ${composedPath} is ${String(measuredByteLength)} bytes, the limit is ${String(maxByteLength)}. ` +
+        'Use the --direct CLI flag or set BLOCKBENCH_MCP_DIRECT=1 to use direct mode, or point XDG_RUNTIME_DIR at a short absolute path.',
+    );
+    this.name = 'UnixSocketPathTooLongError';
+  }
+}
+
 export function ipcEndpointFor(options: IpcEndpointOptions): string {
   if (options.platform === 'win32') {
     return `\\\\.\\pipe\\minecraft-blockbench-mcp-${options.identity}`;
   }
-  return posix.join(options.runtimeDir, `broker-${options.identity}.sock`);
+  const composedPath = posix.join(options.runtimeDir, `broker-${options.identity}.sock`);
+  const measuredByteLength = Buffer.byteLength(composedPath, 'utf8');
+  if (measuredByteLength > MAX_UNIX_SOCKET_PATH_LENGTH) {
+    throw new UnixSocketPathTooLongError(composedPath, measuredByteLength, MAX_UNIX_SOCKET_PATH_LENGTH);
+  }
+  return composedPath;
 }

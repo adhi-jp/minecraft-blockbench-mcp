@@ -43,14 +43,14 @@ export const TEST_FILE_FLOORS: Readonly<Record<string, TestFileFloor>> = {
   'adapter-config.test.ts': { tests: 12, assertions: 66, inventoried: true },
   'adapter-scope-isolation.test.ts': { tests: 6, assertions: 56, inventoried: false },
   'broker-dual-era-wire.test.ts': { tests: 11, assertions: 64, inventoried: false },
-  'broker-e2e.test.ts': { tests: 14, assertions: 103, inventoried: true },
+  'broker-e2e.test.ts': { tests: 15, assertions: 112, inventoried: true },
   'broker-election.test.ts': { tests: 10, assertions: 34, inventoried: true },
   // Re-measured when the platform-capability registry was added: the two
   // assertions that give `runtime directories are created and repaired to
   // owner-only mode` something to check on Windows are its entire coverage
   // there, and three assertions of slack would have let them be deleted again
   // without this floor noticing.
-  'broker-endpoint.test.ts': { tests: 8, assertions: 24, inventoried: true },
+  'broker-endpoint.test.ts': { tests: 12, assertions: 39, inventoried: true },
   'broker-ipc.test.ts': { tests: 10, assertions: 26, inventoried: true },
   'broker-lease.test.ts': { tests: 12, assertions: 73, inventoried: true },
   'broker-queued-cancellation.test.ts': { tests: 11, assertions: 57, inventoried: false },

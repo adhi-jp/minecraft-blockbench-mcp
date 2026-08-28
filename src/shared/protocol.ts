@@ -47,6 +47,7 @@ export const ERROR_CODES = [
   'E_CLIENT_BUSY',
   'E_BROKER_UNAVAILABLE',
   'E_BROKER_VERSION_MISMATCH',
+  'E_UNIX_SOCKET_PATH_TOO_LONG',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

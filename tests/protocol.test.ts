@@ -58,6 +58,7 @@ test('error code table is stable and free of duplicates', () => {
     'E_CLIENT_BUSY',
     'E_BROKER_UNAVAILABLE',
     'E_BROKER_VERSION_MISMATCH',
+    'E_UNIX_SOCKET_PATH_TOO_LONG',
   ];
   assert.deepEqual([...ERROR_CODES], expected);
   assert.equal(new Set(ERROR_CODES).size, ERROR_CODES.length);

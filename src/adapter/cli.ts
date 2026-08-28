@@ -20,7 +20,13 @@ import { BrokerClient, BrokerHandshakeError, type BrokerClientHello } from './br
 import { HybridOpeningInitializeNormalizer } from './hybrid-opening-normalizer.js';
 import { BrokerServer } from './broker/broker-server.js';
 import { electOrAttach } from './broker/election.js';
-import { computeConfigIdentity, ensureRuntimeDirectory, ipcEndpointFor, resolveRuntimeDirectory } from './broker/endpoint.js';
+import {
+  computeConfigIdentity,
+  ensureRuntimeDirectory,
+  ipcEndpointFor,
+  resolveRuntimeDirectory,
+  UnixSocketPathTooLongError,
+} from './broker/endpoint.js';
 import { IPC_PROTOCOL_VERSION, type StatusEventMessage } from './broker/ipc-protocol.js';
 import { readBrokerRecord, writeBrokerRecordAtomic, type BrokerRecord } from './broker/rendezvous.js';
 import { buildBrokerSpawnArgs, spawnDetachedBroker } from './broker/spawn.js';
@@ -195,7 +201,9 @@ function clientLabel(argv: string[]): string {
   return userAgent === undefined || userAgent === '' ? 'mcp-client' : basename(userAgent.split(/\s+/, 1)[0]) || 'mcp-client';
 }
 
-function unavailableBridge(code: 'E_BROKER_UNAVAILABLE' | 'E_BROKER_VERSION_MISMATCH'): PluginBridge {
+function unavailableBridge(
+  code: 'E_BROKER_UNAVAILABLE' | 'E_BROKER_VERSION_MISMATCH' | 'E_UNIX_SOCKET_PATH_TOO_LONG',
+): PluginBridge {
   return {
     connected: false,
     listening: false,
@@ -432,7 +440,8 @@ async function serveBrokered(
   argv: string[],
 ): Promise<void> {
   let client: BrokerClient | null = null;
-  let failureCode: 'E_BROKER_UNAVAILABLE' | 'E_BROKER_VERSION_MISMATCH' = 'E_BROKER_UNAVAILABLE';
+  let failureCode: 'E_BROKER_UNAVAILABLE' | 'E_BROKER_VERSION_MISMATCH' | 'E_UNIX_SOCKET_PATH_TOO_LONG' =
+    'E_BROKER_UNAVAILABLE';
   // E_BROKER_UNAVAILABLE's default message asserts something this shim cannot
   // always know. When the broker refused us with `session_in_use` it is running
   // and healthy, so "No healthy broker could be reached or started." would be
@@ -452,6 +461,9 @@ async function serveBrokered(
       // The broker stays untouched and keeps serving its other clients; only
       // this shim is shut out, and it says so without claiming the broker died.
       failureMessage = 'The running broker refused this session id because a connected client already holds it.';
+    } else if (error instanceof UnixSocketPathTooLongError) {
+      failureCode = 'E_UNIX_SOCKET_PATH_TOO_LONG';
+      failureMessage = error.message;
     }
   }
 
