@@ -253,6 +253,7 @@ async function attachBroker(
       reattach: async () => {
         if ((await electBroker(client)) === null) throw new Error('Broker is unavailable.');
       },
+      maxMessageBytes: config.maxMessageBytes,
     });
     return client;
   }

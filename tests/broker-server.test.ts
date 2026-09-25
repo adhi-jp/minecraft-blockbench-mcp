@@ -69,6 +69,7 @@ class FakePlugin {
   readonly events: string[] = [];
   readonly sockets = new Set<WebSocket>();
   readonly unansweredCommands = new Set<string>();
+  readonly results = new Map<string, unknown>();
   delayRevocations = false;
   revocationResult: unknown = { state: 'revoked' };
   current: WebSocket | null = null;
@@ -97,7 +98,10 @@ class FakePlugin {
           return;
         }
         if (!this.unansweredCommands.has(frame.command)) {
-          this.#respond(socket, frame, { relayed: true, command: frame.command });
+          const result = this.results.has(frame.command)
+            ? this.results.get(frame.command)
+            : { relayed: true, command: frame.command };
+          this.#respond(socket, frame, result);
         }
       });
     });
@@ -524,6 +528,27 @@ test('mutating command timeouts pass through the direct bridge reconciliation pa
       },
     },
   });
+});
+
+test('a request and a result far larger than 64 KiB cross the broker IPC intact', async (t) => {
+  // The plugin link accepts frames up to maxMessageBytes, so the IPC hop that
+  // carries the same payloads must not refuse them at a smaller fixed size.
+  const harness = await createHarness(t, { maxMessageBytes: 4 * 1024 * 1024 });
+  const plugin = await harness.addPlugin();
+  const content = Buffer.alloc(768 * 1024, 7).toString('base64');
+  const readResult = { path: 'textures/big.png', content, encoding: 'base64', bytes: 768 * 1024 };
+  plugin.results.set('read_file', readResult);
+  const { client } = await harness.addClient('session-a', 'Client A');
+
+  const written = { files: [{ path: 'textures/big.png', content, encoding: 'base64' }] };
+  const writeOutcome = await client.request('write_files', written);
+  assert.equal(writeOutcome.ok, true, JSON.stringify(writeOutcome.error));
+  assert.deepEqual(plugin.requests('write_files')[0]?.params, written);
+
+  const readOutcome = await client.request('read_file', { path: 'textures/big.png', encoding: 'base64' });
+  assert.equal(readOutcome.ok, true, JSON.stringify(readOutcome.error));
+  assert.deepEqual(readOutcome.result, readResult);
+  assert.ok(client.listening, 'the IPC connection must survive both payloads');
 });
 
 test('plugin-not-connected errors pass through the complete direct bridge payload', async (t) => {

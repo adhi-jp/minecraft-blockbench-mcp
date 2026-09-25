@@ -3,13 +3,14 @@ import { createConnection, type Socket } from 'node:net';
 
 import { z } from 'zod';
 
-import { makeError } from '../../shared/protocol.js';
+import { DEFAULTS, makeError } from '../../shared/protocol.js';
 import { RequestCancelledError, type RequestCancellationStage } from '../request-cancellation.js';
 import type { BridgeRequestResult, PluginInfo } from '../ws-bridge.js';
 import {
   IpcLineDecoder,
   brokerToClientMessageSchema,
   encodeIpcMessage,
+  ipcLineLimitFor,
   type BrokerToClientMessage,
   type ClientHelloMessage,
   type HelloAckMessage,
@@ -28,6 +29,8 @@ export interface BrokerReattachTarget {
 export interface BrokerClientOptions {
   reattach?: (client: BrokerClient) => Promise<unknown> | unknown;
   connectTimeoutMs?: number;
+  /** The plugin link's frame limit, which bounds every relayed result. */
+  maxMessageBytes?: number;
 }
 
 interface PendingResponse {
@@ -70,7 +73,8 @@ export class BrokerRequestCancelledError extends RequestCancelledError {
 }
 
 export class BrokerClient {
-  readonly #options: Required<Pick<BrokerClientOptions, 'connectTimeoutMs'>> & BrokerClientOptions;
+  readonly #options: Required<Pick<BrokerClientOptions, 'connectTimeoutMs' | 'maxMessageBytes'>> &
+    BrokerClientOptions;
   readonly #pending = new Map<string, PendingResponse>();
   #socket: Socket | null = null;
   #decoder: IpcLineDecoder<BrokerToClientMessage> | null = null;
@@ -82,6 +86,7 @@ export class BrokerClient {
     this.#options = {
       ...options,
       connectTimeoutMs: options.connectTimeoutMs ?? 5_000,
+      maxMessageBytes: options.maxMessageBytes ?? DEFAULTS.maxMessageBytes,
     };
   }
 
@@ -107,6 +112,7 @@ export class BrokerClient {
     const socket = createConnection(endpoint);
     const decoder = new IpcLineDecoder<BrokerToClientMessage>(
       brokerToClientMessageSchema as z.ZodType<BrokerToClientMessage>,
+      ipcLineLimitFor(this.#options.maxMessageBytes),
     );
     this.#socket = socket;
     this.#decoder = decoder;

@@ -9,6 +9,13 @@ import { errorPayloadSchema } from '../../shared/protocol.js';
 export const IPC_PROTOCOL_VERSION = 2;
 export const MAX_IPC_LINE_BYTES = 64 * 1024;
 
+// A relayed request or result carries the same payload the plugin link bounds
+// at `maxMessageBytes`, so an IPC line may be that large plus headroom for the
+// envelope around it (type, ids, ok flag, error payload).
+export function ipcLineLimitFor(maxMessageBytes: number): number {
+  return maxMessageBytes + MAX_IPC_LINE_BYTES;
+}
+
 const requiredUnknownSchema = z.unknown().refine((value) => value !== undefined, {
   message: 'Required',
 });

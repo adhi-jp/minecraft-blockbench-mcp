@@ -17,6 +17,7 @@ import {
   IpcLineDecoder,
   clientToBrokerMessageSchema,
   encodeIpcMessage,
+  ipcLineLimitFor,
   type BrokerToClientMessage,
   type ClientHelloMessage,
   type ClientToBrokerMessage,
@@ -240,6 +241,7 @@ export class BrokerServer {
       socket,
       decoder: new IpcLineDecoder<ClientToBrokerMessage>(
         clientToBrokerMessageSchema as z.ZodType<ClientToBrokerMessage>,
+        ipcLineLimitFor(this.#options.maxMessageBytes),
       ),
       registered: false,
       sessionId: null,
