@@ -152,15 +152,10 @@ test('Windows named pipes ignore an over-length runtime directory', () => {
   );
 });
 
-// The whole body of this test used to sit inside the mode branch, so on Windows
-// it asserted nothing at all while still counting as a pass. The name stays as
-// it is: the frozen named-test inventory holds every recorded test name, so
-// renaming this one would read as a deletion, and splitting the creation half
-// into a test of its own would leave this one vacuous on Windows again — the
-// defect being fixed. What changed instead is the body: creating the directory
-// and re-ensuring it are asserted everywhere, and only the mode reads, which is
-// the half Windows has no bits for, are narrowed through the registry that says
-// why and what has to be asserted in their place.
+// Creating the directory and re-ensuring it are asserted on every platform, so
+// this test is never vacuous on Windows. Only the mode reads, which Windows has
+// no bits for, are narrowed through the registry that says why and what has to
+// be asserted in their place.
 test('runtime directories are created and repaired to owner-only mode', async () => {
   await withTempDirectory(async (dir) => {
     const runtimeDir = join(dir, 'nested', 'run');

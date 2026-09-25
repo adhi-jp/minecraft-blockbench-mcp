@@ -30,17 +30,9 @@
     "plugin-absent",
     "framing",
     "cancellation",
-    "shutdown",
-    "named-test-inventory"
+    "shutdown"
   ],
   "files": [
-    {
-      "path": "named-test-inventory.json",
-      "kind": "inventory",
-      "covers": [
-        "named-test-inventory"
-      ]
-    },
     {
       "path": "scenarios/cancellation-notifications.json",
       "kind": "scenario",

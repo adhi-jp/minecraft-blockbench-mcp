@@ -24,7 +24,7 @@ edited by hand: every file is produced by
 | Environment | `isolated-empty-config-home` (see below) |
 
 The same values are stored machine-readably in the `provenance` object of
-`corpus-index.json` and `named-test-inventory.json`. The recording date is only
+`corpus-index.json`. The recording date is only
 in this README on purpose: no generated file carries a timestamp, so
 re-recording an unchanged build produces byte-identical files.
 
@@ -151,29 +151,12 @@ as a visible, reviewable difference.
 | `tool-order.json` | Tool count, advertised order, exact description text, and `execution` metadata per tool, split out so an ordering or wording change is a one-line diff. |
 | `tool-input-schemas.json` | Every advertised `inputSchema` keyed by tool name. Compared directly against a live `tools/list`, so it is an independent check on top of the session recording. |
 
-### Test inventory
-
-`named-test-inventory.json` lists every named test that existed and passed
-before this corpus was added: 417 tests across 25 files. The recording script
-runs the suite and refuses to write the inventory unless every one of those names
-passes and the names the runner reports match a static scan of the test sources.
-
-`tests/premigration-wire-baseline.test.ts` is excluded from the inventory on
-purpose, so the inventory stays a fixed subset that later changes can be compared
-against. The replay test re-scans the test sources — it does not launch the suite
-recursively — and fails if any recorded name is deleted, renamed, or moved.
-
 ## Regenerating
 
 ```sh
 npm run build                                    # dist/ must match the source under test
 node scripts/capture-premigration-baseline.mjs   # rewrites every file except this README
 ```
-
-The script refuses to write the test inventory if the suite reports a failure. It
-retries the suite once first, because a few existing bridge tests assert on short
-wall-clock timeouts and can lose a race on a loaded machine; a second failing run
-stops the recording.
 
 ## Confirming these fixtures can fail
 

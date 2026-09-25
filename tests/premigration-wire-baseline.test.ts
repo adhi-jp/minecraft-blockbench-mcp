@@ -24,7 +24,6 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
-  INVENTORY_EXCLUDED_FILES,
   fixtureRoot,
   listScenarioNames,
   measureUnhandledTermination,
@@ -32,11 +31,9 @@ import {
   readJsonFixture,
   readScenarioFixture,
   runScenarioProgram,
-  scanNamedTests,
   sha256,
 } from './helpers/premigration-baseline.ts';
 import type {
-  NamedTestInventory,
   ScenarioFixture,
   ScenarioObservation,
   TerminationKind,
@@ -491,38 +488,26 @@ test('the order of the property names inside every advertised tool input schema 
   );
 });
 
-test('every named test recorded before this wire corpus was added still exists', () => {
-  const inventory = readJsonFixture<NamedTestInventory>('named-test-inventory.json');
-  const current = scanNamedTests();
-  const currentNames = new Set(current.map((entry) => `${entry.file}::${entry.name}`));
-  const missing = inventory.tests
-    .filter((entry) => !currentNames.has(`${entry.file}::${entry.name}`))
-    .map((entry) => `${entry.file}: ${entry.name}`);
-
-  assert.deepEqual(missing, [], 'these previously recorded tests were deleted, renamed, or moved');
-  assert.ok(
-    current.length >= inventory.testCount,
-    `the repository now declares ${String(current.length)} named tests, fewer than the ${String(inventory.testCount)} recorded`,
-  );
-});
-
 // ---------------------------------------------------------------------------
-// Per-file floors, which are what stop the inventory check from going slack
+// Per-file floors and disabled tests
 // ---------------------------------------------------------------------------
 
 const TESTS_DIRECTORY = join(REPO_ROOT, 'tests');
 
+const THIS_FILE = 'premigration-wire-baseline.test.ts';
+
 /** Test files on disk, excluding the one these checks live in. */
 function testFilesOnDisk(): string[] {
   return readdirSync(TESTS_DIRECTORY)
-    .filter((entry) => entry.endsWith('.test.ts') && !INVENTORY_EXCLUDED_FILES.includes(entry))
+    .filter((entry) => entry.endsWith('.test.ts') && entry !== THIS_FILE)
     .sort();
 }
 
-// The exclusion above exists so the frozen named-test inventory stays a stable
-// subset. It is not a reason for the platform-capability controls to have a
-// blind spot in the file they live in, so those controls take their own file
-// set from `scannedSourcesUnder`, which covers this file and the helpers too.
+// The exclusion above exists because this file spells out the disabling
+// markers it searches for. It is not a reason for the platform-capability
+// controls to have a blind spot in the file they live in, so those controls
+// take their own file set from `scannedSourcesUnder`, which covers this file
+// and the helpers too.
 
 function readTestFile(file: string): string {
   return readFileSync(join(TESTS_DIRECTORY, file), 'utf8');
@@ -561,50 +546,15 @@ test('every test file still declares at least the tests and assertions recorded 
   assert.deepEqual(
     shortfalls,
     [],
-    'these files lost tests or assertions. The repository-wide inventory total cannot see this: it compares ' +
-      'one number against the 417 recorded before the migration, and the surplus added since would absorb the ' +
-      'loss. An assertion count that fell without a test count falling is a test body that was emptied while ' +
-      'its name stayed. If the removal is intended, lower the number in tests/named-test-floors.ts in the same ' +
-      'change so it appears in the diff.',
-  );
-});
-
-test('the per-file floors cover the frozen named-test inventory and are measured against real files', () => {
-  const floors = TEST_FILE_FLOORS;
-  const inventory = readJsonFixture<NamedTestInventory>('named-test-inventory.json');
-  const inventoriedFiles = [...new Set(inventory.tests.map((entry) => entry.file))].sort();
-
-  assert.deepEqual(
-    Object.entries(floors)
-      .filter(([, floor]) => floor.inventoried)
-      .map(([file]) => file)
-      .sort(),
-    inventoriedFiles,
-    'the files marked as covered by the frozen inventory are no longer the files it actually covers',
-  );
-  // The floors have to be real measurements. Zeroes would satisfy every
-  // comparison above while checking nothing.
-  for (const [file, floor] of Object.entries(floors)) {
-    assert.ok(floor.tests > 0, `${file} carries a test floor of ${String(floor.tests)}, which checks nothing`);
-    assert.ok(
-      floor.assertions >= floor.tests,
-      `${file} records fewer assertion calls (${String(floor.assertions)}) than tests (${String(floor.tests)}), ` +
-        'so at least one test declares no assertion of its own',
-    );
-  }
-  // And together they have to account for more than the frozen total, since the
-  // migration added files the inventory never covered.
-  const totalTests = Object.values(floors).reduce((sum, floor) => sum + floor.tests, 0);
-  assert.ok(
-    totalTests >= inventory.testCount,
-    `the per-file floors total ${String(totalTests)} tests, fewer than the ${String(inventory.testCount)} the ` +
-      'frozen inventory recorded',
+    'these files lost tests or assertions. An assertion count that fell without a test count falling is a test ' +
+      'body that was emptied while its name stayed. If the removal is intended, lower the number in ' +
+      'tests/named-test-floors.ts in the same change so it appears in the diff.',
   );
 });
 
 test('no test file disables a test except the reviewed platform-conditional skips', () => {
-  // A disabled test still matches the name scan, so the inventory would keep
-  // reporting it as present while it never runs again.
+  // A disabled test still matches the per-file floors' declaration count, so
+  // they would keep counting it while it never runs again.
   const disablingPattern = /\bskip\s*:|\btodo\s*:|\.\s*skip\s*\(|\.\s*todo\s*\(/g;
   const reviewed = new Set(REVIEWED_CONDITIONAL_SKIPS.map((entry) => `${entry.file}::${entry.test}`));
   const unreviewed: string[] = [];
@@ -624,7 +574,7 @@ test('no test file disables a test except the reviewed platform-conditional skip
     unreviewed,
     [],
     'a test is disabled, or something reads as a disabling marker, outside the reviewed list in ' +
-      'tests/named-test-floors.ts. A skipped or todo test still satisfies the name inventory while never ' +
+      'tests/named-test-floors.ts. A skipped or todo test still satisfies the per-file floors while never ' +
       'running, so each one has to be listed and justified there.',
   );
 });

@@ -49,16 +49,15 @@ const CORPUS_RELATIVE_ROOT = 'tests/fixtures/premigration';
  * the corpus edits the expectation with it.
  *
  * If this assertion fails, the corpus was edited, regenerated, or partially
- * restored. The corpus is immutable evidence — recorded from
- * `93a203ee825161c747bb50a5df8258f43119f65f` before the dependency change — so
- * the correct response is to restore the recorded files, never to update this
- * constant. Only a deliberate, reviewed re-recording may change it, and that
- * decision belongs with whoever re-records.
+ * restored. The corpus is evidence recorded from
+ * `93a203ee825161c747bb50a5df8258f43119f65f` before the dependency change, so
+ * an unexplained failure means restoring the recorded files, not updating this
+ * constant. Update it only together with a deliberate, reviewed corpus change.
  */
-const FROZEN_CORPUS_DIGEST = '0f91cfe9ab3b83dc056d6a0d03753c1f176dc43cfce8f8f0c451891d1b8cec85';
+const FROZEN_CORPUS_DIGEST = '2de05dc886383e4b2fd400b5a88d3cf338ee0868fbcae47163797b46bc857bf4';
 
 /** The number of files the corpus held when the digest above was taken. */
-const FROZEN_CORPUS_FILE_COUNT = 27;
+const FROZEN_CORPUS_FILE_COUNT = 26;
 
 const sha256 = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
 

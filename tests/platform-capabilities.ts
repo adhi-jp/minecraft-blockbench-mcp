@@ -5,9 +5,9 @@
 // system: "this invariant is not there". That claim has to be reviewable. A
 // bare `if (process.platform !== 'win32')` wrapped around a block of assertions
 // says it silently — the test still passes on the platform it just stopped
-// checking, still satisfies the frozen named-test inventory, and still counts
-// toward the per-file assertion floor in `tests/named-test-floors.ts`, so the
-// leg reports a green test that asserts nothing.
+// checking and still counts toward the per-file assertion floor in
+// `tests/named-test-floors.ts`, so the leg reports a green test that asserts
+// nothing.
 //
 // Two mechanisms in this repository already refuse that silence, each for its
 // own case: `REVIEWED_CONDITIONAL_SKIPS` in `tests/named-test-floors.ts` for a

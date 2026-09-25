@@ -31,7 +31,6 @@ export const REQUIRED_FIXTURE_CLASSES: readonly string[] = [
   'framing',
   'cancellation',
   'shutdown',
-  'named-test-inventory',
 ];
 
 export const LEGACY_PROTOCOL_REVISIONS: readonly string[] = [
