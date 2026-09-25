@@ -412,7 +412,7 @@ async function launchShim(t: TestContext, world: World, label: string): Promise<
     if (value !== undefined && !key.startsWith('BLOCKBENCH_MCP_')) env[key] = value;
   }
   env.BLOCKBENCH_MCP_CONFIG = world.configPath;
-  env.XDG_RUNTIME_DIR = world.runtimeRoot;
+  env.BLOCKBENCH_MCP_RUNTIME_DIR = world.runtimeRoot;
   env.BLOCKBENCH_MCP_BROKER = '1';
   env.BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS = '5000';
 

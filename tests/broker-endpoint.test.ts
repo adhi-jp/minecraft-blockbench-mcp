@@ -52,30 +52,56 @@ test('config identity is stable per resolved path and contains 16 lowercase hex 
 });
 
 // `resolveRuntimeDirectory` is a pure function over a *simulated* platform: it
-// picks `posix` or `win32` from `options.platform`, never from the host. Both
-// halves of the test have to be shaped for the simulated platform, not just the
-// expectation. Building the inputs with the host `join` made a Windows host
-// hand `C:\...\xdg-runtime` to the linux case, `posix.isAbsolute` answered
-// false for it, and the function quietly took the *fallback* branch — so fixing
-// only the expected string would have produced a green test that no longer
-// covered the XDG branch at all. Fixed POSIX literals below keep the input
-// absolute under `posix.isAbsolute` everywhere, and the XDG expectation is a
-// different directory from the fallback expectation, so the first assertion can
-// only hold if the XDG branch really ran.
-test('an absolute XDG runtime directory is honored and other values fall back to the config directory', () => {
-  const xdg = '/run/user/1000/xdg-runtime';
+// picks `posix` or `win32` from `options.platform`, never from the host, so the
+// inputs are literals shaped for the simulated platform rather than built with
+// the host `join`. Each input stays absolute under that platform's
+// `isAbsolute` on any host, and each override expectation differs from the
+// fallback expectation, so those assertions hold only if the override branch
+// runs.
+test('an absolute BLOCKBENCH_MCP_RUNTIME_DIR is honored and other values fall back to the config directory', () => {
+  const override = '/run/user/1000/bbmcp-override';
   const configDir = '/home/tester/.config/minecraft-blockbench-mcp';
-  assert.ok(posix.isAbsolute(xdg), 'the XDG input must be POSIX-absolute or this test exercises the fallback branch');
+  assert.ok(posix.isAbsolute(override), 'the override must be POSIX-absolute or this test exercises the fallback branch');
   assert.equal(
-    resolveRuntimeDirectory({ platform: 'linux', env: { XDG_RUNTIME_DIR: xdg }, configDir }),
-    posix.join(xdg, 'minecraft-blockbench-mcp'),
+    resolveRuntimeDirectory({ platform: 'linux', env: { BLOCKBENCH_MCP_RUNTIME_DIR: override }, configDir }),
+    '/run/user/1000/bbmcp-override/minecraft-blockbench-mcp',
   );
-  for (const value of ['', 'relative/runtime']) {
+  assert.equal(
+    resolveRuntimeDirectory({
+      platform: 'win32',
+      env: { BLOCKBENCH_MCP_RUNTIME_DIR: 'D:\\bbmcp' },
+      configDir: 'C:\\Users\\tester\\AppData\\Roaming\\minecraft-blockbench-mcp',
+    }),
+    'D:\\bbmcp\\minecraft-blockbench-mcp',
+  );
+  for (const value of ['', '   ', 'relative/runtime']) {
     assert.equal(
-      resolveRuntimeDirectory({ platform: 'linux', env: { XDG_RUNTIME_DIR: value }, configDir }),
-      posix.join(configDir, 'run'),
+      resolveRuntimeDirectory({ platform: 'linux', env: { BLOCKBENCH_MCP_RUNTIME_DIR: value }, configDir }),
+      '/home/tester/.config/minecraft-blockbench-mcp/run',
     );
   }
+});
+
+// Two MCP harnesses sharing one config file may pass their servers different
+// environments: Claude Code forwards XDG_RUNTIME_DIR, Codex CLI does not. If
+// that variable steered the runtime directory, the two would elect separate
+// brokers. The XDG input below is absolute and differs from both expectations,
+// so reading it anywhere would change the result.
+test('XDG_RUNTIME_DIR does not move the runtime directory, alone or beside the override', () => {
+  const xdg = '/run/user/1000';
+  const configDir = '/home/tester/.config/minecraft-blockbench-mcp';
+  assert.equal(
+    resolveRuntimeDirectory({ platform: 'linux', env: { XDG_RUNTIME_DIR: xdg }, configDir }),
+    '/home/tester/.config/minecraft-blockbench-mcp/run',
+  );
+  assert.equal(
+    resolveRuntimeDirectory({
+      platform: 'linux',
+      env: { XDG_RUNTIME_DIR: xdg, BLOCKBENCH_MCP_RUNTIME_DIR: '/tmp/bbmcp' },
+      configDir,
+    }),
+    '/tmp/bbmcp/minecraft-blockbench-mcp',
+  );
 });
 
 // Also a pure function over a simulated platform, and the same rule applies to
@@ -115,7 +141,7 @@ test('POSIX endpoints reject a composed path one byte over the unix socket limit
       assert.ok(error.message.includes(String(MAX_UNIX_SOCKET_PATH_LENGTH)));
       assert.ok(error.message.includes('--direct'));
       assert.ok(error.message.includes('BLOCKBENCH_MCP_DIRECT'));
-      assert.ok(error.message.includes('XDG_RUNTIME_DIR'));
+      assert.ok(error.message.includes('BLOCKBENCH_MCP_RUNTIME_DIR'));
       return true;
     },
   );

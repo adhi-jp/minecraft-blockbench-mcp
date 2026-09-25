@@ -76,7 +76,7 @@ async function openEra(t: TestContext, era: Era, options: EraOptions = {}): Prom
   const root = await mkdtemp(join(tmpdir(), `blockbench-mcp-tool-contract-${era}-`));
   const runtimeRoot = await createRuntimeRoot('bbtc-');
   const env: Record<string, string> = {
-    XDG_RUNTIME_DIR: runtimeRoot,
+    BLOCKBENCH_MCP_RUNTIME_DIR: runtimeRoot,
     BLOCKBENCH_MCP_REQUEST_TIMEOUT_MS: '5000',
   };
   let plugin: WireFakePlugin | null = null;

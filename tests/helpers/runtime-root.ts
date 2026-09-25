@@ -1,11 +1,13 @@
 // A runtime root short enough that the endpoint the adapter derives inside it
 // still fits in a UNIX socket path.
 //
-// `resolveRuntimeDirectory` + `ipcEndpointFor` turn `XDG_RUNTIME_DIR` into
-// `<XDG_RUNTIME_DIR>/minecraft-blockbench-mcp/broker-<16 hex>.sock`, a fixed
-// 54-character tail no test can shorten. macOS allows 103 usable characters in
-// a `sun_path` (104 with the NUL), and the GitHub `macos-latest` runner's
-// `os.tmpdir()` is already 48 of them:
+// `resolveRuntimeDirectory` + `ipcEndpointFor` turn `BLOCKBENCH_MCP_RUNTIME_DIR`
+// into `<BLOCKBENCH_MCP_RUNTIME_DIR>/minecraft-blockbench-mcp/broker-<16 hex>.sock`,
+// a fixed 54-character tail no test can shorten. (Without that override the
+// socket sits in `run/` beside the config file, which a test would then have to
+// keep short itself.) macOS allows 103 usable characters in a `sun_path` (104
+// with the NUL), and the GitHub `macos-latest` runner's `os.tmpdir()` is
+// already 48 of them:
 //
 //   /var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T
 //
@@ -35,7 +37,7 @@ export { MAX_UNIX_SOCKET_PATH_LENGTH };
 
 /**
  * The length of `/minecraft-blockbench-mcp/broker-<16 hex>.sock`, the tail the
- * adapter appends to `XDG_RUNTIME_DIR` to reach its POSIX endpoint.
+ * adapter appends to `BLOCKBENCH_MCP_RUNTIME_DIR` to reach its POSIX endpoint.
  */
 export const BROKER_ENDPOINT_TAIL_LENGTH = 54;
 
@@ -54,9 +56,9 @@ export function runtimeRootParent(platform: NodeJS.Platform = process.platform):
 
 /**
  * A fresh, unique, empty runtime root for one test world, to be handed to a
- * child as `XDG_RUNTIME_DIR`. `prefix` only has to keep leaked directories
- * identifiable; keep it short, since every character of it is a character the
- * socket path cannot use.
+ * child as `BLOCKBENCH_MCP_RUNTIME_DIR`. `prefix` only has to keep leaked
+ * directories identifiable; keep it short, since every character of it is a
+ * character the socket path cannot use.
  *
  * The caller owns the directory and must pass it to `removeRuntimeRoot`. It
  * deliberately sits outside the test's own `mkdtemp` world, so removing that

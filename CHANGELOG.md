@@ -12,7 +12,9 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
   use the same installed adapter.
 - **Multi-client support.** A per-user broker process lets multiple AI
   clients configured with the same config file share one Blockbench
-  connection.
+  connection. By default, which broker a client joins depends on the config
+  file alone, not on the rest of that client's environment, so different AI
+  tools (for example Claude Code and Codex CLI) can share it.
 
 ### Breaking changes
 
@@ -60,8 +62,9 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
   usable `sun_path` length, startup now fails loudly with the resolved path,
   its measured length, and the limit, instead of silently producing a broker
   that reports itself as listening while binding nothing reachable. If this
-  affects you, use `--direct`, `BLOCKBENCH_MCP_DIRECT=1`, or point
-  `XDG_RUNTIME_DIR` at a short absolute path.
+  affects you, use `--direct`, `BLOCKBENCH_MCP_DIRECT=1`, or set
+  `BLOCKBENCH_MCP_RUNTIME_DIR` to a short absolute path in every client that
+  uses that config file.
 - A narrow crash window during broker startup — a crash between creating the
   startup lock file and finishing its write — could previously leave a
   malformed lock file that blocked every future startup attempt indefinitely.

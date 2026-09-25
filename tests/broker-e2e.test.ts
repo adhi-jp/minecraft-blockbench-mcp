@@ -73,6 +73,13 @@ interface StartClientOptions {
   era?: 'legacy' | 'modern';
   /** Adapter CLI flags appended after `--client-label`, such as `--port` or `--secret`. */
   extraArgs?: readonly string[];
+  /**
+   * The environment the shim starts from, in place of this process's own plus
+   * the world's runtime root, for a test that models what a particular MCP
+   * harness hands its servers. The `BLOCKBENCH_MCP_*` settings derived from the
+   * fixture and the options above are still applied on top of it.
+   */
+  baseEnv?: Readonly<Record<string, string>>;
 }
 
 function allocatePort(): number {
@@ -83,6 +90,11 @@ function allocatePort(): number {
 
 function configIdentity(configPath: string): string {
   return createHash('sha256').update(configPath).digest('hex').slice(0, 16);
+}
+
+/** Where the adapter keeps broker files when handed `runtimeRoot` as BLOCKBENCH_MCP_RUNTIME_DIR. */
+function overrideBrokerRuntime(runtimeRoot: string): string {
+  return join(runtimeRoot, 'minecraft-blockbench-mcp');
 }
 
 function parseEnvelope(toolResult: unknown): Envelope {
@@ -179,15 +191,19 @@ async function launchClient(
   options: StartClientOptions,
 ): Promise<ManagedClient> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) env[key] = value;
+  if (options.baseEnv !== undefined) {
+    Object.assign(env, options.baseEnv);
+  } else {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[key] = value;
+    }
+    env.BLOCKBENCH_MCP_RUNTIME_DIR = runtimeRoot;
   }
   delete env.BLOCKBENCH_MCP_DIRECT;
   delete env.BLOCKBENCH_MCP_BROKER;
   delete env.BLOCKBENCH_MCP_PORT;
   delete env.BLOCKBENCH_MCP_SECRET;
   env.BLOCKBENCH_MCP_CONFIG = fixture.path;
-  env.XDG_RUNTIME_DIR = runtimeRoot;
   env.BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS = '1000';
   if (options.leaseIdleTimeoutMs !== undefined) {
     env.BLOCKBENCH_MCP_LEASE_IDLE_TIMEOUT_MS = String(options.leaseIdleTimeoutMs);
@@ -269,14 +285,14 @@ class TestWorld {
     // `tests/helpers/runtime-root.ts` for why a socket under `os.tmpdir()`
     // cannot fit in a macOS `sun_path`. It is removed by `cleanup` below.
     const runtimeRoot = await createRuntimeRoot('bbe2e-');
-    const config = await TestWorld.writeConfig(root, runtimeRoot, 'config.json', port);
+    const config = await TestWorld.writeConfig(root, overrideBrokerRuntime(runtimeRoot), 'config.json', port);
     const world = new TestWorld(root, runtimeRoot, config);
     t.after(() => world.cleanup());
     return world;
   }
 
   async addConfig(fileName: string, port: number, secret: string | null = SECRET): Promise<ConfigFixture> {
-    return TestWorld.writeConfig(this.root, this.runtimeRoot, fileName, port, secret);
+    return TestWorld.writeConfig(this.root, overrideBrokerRuntime(this.runtimeRoot), fileName, port, secret);
   }
 
   async startClient(fixture: ConfigFixture, options: StartClientOptions): Promise<ManagedClient> {
@@ -389,9 +405,14 @@ class TestWorld {
     );
   }
 
+  /**
+   * Write `root/fileName` and describe where the broker for it will keep its
+   * files: `brokerRuntime` is the directory the launched shims resolve for that
+   * config file.
+   */
   static async writeConfig(
     root: string,
-    runtimeRoot: string,
+    brokerRuntime: string,
     fileName: string,
     port: number,
     secret: string | null = SECRET,
@@ -404,7 +425,6 @@ class TestWorld {
       { mode: 0o600 },
     );
     const identity = configIdentity(path);
-    const brokerRuntime = join(runtimeRoot, 'minecraft-blockbench-mcp');
     return {
       path,
       port,
@@ -678,10 +698,16 @@ async function waitForHealth(
   description: string,
 ): Promise<Envelope> {
   let latest: Envelope | null = null;
-  await waitFor(async () => {
-    latest = await callEnvelope(client, 'health');
-    return predicate(latest);
-  }, description);
+  try {
+    await waitFor(async () => {
+      latest = await callEnvelope(client, 'health');
+      return predicate(latest);
+    }, description);
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} Last health: ${JSON.stringify((latest as Envelope | null)?.result ?? null)}`,
+    );
+  }
   return latest as Envelope;
 }
 
@@ -779,6 +805,65 @@ test('concurrent MCP clients share one broker and retain partial availability wi
   const record = await world.brokerRecord(world.config);
   assert.equal(record.ws_port, port);
   assert.equal(record.broker_pid > 0, true);
+});
+
+test('clients launched with different harness environments share the broker of their common config file', async (t) => {
+  const port = allocatePort();
+  const world = await TestWorld.create(t, port);
+  // The config lives in the world's short runtime root, not its `os.tmpdir()`
+  // root: with no override the socket is `<config dir>/run/broker-<16 hex>.sock`,
+  // which would not fit in a `sun_path` under a macOS `os.tmpdir()`.
+  const fixture = await TestWorld.writeConfig(world.runtimeRoot, join(world.runtimeRoot, 'run'), 'config.json', port);
+
+  // Claude Code hands its MCP servers its whole environment, XDG_RUNTIME_DIR
+  // included. That variable is set here deliberately, to model that harness;
+  // it must not decide where the broker lives.
+  const claudeRuntimeDir = join(world.runtimeRoot, 'xdg');
+  await mkdir(claudeRuntimeDir);
+  const claudeEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.startsWith('BLOCKBENCH_MCP_')) claudeEnv[key] = value;
+  }
+  claudeEnv.XDG_RUNTIME_DIR = claudeRuntimeDir;
+  // Codex CLI starts a stdio MCP server with only these variables, plus the ones
+  // its server registration sets explicitly.
+  const codexEnv: Record<string, string> = {};
+  for (const key of ['HOME', 'LANG', 'LOGNAME', 'PATH', 'PWD', 'SHELL', 'TERM', 'USER']) {
+    const value = process.env[key];
+    if (value !== undefined) codexEnv[key] = value;
+  }
+
+  const claudeLike = await world.startClient(fixture, {
+    label: 'Claude-like client',
+    mode: 'brokered',
+    baseEnv: claudeEnv,
+  });
+  await waitForHealth(
+    claudeLike.client,
+    (health) => health.result?.broker_connected === true,
+    'the Claude-like client to elect a broker',
+  );
+  const codexLike = await world.startClient(fixture, { label: 'Codex-like client', mode: 'brokered', baseEnv: codexEnv });
+
+  const [claudeHealth, codexHealth] = await Promise.all([
+    waitForHealth(
+      claudeLike.client,
+      (health) => health.result?.broker_connected === true && health.result?.client_count === 2,
+      'the Claude-like client to see the Codex-like client on its broker',
+    ),
+    waitForHealth(
+      codexLike.client,
+      (health) => health.result?.broker_connected === true && health.result?.client_count === 2,
+      'the Codex-like client to join the Claude-like client on one broker',
+    ),
+  ]);
+  for (const health of [claudeHealth, codexHealth]) {
+    assert.equal(health.result?.broker_connected, true);
+    assert.equal(health.result?.client_count, 2);
+    assert.deepEqual(setupErrorCodes(health), []);
+  }
+  const record = await world.brokerRecord(fixture);
+  assert.equal(record.ws_port, port);
 });
 
 test('the first plugin command owns control and excludes a second client without blocking read-only MCP surfaces', async (t) => {
@@ -1187,7 +1272,7 @@ test('a directly spawned broker never writes the shared secret to stderr', async
     if (value !== undefined && !key.startsWith('BLOCKBENCH_MCP_')) env[key] = value;
   }
   env.BLOCKBENCH_MCP_CONFIG = world.config.path;
-  env.XDG_RUNTIME_DIR = world.runtimeRoot;
+  env.BLOCKBENCH_MCP_RUNTIME_DIR = world.runtimeRoot;
   env.BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS = '3000';
 
   const child = spawn(process.execPath, [cliPath, '__broker'], { env, stdio: ['ignore', 'ignore', 'pipe'] });

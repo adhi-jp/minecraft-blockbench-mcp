@@ -120,13 +120,14 @@ function isolatedEnv(configHome, extra) {
   env.HOME = configHome;
   env.APPDATA = configHome;
   env.USERPROFILE = configHome;
-  // One step further than the test helper: with no XDG_RUNTIME_DIR the broker
-  // puts its runtime directory under the config directory instead of a shared
-  // one (`resolveRuntimeDirectory` in `src/adapter/broker/endpoint.ts`), so the
+  // One step further than the test helper: with no BLOCKBENCH_MCP_RUNTIME_DIR
+  // the broker puts its runtime directory under the config directory
+  // (`resolveRuntimeDirectory` in `src/adapter/broker/endpoint.ts`), so the
   // lock and rendezvous files a brokered probe creates land inside the
-  // throwaway home and go away with it. Measured: without this a probe leaves a
-  // stale `broker-<identity>.lock` behind in the shared runtime directory.
-  delete env.XDG_RUNTIME_DIR;
+  // throwaway home and go away with it, even when the calling shell sets the
+  // override. Measured when a shared runtime directory still applied: a probe
+  // left a stale `broker-<identity>.lock` behind in it.
+  delete env.BLOCKBENCH_MCP_RUNTIME_DIR;
   env.BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS = BROKER_IDLE_TIMEOUT_MS;
   for (const [key, value] of Object.entries(extra)) env[key] = value;
   return env;

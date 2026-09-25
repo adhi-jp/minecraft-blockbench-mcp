@@ -89,7 +89,7 @@ async function startWithPlugin(t: TestContext): Promise<PluginObservedHarness> {
     args: ['--direct'],
     env: {
       BLOCKBENCH_MCP_CONFIG: configPath,
-      XDG_RUNTIME_DIR: runtimeRoot,
+      BLOCKBENCH_MCP_RUNTIME_DIR: runtimeRoot,
       BLOCKBENCH_MCP_REQUEST_TIMEOUT_MS: '5000',
     },
   });

@@ -326,11 +326,13 @@ export function disruptionForMode(mode) {
  *
  * `resolvedConfigPath` must already be absolute in host form; the adapter
  * hashes exactly the string it resolved, so the caller does the resolving.
+ * `runtimeDirOverride` is the `BLOCKBENCH_MCP_RUNTIME_DIR` the adapter children
+ * inherit; without it the record sits in `run/` beside the config file.
  */
-export function brokerRecordPathFor({ resolvedConfigPath, platform, xdgRuntimeDir = undefined }) {
+export function brokerRecordPathFor({ resolvedConfigPath, platform, runtimeDirOverride = undefined }) {
   const pathApi = platform === 'win32' ? win32 : posix;
   const configIdentity = sha256(resolvedConfigPath).slice(0, 16);
-  const trimmed = typeof xdgRuntimeDir === 'string' ? xdgRuntimeDir.trim() : '';
+  const trimmed = typeof runtimeDirOverride === 'string' ? runtimeDirOverride.trim() : '';
   const runtimeDir =
     trimmed !== '' && pathApi.isAbsolute(trimmed)
       ? pathApi.join(trimmed, 'minecraft-blockbench-mcp')
@@ -1097,7 +1099,7 @@ async function runSmoke(options) {
     const brokerLocation = brokerRecordPathFor({
       resolvedConfigPath: resolve(configPath),
       platform: process.platform,
-      xdgRuntimeDir: process.env.XDG_RUNTIME_DIR,
+      runtimeDirOverride: process.env.BLOCKBENCH_MCP_RUNTIME_DIR,
     });
 
     // -- Phase 1: establish -------------------------------------------------

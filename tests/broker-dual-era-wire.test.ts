@@ -130,7 +130,7 @@ async function createBrokerWorld(t: TestContext, hold?: readonly string[]): Prom
         args: ['--client-label', label],
         env: {
           BLOCKBENCH_MCP_CONFIG: configPath,
-          XDG_RUNTIME_DIR: runtimeRoot,
+          BLOCKBENCH_MCP_RUNTIME_DIR: runtimeRoot,
           BLOCKBENCH_MCP_BROKER: '1',
           BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS: '2000',
           BLOCKBENCH_MCP_LEASE_IDLE_TIMEOUT_MS: String(options?.leaseIdleTimeoutMs ?? LEASE_IDLE_TIMEOUT_MS),

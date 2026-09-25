@@ -200,18 +200,18 @@ test('brokerRecordPathFor reproduces the adapter runtime-directory rules on both
   const posixConfig = '/tmp/ac21-run/adapter-config.json';
   const posixIdentity = createHash('sha256').update(posixConfig).digest('hex').slice(0, 16);
 
-  const withoutXdg = brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux' });
-  assert.equal(withoutXdg.configIdentity, posixIdentity);
-  assert.equal(withoutXdg.runtimeDir, posix.join('/tmp/ac21-run', 'run'));
-  assert.equal(withoutXdg.recordPath, `${posix.join('/tmp/ac21-run', 'run')}/broker-${posixIdentity}.json`);
+  const withoutOverride = brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux' });
+  assert.equal(withoutOverride.configIdentity, posixIdentity);
+  assert.equal(withoutOverride.runtimeDir, posix.join('/tmp/ac21-run', 'run'));
+  assert.equal(withoutOverride.recordPath, `${posix.join('/tmp/ac21-run', 'run')}/broker-${posixIdentity}.json`);
 
-  const withXdg = brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux', xdgRuntimeDir: '/run/user/1000' });
-  assert.equal(withXdg.runtimeDir, posix.join('/run/user/1000', 'minecraft-blockbench-mcp'));
+  const withOverride = brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux', runtimeDirOverride: '/tmp/bbmcp-override' });
+  assert.equal(withOverride.runtimeDir, posix.join('/tmp/bbmcp-override', 'minecraft-blockbench-mcp'));
 
-  // A blank or relative XDG_RUNTIME_DIR is ignored, exactly as the adapter
-  // ignores it, so the two never disagree about which record to read.
-  assert.equal(brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux', xdgRuntimeDir: '  ' }).runtimeDir, withoutXdg.runtimeDir);
-  assert.equal(brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux', xdgRuntimeDir: 'relative/dir' }).runtimeDir, withoutXdg.runtimeDir);
+  // A blank or relative BLOCKBENCH_MCP_RUNTIME_DIR is ignored, exactly as the
+  // adapter ignores it, so the two never disagree about which record to read.
+  assert.equal(brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux', runtimeDirOverride: '  ' }).runtimeDir, withoutOverride.runtimeDir);
+  assert.equal(brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux', runtimeDirOverride: 'relative/dir' }).runtimeDir, withoutOverride.runtimeDir);
 
   const windowsConfig = 'C:\\smoke\\ac21-run\\adapter-config.json';
   const windowsIdentity = createHash('sha256').update(windowsConfig).digest('hex').slice(0, 16);

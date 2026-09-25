@@ -109,7 +109,7 @@ async function startWire(
 
   const env: Record<string, string> = {
     BLOCKBENCH_MCP_CONFIG: configPath,
-    XDG_RUNTIME_DIR: runtimeRoot,
+    BLOCKBENCH_MCP_RUNTIME_DIR: runtimeRoot,
     BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS: '1000',
     BLOCKBENCH_MCP_REQUEST_TIMEOUT_MS: String(options.requestTimeoutMs ?? 30_000),
   };

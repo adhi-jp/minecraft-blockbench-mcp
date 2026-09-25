@@ -12,11 +12,17 @@ export interface RuntimeDirectoryOptions {
   configDir: string;
 }
 
+/**
+ * Where the broker's socket, record and lock live for one config file. Only the
+ * config directory and the product's own override decide it, never an ambient
+ * variable such as XDG_RUNTIME_DIR: MCP harnesses pass their servers different
+ * environments, and every client of one config file must find the same broker.
+ */
 export function resolveRuntimeDirectory(options: RuntimeDirectoryOptions): string {
   const pathApi = options.platform === 'win32' ? win32 : posix;
-  const xdgRuntimeDir = options.env.XDG_RUNTIME_DIR;
-  if (xdgRuntimeDir !== undefined && xdgRuntimeDir.trim() !== '' && pathApi.isAbsolute(xdgRuntimeDir)) {
-    return pathApi.join(xdgRuntimeDir, 'minecraft-blockbench-mcp');
+  const override = options.env.BLOCKBENCH_MCP_RUNTIME_DIR;
+  if (override !== undefined && override.trim() !== '' && pathApi.isAbsolute(override)) {
+    return pathApi.join(override, 'minecraft-blockbench-mcp');
   }
   return pathApi.join(options.configDir, 'run');
 }
@@ -40,7 +46,7 @@ export class UnixSocketPathTooLongError extends Error {
   constructor(composedPath: string, measuredByteLength: number, maxByteLength: number) {
     super(
       `The Unix socket path ${composedPath} is ${String(measuredByteLength)} bytes, the limit is ${String(maxByteLength)}. ` +
-        'Use the --direct CLI flag or set BLOCKBENCH_MCP_DIRECT=1 to use direct mode, or point XDG_RUNTIME_DIR at a short absolute path.',
+        'Use the --direct CLI flag or set BLOCKBENCH_MCP_DIRECT=1 to use direct mode, or set BLOCKBENCH_MCP_RUNTIME_DIR to a short absolute path.',
     );
     this.name = 'UnixSocketPathTooLongError';
   }

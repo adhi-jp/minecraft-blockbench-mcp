@@ -195,7 +195,7 @@ async function startModernBrokeredSession(t: TestContext): Promise<RawStdioSessi
   const runtimeRoot = await createRuntimeRoot('bbmod-');
   const session = startRawStdioServer({
     args: [],
-    env: { XDG_RUNTIME_DIR: runtimeRoot, BLOCKBENCH_MCP_BROKER: '1' },
+    env: { BLOCKBENCH_MCP_RUNTIME_DIR: runtimeRoot, BLOCKBENCH_MCP_BROKER: '1' },
   });
   t.after(async () => {
     await session.dispose();

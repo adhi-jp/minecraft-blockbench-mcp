@@ -183,6 +183,12 @@ connection. Native Windows uses direct mode by default. Select direct mode
 explicitly with `--direct` or `BLOCKBENCH_MCP_DIRECT=1`; select brokered mode
 with `--broker` or `BLOCKBENCH_MCP_BROKER=1`.
 
+By default, clients share a broker whenever they use the same config file,
+whatever else their environments contain. The broker keeps its socket and lock
+files in `run/` next to that config file; if the socket path is too long for
+the platform, set `BLOCKBENCH_MCP_RUNTIME_DIR` to a short absolute path to move
+them, and give every client the same value.
+
 Brokered mode also recognizes the JSON config keys `brokerIdleTimeoutMs` (how
 long the shared broker remains running without AI clients) and
 `leaseIdleTimeoutMs` (how long an inactive client retains control). The
