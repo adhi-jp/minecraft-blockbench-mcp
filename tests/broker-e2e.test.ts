@@ -897,6 +897,33 @@ test('the first plugin command owns control and excludes a second client without
   assert.equal(stillHealthy.result?.controller_owner, 'Client A');
 });
 
+test('a broker client that starts without --client-label reports the invoking package manager as controller_owner, not its version', async (t) => {
+  const port = allocatePort();
+  const world = await TestWorld.create(t, port);
+  const npmEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.startsWith('BLOCKBENCH_MCP_')) npmEnv[key] = value;
+  }
+  npmEnv.BLOCKBENCH_MCP_RUNTIME_DIR = world.runtimeRoot;
+  // The shape npm sets in every package's bin process: name/version, then the
+  // invoking Node version and platform. An empty `--client-label` parses the
+  // same as an absent one, so this drives the same fallback a client that
+  // never passes the flag would take.
+  npmEnv.npm_config_user_agent = 'npm/10.8.2 node/v22.12.0 linux x64 workspaces/false';
+
+  const npmLike = await world.startClient(world.config, { label: '', mode: 'brokered', baseEnv: npmEnv });
+  await world.addPlugin(port);
+  await waitForHealth(npmLike.client, (health) => health.result?.plugin_connected === true, 'plugin connection');
+
+  assert.equal((await callEnvelope(npmLike.client, 'get_project_state')).ok, true);
+  const owned = await waitForHealth(
+    npmLike.client,
+    (health) => health.result?.controller_state === 'owned',
+    'controller ownership after the label-less client acted',
+  );
+  assert.equal(owned.result?.controller_owner, 'npm');
+});
+
 test('closing the controller revokes its scoped directory exactly once before the next client command', async (t) => {
   const port = allocatePort();
   const world = await TestWorld.create(t, port);

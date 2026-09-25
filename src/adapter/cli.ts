@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { basename, dirname, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -237,7 +237,11 @@ function clientLabel(argv: string[]): string {
     return values['client-label'];
   }
   const userAgent = process.env.npm_config_user_agent?.trim();
-  return userAgent === undefined || userAgent === '' ? 'mcp-client' : basename(userAgent.split(/\s+/, 1)[0]) || 'mcp-client';
+  if (userAgent === undefined || userAgent === '') return 'mcp-client';
+  // npm, pnpm, and yarn all set this to `<name>/<version> node/<version> <platform> <arch> ...`;
+  // the package manager's own name is the part of the first token before the '/'.
+  const packageManagerName = userAgent.split(/\s+/, 1)[0].split('/', 1)[0];
+  return packageManagerName === '' ? 'mcp-client' : packageManagerName;
 }
 
 function unavailableBridge(
