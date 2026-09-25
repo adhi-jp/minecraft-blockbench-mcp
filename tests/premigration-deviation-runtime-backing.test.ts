@@ -131,7 +131,7 @@ const RUNTIME_BACKING: ReadonlyMap<string, Backing> = new Map<string, Backing>([
   [
     TUPLE_ID,
     {
-      claim: 'a fourth element in a three-element tuple is still rejected even though prefixItems no longer bounds length',
+      claim: 'a fourth element in a three-element tuple is still rejected under the 2020-12 prefixItems spelling',
       kind: 'measured-here',
     },
   ],
@@ -358,16 +358,15 @@ test('an assign_texture source carrying both union branches is rejected, so the 
 test('a fourth element in a three-element tuple is still rejected, which prefixItems alone no longer advertises', async (t) => {
   const { session, plugin } = await startWorld(t);
 
-  // The advertised schema lost the minItems/maxItems pair when the tuple moved
-  // to the 2020-12 spelling, so the advertisement is now looser than the
-  // enforcement. This is the assertion that the enforcement did not follow it.
+  // The advertisement moved to the 2020-12 `prefixItems` spelling. This is the
+  // assertion that the enforced length did not move with it.
   const tooLong = await callTool(session, 'create_cubes', {
     cubes: [{ from: [0, 0, 0, 0], to: [1, 1, 1] }],
   });
   assert.ok(
     dependencyLayerRejection(tooLong) !== null,
     'a four-element value was accepted for a three-element tuple, so runtime length enforcement was lost along ' +
-      'with the advertised minItems/maxItems pair',
+      'with the draft-07 tuple spelling',
   );
   const tooShort = await callTool(session, 'create_cubes', { cubes: [{ from: [0, 0], to: [1, 1, 1] }] });
   assert.ok(dependencyLayerRejection(tooShort) !== null, 'a two-element value was accepted for a three-element tuple');

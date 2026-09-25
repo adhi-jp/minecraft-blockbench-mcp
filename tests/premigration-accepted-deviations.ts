@@ -55,6 +55,7 @@
 //     `ESCALATED_DEVIATION_IDS` pins this set so it cannot grow unnoticed.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 export type DeviationAuthority = 'adjudicated-in-plan' | 'escalated-for-adjudication';
 
@@ -460,9 +461,9 @@ export const ACCEPTED_DEVIATIONS: readonly AcceptedDeviation[] = [
     authority: 'adjudicated-in-plan',
     appliesTo: 'every advertised fixed-length tuple in a tool input schema',
     was: '`{ "type": "array", "minItems": N, "maxItems": N, "items": [ ...N schemas ] }`',
-    now: '`{ "type": "array", "prefixItems": [ ...N schemas ] }`',
+    now: '`{ "type": "array", "prefixItems": [ ...N schemas ], "items": <the one schema all N positions share>, "minItems": N, "maxItems": N }`',
     reason:
-      'A positional `items` array is the draft-07 spelling of a tuple; 2020-12 spells it `prefixItems`. Runtime length enforcement is unchanged: a fourth element in a three-element tuple is still rejected. See `ESCALATED_DEVIATION_NOTES` for the advertised length bound.',
+      'A positional `items` array is the draft-07 spelling of a tuple; 2020-12 spells it `prefixItems`. The recorded length bound is kept, and the element schema every position shares is also stated as `items`, so a client that reads only `items` still sees the element type. Runtime length enforcement is unchanged: a fourth element in a three-element tuple is still rejected.',
     expectedSites: TUPLE_SITES,
   },
   {
@@ -611,7 +612,7 @@ export const ESCALATED_DEVIATION_IDS: readonly string[] = [
  */
 export const ESCALATED_DEVIATION_NOTES: Readonly<Record<string, string>> = {
   [TUPLE_ID]:
-    'The 2020-12 spelling drops the recorded `minItems`/`maxItems` pair, and `prefixItems` alone does not bound array length, so the advertised tuple is now looser than the enforced one. Runtime enforcement is unchanged: a fourth element in a three-element tuple is still rejected.',
+    'The advertised tuple keeps the recorded `minItems`/`maxItems` pair beside `prefixItems`, so the advertised length bound still equals the enforced one. Runtime enforcement is unchanged: a fourth element in a three-element tuple is still rejected.',
   [SAFE_INTEGER_ID]:
     'One of the two escalated entries with a measured runtime effect. An integer above `Number.MAX_SAFE_INTEGER` was accepted by the recorded build and is now rejected.',
   [HEALTH_STRICT_ID]:
@@ -734,10 +735,12 @@ export function applyAcceptedDeviationsToAdvertisedSchema(
       usage.note(DIALECT_ID, `${toolName}${pointer}/$schema`);
     }
     if (isRecordedFixedLengthTuple(rewritten)) {
-      rewritten.prefixItems = rewritten.items;
-      delete rewritten.items;
-      delete rewritten.minItems;
-      delete rewritten.maxItems;
+      const elements = rewritten.items as unknown[];
+      if (!elements.every((element) => isDeepStrictEqual(element, elements[0]))) {
+        throw new Error(`${toolName}${pointer}: recorded tuple positions differ, so no single items schema describes them`);
+      }
+      rewritten.prefixItems = elements;
+      rewritten.items = clone(elements[0]);
       usage.note(TUPLE_ID, `${toolName}${pointer}`);
     }
     if (isRecordedNumericLiteralUnion(rewritten)) {

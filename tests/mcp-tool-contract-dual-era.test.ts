@@ -170,6 +170,58 @@ test('the advertised tool catalogue is identical on a legacy connection and on a
   assert.equal((answers.legacy.result as Record<string, unknown>).resultType, undefined);
 });
 
+/** Every array node under `node` that spells a tuple with `prefixItems`, keyed by JSON pointer. */
+function prefixItemsNodes(node: unknown, pointer: string, found: Map<string, Record<string, unknown>>): void {
+  if (Array.isArray(node)) {
+    node.forEach((child, index) => prefixItemsNodes(child, `${pointer}/${index}`, found));
+    return;
+  }
+  if (typeof node !== 'object' || node === null) return;
+  const record = node as Record<string, unknown>;
+  if (record.prefixItems !== undefined) found.set(pointer, record);
+  for (const [key, value] of Object.entries(record)) prefixItemsNodes(value, `${pointer}/${key}`, found);
+}
+
+test('every advertised fixed-length tuple also carries a homogeneous items schema and its length bound on both eras', async (t) => {
+  // A client that reads only `items` (draft-07 readers, function-calling front
+  // ends) otherwise sees an array of anything and can send strings for numbers.
+  const answers = await onBothEras(t, {}, async ({ connection }) =>
+    exchange(connection.session, connection.request(55, 'tools/list')),
+  );
+
+  for (const era of ERAS) {
+    const tuples = new Map<string, Record<string, unknown>>();
+    for (const tool of advertisedTools(answers[era])) {
+      prefixItemsNodes(tool.inputSchema, String(tool.name), tuples);
+    }
+    assert.ok(tuples.size > 0, `${era}: no tuple was advertised, so this check proves nothing`);
+    for (const [pointer, tuple] of tuples) {
+      const prefixItems = tuple.prefixItems as unknown[];
+      assert.equal(tuple.type, 'array', `${era}: ${pointer} is not an array schema`);
+      assert.ok(
+        typeof tuple.items === 'object' && tuple.items !== null && !Array.isArray(tuple.items),
+        `${era}: ${pointer} advertises prefixItems without an items schema`,
+      );
+      for (const [index, element] of prefixItems.entries()) {
+        assert.deepEqual(element, tuple.items, `${era}: ${pointer}/prefixItems/${index} differs from items`);
+      }
+      assert.equal(tuple.minItems, prefixItems.length, `${era}: ${pointer} does not advertise minItems`);
+      assert.equal(tuple.maxItems, prefixItems.length, `${era}: ${pointer} does not advertise maxItems`);
+    }
+    assert.deepEqual(
+      tuples.get('create_cubes/properties/cubes/items/properties/from'),
+      {
+        type: 'array',
+        prefixItems: [{ type: 'number' }, { type: 'number' }, { type: 'number' }],
+        items: { type: 'number' },
+        minItems: 3,
+        maxItems: 3,
+      },
+      `${era}: create_cubes cube.from is not advertised as a three-number tuple`,
+    );
+  }
+});
+
 test('a successful tool call returns the same JSON text envelope on both eras', async (t) => {
   const answers = await onBothEras(t, {}, async ({ connection }) =>
     exchange(connection.session, connection.request(51, 'tools/call', { name: 'health', arguments: {} })),

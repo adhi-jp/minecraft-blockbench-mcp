@@ -94,14 +94,24 @@ export type WriteResult = z.infer<typeof writeResultSchema>;
 // into null, which corrupts exported model files.
 const finiteNumber = z.number().finite();
 
-const vec2 = z.tuple([finiteNumber, finiteNumber]);
+// Every tuple here repeats one element schema. The draft-2020-12 conversion
+// advertises a tuple as `prefixItems` alone, which bounds neither the length
+// nor, for a client that reads only `items`, the element type, so the
+// advertisement also states the shared element schema as `items` and pins the
+// length. Validation is the plain tuple's and is unchanged.
+function fixedLengthTuple<const T extends readonly [z.ZodType, ...z.ZodType[]]>(elements: T) {
+  const { $schema: _dialect, ...items } = z.toJSONSchema(elements[0], { target: 'draft-2020-12' });
+  return z.tuple(elements).meta({ items, minItems: elements.length, maxItems: elements.length });
+}
 
-const vec3 = z.tuple([finiteNumber, finiteNumber, finiteNumber]);
+const vec2 = fixedLengthTuple([finiteNumber, finiteNumber]);
+
+const vec3 = fixedLengthTuple([finiteNumber, finiteNumber, finiteNumber]);
 
 const cubeFaceNames = ['north', 'south', 'east', 'west', 'up', 'down'] as const;
 
 // Per-face UV rectangle [x1, y1, x2, y2] in project texture-resolution space.
-const faceUvSchema = z.tuple([finiteNumber, finiteNumber, finiteNumber, finiteNumber]);
+const faceUvSchema = fixedLengthTuple([finiteNumber, finiteNumber, finiteNumber, finiteNumber]);
 
 // Per-face texture rotation in degrees; Blockbench writes accept only
 // quarter turns (read-back can carry other values from imported JSON).
@@ -765,7 +775,11 @@ const geckolibKeyframeSchema = z
   .object({
     time: z.number().finite().nonnegative().describe('Keyframe time in seconds from clip start.'),
     value: z
-      .union([z.number().finite(), z.string(), z.tuple([molangNumberSchema, molangNumberSchema, molangNumberSchema])])
+      .union([
+        z.number().finite(),
+        z.string(),
+        fixedLengthTuple([molangNumberSchema, molangNumberSchema, molangNumberSchema]),
+      ])
       .describe(
         'Keyframe value in the GeckoLib .animation.json convention: a number or molang string (applied to all three axes) or an [x, y, z] array of number|molang-string.',
       ),
