@@ -19,6 +19,7 @@ import { IPC_PROTOCOL_VERSION } from '../src/adapter/broker/ipc-protocol.js';
 import { ensureRuntimeDirectory, ipcEndpointFor } from '../src/adapter/broker/endpoint.js';
 import { readBrokerRecord, writeBrokerRecordAtomic, type BrokerRecord } from '../src/adapter/broker/rendezvous.js';
 import { ADAPTER_VERSION } from '../src/adapter/mcp-server.js';
+import { WsBridge } from '../src/adapter/ws-bridge.js';
 import { COMMAND_NAMES, PROTOCOL_VERSION } from '../src/shared/protocol.js';
 import { MODERN_PROTOCOL_VERSION } from './helpers/mcp-era-wire.ts';
 import { processCommandLine } from './helpers/process-scan.ts';
@@ -70,6 +71,8 @@ interface StartClientOptions {
    * instead of a second legacy run.
    */
   era?: 'legacy' | 'modern';
+  /** Adapter CLI flags appended after `--client-label`, such as `--port` or `--secret`. */
+  extraArgs?: readonly string[];
 }
 
 function allocatePort(): number {
@@ -181,6 +184,8 @@ async function launchClient(
   }
   delete env.BLOCKBENCH_MCP_DIRECT;
   delete env.BLOCKBENCH_MCP_BROKER;
+  delete env.BLOCKBENCH_MCP_PORT;
+  delete env.BLOCKBENCH_MCP_SECRET;
   env.BLOCKBENCH_MCP_CONFIG = fixture.path;
   env.XDG_RUNTIME_DIR = runtimeRoot;
   env.BLOCKBENCH_MCP_BROKER_IDLE_TIMEOUT_MS = '1000';
@@ -199,7 +204,7 @@ async function launchClient(
 
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [cliPath, '--client-label', options.label],
+    args: [cliPath, '--client-label', options.label, ...(options.extraArgs ?? [])],
     env,
     cwd: projectRoot,
     stderr: 'pipe',
@@ -270,8 +275,8 @@ class TestWorld {
     return world;
   }
 
-  async addConfig(fileName: string, port: number): Promise<ConfigFixture> {
-    return TestWorld.writeConfig(this.root, this.runtimeRoot, fileName, port);
+  async addConfig(fileName: string, port: number, secret: string | null = SECRET): Promise<ConfigFixture> {
+    return TestWorld.writeConfig(this.root, this.runtimeRoot, fileName, port, secret);
   }
 
   async startClient(fixture: ConfigFixture, options: StartClientOptions): Promise<ManagedClient> {
@@ -389,11 +394,13 @@ class TestWorld {
     runtimeRoot: string,
     fileName: string,
     port: number,
+    secret: string | null = SECRET,
   ): Promise<ConfigFixture> {
     const path = join(root, fileName);
+    const contents = secret === null ? { version: 1, port } : { version: 1, mode: 'shared-secret', port, secret };
     await writeFile(
       path,
-      `${JSON.stringify({ version: 1, mode: 'shared-secret', port, secret: SECRET }, null, 2)}\n`,
+      `${JSON.stringify(contents, null, 2)}\n`,
       { mode: 0o600 },
     );
     const identity = configIdentity(path);
@@ -1373,4 +1380,164 @@ test('broker taint recovery, idle shutdown, and rendezvous cleanup behave identi
     observed.legacy,
     'broker taint recovery, idle shutdown, or rendezvous cleanup differs between the two MCP wire eras',
   );
+});
+
+/** A loopback listener on an OS-assigned port, standing in for whatever else holds the plugin port. */
+async function holdLoopbackPort(t: TestContext): Promise<{ port: number; release(): Promise<void> }> {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  let released = false;
+  const release = async (): Promise<void> => {
+    if (released) return;
+    released = true;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  };
+  t.after(release);
+  return { port: (server.address() as { port: number }).port, release };
+}
+
+/** An OS-assigned loopback port that nothing is listening on any more. */
+async function unusedLoopbackPort(t: TestContext): Promise<number> {
+  const held = await holdLoopbackPort(t);
+  await held.release();
+  return held.port;
+}
+
+function setupErrors(health: Envelope): Array<{ code: string; message: string }> {
+  return (health.result?.setup_errors ?? []) as Array<{ code: string; message: string }>;
+}
+
+async function directModeSetupIssue(port: number, secret: string | null): Promise<{ code: string; message: string }> {
+  const bridge = new WsBridge({
+    port,
+    secret,
+    requestTimeoutMs: 1_000,
+    heartbeatIntervalMs: 1_000,
+    heartbeatMissLimit: 3,
+    handshakeTimeoutMs: 1_000,
+    maxMessageBytes: 1_048_576,
+    log: () => undefined,
+  });
+  const started = await bridge.start();
+  await bridge.stop();
+  assert.equal(started.ok, false, 'direct mode was expected to refuse this listener');
+  return (started as { issue: { code: string; message: string } }).issue;
+}
+
+test('a spawned broker runs with the port and secret the shim was given on its command line', async (t) => {
+  const configPort = await unusedLoopbackPort(t);
+  const cliPort = await unusedLoopbackPort(t);
+  const world = await TestWorld.create(t, await unusedLoopbackPort(t));
+  const fixture = await world.addConfig('cli-flags-config.json', configPort, null);
+
+  const managed = await world.startClient(fixture, {
+    label: 'CLI flag client',
+    mode: 'brokered',
+    extraArgs: ['--port', String(cliPort), '--secret', SECRET],
+  });
+  const health = await waitForHealth(
+    managed.client,
+    (value) => value.result?.broker_connected === true,
+    'the broker spawned with the shim configuration',
+  );
+  assert.equal(health.result?.port, cliPort);
+  assert.deepEqual(setupErrors(health), []);
+
+  await world.addPlugin(cliPort);
+  assert.equal((await callEnvelope(managed.client, 'get_project_state')).ok, true);
+  const record = await world.brokerRecord(fixture);
+  assert.equal(record.ws_port, cliPort);
+  const commandLine = await assertBrokerIdentity(record.broker_pid);
+  assert.ok(commandLine.includes(String(cliPort)), `the broker argv must carry the resolved port: ${commandLine}`);
+  assert.ok(!commandLine.includes(SECRET), 'the shared secret must never appear in the broker argv');
+});
+
+test('a shim without a secret still attaches to a broker that is already running', async (t) => {
+  const port = await unusedLoopbackPort(t);
+  const world = await TestWorld.create(t, await unusedLoopbackPort(t));
+  const fixture = await world.addConfig('secretless-config.json', port, null);
+
+  const owner = await world.startClient(fixture, {
+    label: 'Secret-holding client',
+    mode: 'brokered',
+    extraArgs: ['--secret', SECRET],
+  });
+  await waitForHealth(owner.client, (value) => value.result?.broker_connected === true, 'the first broker attach');
+
+  const secretless = await world.startClient(fixture, { label: 'Secretless client', mode: 'brokered' });
+  const health = await waitForHealth(
+    secretless.client,
+    (value) => value.result?.broker_connected === true && value.result?.client_count === 2,
+    'the secretless client to share the running broker',
+  );
+  assert.deepEqual(setupErrors(health), []);
+});
+
+test('a shim with no secret reports E_SECRET_MISSING promptly instead of spawning a broker that cannot start', async (t) => {
+  const port = await unusedLoopbackPort(t);
+  const world = await TestWorld.create(t, await unusedLoopbackPort(t));
+  const fixture = await world.addConfig('no-secret-config.json', port, null);
+
+  const startedAt = Date.now();
+  const managed = await world.startClient(fixture, {
+    label: 'No secret client',
+    mode: 'brokered',
+    initializationTimeoutMs: 15_000,
+    trackBroker: false,
+  });
+  const health = await callEnvelope(managed.client, 'health');
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.ok(elapsedMs < 5_000, `startup and health took ${String(elapsedMs)} ms`);
+  assert.deepEqual(setupErrors(health), [await directModeSetupIssue(port, null)]);
+  assert.equal(health.result?.broker_connected, false);
+  assert.equal(await pathExists(fixture.recordPath), false, 'no broker may be spawned without a secret');
+});
+
+test('a plugin port held by another process is reported as E_PORT_IN_USE without stalling the MCP handshake', async (t) => {
+  const held = await holdLoopbackPort(t);
+  const world = await TestWorld.create(t, await unusedLoopbackPort(t));
+  const fixture = await world.addConfig('held-port-config.json', held.port);
+
+  const startedAt = Date.now();
+  const managed = await world.startClient(fixture, {
+    label: 'Held port client',
+    mode: 'brokered',
+    initializationTimeoutMs: 15_000,
+  });
+  const health = await callEnvelope(managed.client, 'health');
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.ok(elapsedMs < 5_000, `startup and health took ${String(elapsedMs)} ms`);
+  assert.deepEqual(setupErrors(health), [await directModeSetupIssue(held.port, SECRET)]);
+  assert.equal(setupErrors(health)[0]?.code, 'E_PORT_IN_USE');
+  assert.equal(health.result?.broker_connected, false);
+});
+
+test('a shim whose broker could not start attaches on a later tool call once the cause clears', async (t) => {
+  const held = await holdLoopbackPort(t);
+  const world = await TestWorld.create(t, await unusedLoopbackPort(t));
+  const fixture = await world.addConfig('recovering-config.json', held.port);
+  const managed = await world.startClient(fixture, {
+    label: 'Recovering client',
+    mode: 'brokered',
+    initializationTimeoutMs: 15_000,
+  });
+  assert.deepEqual(setupErrorCodes(await callEnvelope(managed.client, 'health')), ['E_PORT_IN_USE']);
+
+  // Still held: the call re-runs election, fails, and health keeps the latest cause.
+  const whileHeld = await callEnvelope(managed.client, 'get_project_state');
+  assert.equal(whileHeld.error?.code, 'E_BROKER_UNAVAILABLE');
+  assert.deepEqual(setupErrorCodes(await callEnvelope(managed.client, 'health')), ['E_PORT_IN_USE']);
+
+  await held.release();
+  const afterRelease = await callEnvelope(managed.client, 'get_project_state');
+  assert.equal(afterRelease.error?.code, 'E_PLUGIN_NOT_CONNECTED');
+  const health = await callEnvelope(managed.client, 'health');
+  assert.equal(health.result?.broker_connected, true);
+  assert.deepEqual(setupErrors(health), []);
+
+  await world.addPlugin(held.port);
+  assert.equal((await callEnvelope(managed.client, 'get_project_state')).ok, true);
 });

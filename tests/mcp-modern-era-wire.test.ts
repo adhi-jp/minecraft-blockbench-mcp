@@ -240,8 +240,10 @@ test('a failure the adapter synthesizes for itself still carries the canonical s
   assert.equal(envelope.ok, true, 'health failed instead of reporting the setup error');
   assert.deepEqual(
     ((envelope.result as Record<string, unknown>).setup_errors as Array<{ code: string }>).map((issue) => issue.code),
-    ['E_BROKER_UNAVAILABLE'],
-    'health did not report the unreachable broker as a setup error',
+    // No secret is configured, so the shim names that as the reason it has no
+    // broker instead of spawning one that cannot start.
+    ['E_SECRET_MISSING'],
+    'health did not report the brokered setup failure as a setup error',
   );
   assert.deepEqual(
     (healthResult._meta as Record<string, unknown> | undefined)?.[SERVER_INFO_META_KEY],

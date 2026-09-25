@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +33,7 @@ import { readBrokerRecord, writeBrokerRecordAtomic, type BrokerRecord } from './
 import { buildBrokerSpawnArgs, spawnDetachedBroker } from './broker/spawn.js';
 import { loadConfig, resolveAdapterMode, type AdapterConfig, type SetupIssue } from './config.js';
 import { ADAPTER_VERSION, buildMcpServer, type BrokerStatus, type PluginBridge } from './mcp-server.js';
-import { WsBridge } from './ws-bridge.js';
+import { listenerSetupIssue, WsBridge } from './ws-bridge.js';
 
 function logLine(line: string): void {
   process.stderr.write(`[minecraft-blockbench-mcp] ${line}\n`);
@@ -159,6 +160,44 @@ async function runBroker(argv: string[]): Promise<void> {
   process.on('SIGTERM', () => stop('SIGTERM'));
 }
 
+const BROKER_UNAVAILABLE_ISSUE: SetupIssue = {
+  code: 'E_BROKER_UNAVAILABLE',
+  message: 'No healthy broker could be reached or started.',
+};
+
+// Worded exactly as direct mode's WsBridge.start() reports the same condition.
+const SECRET_MISSING_ISSUE: SetupIssue = {
+  code: 'E_SECRET_MISSING',
+  message:
+    'No shared secret is configured; the plugin listener was not started. Set --secret, BLOCKBENCH_MCP_SECRET, or the config file secret.',
+};
+
+/**
+ * Raised while electing when a broker this shim would have to spawn cannot
+ * start for a reason it can name. The broker's own stderr is discarded, so this
+ * is the only way its cause reaches health instead of a generic
+ * E_BROKER_UNAVAILABLE.
+ */
+class BrokerStartupError extends Error {
+  constructor(readonly issue: SetupIssue) {
+    super(issue.message);
+    this.name = 'BrokerStartupError';
+  }
+}
+
+/**
+ * Why a spawned broker most likely exited before publishing its record: its
+ * plugin listener could not bind, reported in direct mode's wording, or no cause
+ * this side can name.
+ */
+function pluginListenerIssue(port: number): Promise<SetupIssue> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once('error', (error: NodeJS.ErrnoException) => resolve(listenerSetupIssue(error, port)));
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(BROKER_UNAVAILABLE_ISSUE)));
+  });
+}
+
 class BrokerVersionMismatchError extends Error {
   constructor() {
     super('The running broker uses an incompatible IPC or package version.');
@@ -237,7 +276,8 @@ async function attachBroker(
   resolvedConfigPath: string,
   location: BrokerLocation,
   label: string,
-): Promise<BrokerClient | null> {
+  reportIssue: (issue: SetupIssue | null) => void,
+): Promise<BrokerClient> {
   const hello: BrokerClientHello = {
     ipc_protocol_version: IPC_PROTOCOL_VERSION,
     package_version: ADAPTER_VERSION,
@@ -293,6 +333,10 @@ async function attachBroker(
       return probe(record, candidate);
     };
     const startBroker = async (): Promise<BrokerRecord> => {
+      // A broker cannot start its plugin listener without the secret, so there
+      // is nothing worth spawning. Attaching to a running broker never gets
+      // here and never needed one.
+      if (config.secret === null) throw new BrokerStartupError(SECRET_MISSING_ISSUE);
       // This callback runs while holding the startup lock, and only after a
       // probe that neither attached nor proved a broker alive. A probe that
       // reached a live broker which refused this shim does not arrive here at
@@ -305,16 +349,22 @@ async function attachBroker(
       if (process.platform !== 'win32') {
         await unlink(location.endpoint).catch(() => undefined);
       }
-      spawnDetachedBroker(
+      let exited = false;
+      const child = spawnDetachedBroker(
         spawn,
         buildBrokerSpawnArgs({
           execPath: process.execPath,
           cliEntryPath: fileURLToPath(import.meta.url),
           configPath: resolvedConfigPath,
+          config,
+          env: process.env,
         }),
+        () => (exited = true),
       );
+      child.once('exit', () => (exited = true));
       const deadline = Date.now() + 10_000;
       while (Date.now() < deadline) {
+        const exitedBeforeRead = exited;
         const record = await readBrokerRecord(location.recordPath);
         if (record !== null) {
           const client = await connectRecord(record);
@@ -323,6 +373,9 @@ async function attachBroker(
             return record;
           }
         }
+        // A broker that exited without publishing a record never will; stop
+        // waiting and name the cause instead of running out the deadline.
+        if (exitedBeforeRead) throw new BrokerStartupError(await pluginListenerIssue(config.port));
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
       }
       throw new Error('Timed out waiting for a healthy broker.');
@@ -339,17 +392,24 @@ async function attachBroker(
         pid: process.pid,
         waitTimeoutMs: 10_000,
       });
-      if (election.kind === 'attached') return election.attachment;
-      if (election.kind === 'started') return startedClient;
-      return null;
+      const attached =
+        election.kind === 'attached' ? election.attachment : election.kind === 'started' ? startedClient : null;
+      reportIssue(attached === null ? BROKER_UNAVAILABLE_ISSUE : null);
+      return attached;
     } catch (error) {
       if (error instanceof BrokerVersionMismatchError) throw error;
       if (error instanceof BrokerSessionInUseError) throw error;
+      reportIssue(error instanceof BrokerStartupError ? error.issue : BROKER_UNAVAILABLE_ISSUE);
       return null;
     }
   }
 
-  return electBroker();
+  // The client exists even when this first election fails: its next request
+  // re-runs election through `reattach`, so a cause that clears later (a freed
+  // port, a broker that was still starting) recovers without an MCP restart.
+  const client = createBrokerClient();
+  await electBroker(client);
+  return client;
 }
 
 /**
@@ -447,13 +507,26 @@ async function serveBrokered(
   // always know. When the broker refused us with `session_in_use` it is running
   // and healthy, so "No healthy broker could be reached or started." would be
   // false; the code is still right, because no broker is available *to us*.
-  let failureMessage = 'No healthy broker could be reached or started.';
+  let failureMessage = BROKER_UNAVAILABLE_ISSUE.message;
+  // The broker issue currently listed in `issues`. Every election replaces it,
+  // so health names the latest cause and drops it once an election attaches.
+  let brokerIssue: SetupIssue | null = null;
+  const reportBrokerIssue = (issue: SetupIssue | null): void => {
+    if (brokerIssue !== null) {
+      const index = issues.indexOf(brokerIssue);
+      if (index !== -1) issues.splice(index, 1);
+    }
+    brokerIssue = issue === null ? null : { ...issue };
+    if (brokerIssue === null) return;
+    issues.push(brokerIssue);
+    logLine(`Setup issue (${brokerIssue.code}): ${brokerIssue.message}`);
+  };
   try {
     if (resolvedConfigPath === null) {
       throw new Error('No configuration path could be resolved for the broker runtime.');
     }
     const location = await resolveBrokerLocation(resolvedConfigPath);
-    client = await attachBroker(config, resolvedConfigPath, location, clientLabel(argv));
+    client = await attachBroker(config, resolvedConfigPath, location, clientLabel(argv), reportBrokerIssue);
   } catch (error) {
     if (error instanceof BrokerVersionMismatchError) {
       failureCode = 'E_BROKER_VERSION_MISMATCH';

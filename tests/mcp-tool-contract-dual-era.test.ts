@@ -393,7 +393,7 @@ test('a brokered setup failure is reported through the same health envelope on b
     assert.equal(result.broker_connected, false, `${era}: a broker was unexpectedly reachable`);
     assert.deepEqual(
       (result.setup_errors as Array<{ code: string }>).map((issue) => issue.code),
-      ['E_BROKER_UNAVAILABLE'],
+      ['E_SECRET_MISSING'],
       `${era}: the brokered setup failure changed shape`,
     );
   }

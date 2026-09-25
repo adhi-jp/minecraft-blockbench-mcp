@@ -19,6 +19,7 @@ import {
 } from '../src/adapter/broker/ipc-protocol.js';
 import { writeBrokerRecordAtomic } from '../src/adapter/broker/rendezvous.js';
 import { buildBrokerSpawnArgs, spawnDetachedBroker } from '../src/adapter/broker/spawn.js';
+import { CONFIG_DEFAULTS } from '../src/adapter/config.js';
 import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
 
 const SECRET = 'broker-test-secret-1234567890';
@@ -749,16 +750,43 @@ test('a broker client reconnects after connection loss and after an explicit clo
 });
 
 test('detached broker spawning preserves argv boundaries and only unreferences the injected child', () => {
+  const secret = 'spawn-secret-never-in-argv';
   const built = buildBrokerSpawnArgs({
     execPath: '/runtime/node',
     cliEntryPath: '/package path/cli.js',
     configPath: '/config path/config.json',
+    config: { ...CONFIG_DEFAULTS, port: 45_685, requestTimeoutMs: 1_234, secret },
+    env: { PATH: '/usr/bin', BLOCKBENCH_MCP_SECRET: 'inherited-secret' },
   });
   assert.deepEqual(built, {
     command: '/runtime/node',
-    args: ['/package path/cli.js', '__broker', '--config', '/config path/config.json'],
-    options: { detached: true, stdio: 'ignore' },
+    args: [
+      '/package path/cli.js',
+      '__broker',
+      '--config',
+      '/config path/config.json',
+      '--port',
+      '45685',
+      '--request-timeout-ms',
+      '1234',
+      '--heartbeat-interval-ms',
+      String(CONFIG_DEFAULTS.heartbeatIntervalMs),
+      '--heartbeat-miss-limit',
+      String(CONFIG_DEFAULTS.heartbeatMissLimit),
+      '--handshake-timeout-ms',
+      String(CONFIG_DEFAULTS.handshakeTimeoutMs),
+      '--max-message-bytes',
+      String(CONFIG_DEFAULTS.maxMessageBytes),
+      '--broker-idle-timeout-ms',
+      String(CONFIG_DEFAULTS.brokerIdleTimeoutMs),
+      '--lease-idle-timeout-ms',
+      String(CONFIG_DEFAULTS.leaseIdleTimeoutMs),
+    ],
+    // The shim's resolved secret overrides whatever the broker would inherit,
+    // and reaches the broker only through its environment.
+    options: { detached: true, stdio: 'ignore', env: { PATH: '/usr/bin', BLOCKBENCH_MCP_SECRET: secret } },
   });
+  assert.ok(!built.args.some((arg) => arg.includes(secret)), 'the shared secret must never appear in the broker argv');
 
   let unreferenced = false;
   const calls: unknown[] = [];
