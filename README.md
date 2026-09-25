@@ -195,9 +195,15 @@ therefore cannot serve an adapter from this version: the new adapter reports
 `E_BROKER_VERSION_MISMATCH` and leaves that broker alone rather than killing or
 replacing it. The old broker shuts itself down once it has been idle for
 `brokerIdleTimeoutMs`; restart the adapter (or the Claude Code session that
-launched it) after that and it attaches normally. Direct mode is unaffected,
-and the Blockbench plugin is not part of this handshake, so no plugin update is
-needed.
+launched it) after that and it attaches normally. Direct mode is unaffected by
+this broker handshake, but whenever the adapter ↔ plugin protocol changes — as
+it does in this release — the Blockbench plugin must be updated and reloaded
+together with the adapter; a mismatched plugin is closed with
+`protocol_mismatch` and `health` shows `plugin_connected: false`. If an older
+adapter (for example, a 0.1.0 adapter left running in another client session)
+is still holding the port, the broker cannot start and `health` reports
+`E_PORT_IN_USE`; close that old adapter and the next tool call re-attaches
+automatically, with no need to restart the AI client.
 
 Only one AI client controls Blockbench at a time. While one client has
 control, another client's Blockbench command returns `E_CLIENT_BUSY`; health
@@ -459,6 +465,7 @@ Common failures:
 | `health` reports `E_PORT_IN_USE` | Another process (possibly an orphaned adapter) holds the port; change `--port` on both sides or free it. |
 | `health` reports `E_BROKER_VERSION_MISMATCH` | A shared broker left running from an earlier version still holds the connection. Let it idle out (`brokerIdleTimeoutMs`), then restart the adapter — or start the adapter with `--direct`. |
 | `health` reports `E_LISTENER_FAILED` | The operating system or runtime could not create the loopback listener; check local network permissions and platform policy, then restart the adapter. |
+| `health` reports `E_BROKER_UNAVAILABLE` | The broker failed to start for a reason other than a missing secret, a port conflict, or a listener failure. Once the underlying cause is resolved, the next tool call re-attaches automatically; no client restart is needed. |
 | Plugin shows “rejected the connection” | Port or secret mismatch between adapter and plugin settings. |
 | Rotated the secret but the plugin still reports “rejected the connection” | Restart the adapter, or the Claude Code session that launched it, so it loads the new secret. |
 | Plugin loads but nothing happens | Open the Blockbench devtools console (`Ctrl+Shift+I`); Blockbench logs plugin load errors there without any UI notice. |

@@ -4,6 +4,16 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
 
 ## [0.2.0] - 2026-08-28
 
+### Added
+
+- **MCP protocol revision `2026-07-28`.** The adapter also continues to
+  support `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`, and
+  `2024-10-07`, settled per connection so clients on different revisions can
+  use the same installed adapter.
+- **Multi-client support.** A per-user broker process lets multiple AI
+  clients configured with the same config file share one Blockbench
+  connection.
+
 ### Breaking changes
 
 - **POSIX default connectivity mode is now brokered, not direct.** On Linux, WSL,
@@ -11,16 +21,24 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
   detached broker process instead of binding its own WebSocket listener
   directly. Windows is unaffected (still direct by default). Use `--direct` or
   `BLOCKBENCH_MCP_DIRECT=1` to keep the previous behavior on POSIX.
-- **MCP protocol revision is now 6** (previously 5), adding the broker control
-  commands and their error codes.
+- **The adapter ↔ plugin protocol version is now 6** (previously 5), adding
+  the broker control commands and their error codes. This is the internal
+  handshake between the adapter and the Blockbench desktop plugin, not the MCP
+  protocol revision the adapter speaks to AI clients. A 0.1.0 plugin
+  connecting to this adapter is closed with `protocol_mismatch` (`health`
+  shows `plugin_connected: false`); update and reload the Blockbench plugin
+  (`dist/plugin/minecraft_blockbench_mcp.js`) together with the adapter.
 - **The `health` tool now rejects unrecognized argument keys** instead of
   silently discarding them. A call passing an undeclared key fails with
   `Input validation error: Invalid arguments for tool health: Unrecognized key: "<key>"`.
 - **Public tool input schemas moved from JSON Schema draft-07 to the 2020-12
   dialect.** Concretely: the advertised `$schema` is now
   `https://json-schema.org/draft/2020-12/schema`; fixed-length tuples are
-  advertised with `prefixItems` instead of a positional `items` array;
-  discriminated unions are advertised under `oneOf` instead of `anyOf`
+  advertised with `prefixItems` for each position, plus a single `items`
+  schema for the element type and the unchanged `minItems`/`maxItems` length
+  bound, so hosts that read only `items` (such as Codex and OpenAI function
+  calling) still see a number array; discriminated unions are advertised under
+  `oneOf` instead of `anyOf`
   (numeric-literal unions moved the other way, from a bare `enum` to `anyOf` of
   `const` branches — this is not a blanket "every union changed direction"
   claim). No runtime validation behavior changed as a result of the dialect
