@@ -85,7 +85,6 @@ for (const entry of readdirSync(scenarioRoot)) {
 }
 
 const indexEntries = [];
-let toolsListResult = null;
 
 for (const definition of definitions) {
   const observation = await runScenarioProgram(definition.program);
@@ -127,42 +126,7 @@ for (const definition of definitions) {
 
   writeJson(join(scenarioRoot, `${definition.name}.json`), fixture);
   indexEntries.push({ path: `scenarios/${definition.name}.json`, kind: 'scenario', covers: definition.covers });
-
-  if (definition.name === 'tools-list-inventory') {
-    const last = observation.stepMessages.at(-1);
-    toolsListResult = JSON.parse(last[0]).result;
-  }
 }
-
-if (toolsListResult === null) fail('the tools-list-inventory scenario did not record a tools/list result');
-
-// ---------------------------------------------------------------------------
-// Derived tool views
-// ---------------------------------------------------------------------------
-
-const tools = toolsListResult.tools;
-const toolOrder = {
-  note:
-    'The advertised tool order and the exact descriptions from tools/list, split out so an ordering or ' +
-    'wording change is a one-line diff.',
-  toolCount: tools.length,
-  order: tools.map((tool) => tool.name),
-  descriptions: Object.fromEntries(tools.map((tool) => [tool.name, tool.description])),
-  execution: Object.fromEntries(tools.map((tool) => [tool.name, tool.execution ?? null])),
-};
-writeJson(join(DEFAULT_FIXTURE_ROOT, 'tool-order.json'), toolOrder);
-indexEntries.push({ path: 'tool-order.json', kind: 'derived', covers: ['tool-inventory'] });
-
-const toolInputSchemas = {
-  note:
-    'Every advertised tools/list input schema, keyed by tool name. Two of these schemas come from a shared ' +
-    'schema with a top-level refinement, which is advertised unwrapped and re-validated inside the handler; ' +
-    'see the tool-arguments-invalid-handler-layer scenario.',
-  toolCount: tools.length,
-  schemas: Object.fromEntries(tools.map((tool) => [tool.name, tool.inputSchema])),
-};
-writeJson(join(DEFAULT_FIXTURE_ROOT, 'tool-input-schemas.json'), toolInputSchemas);
-indexEntries.push({ path: 'tool-input-schemas.json', kind: 'derived', covers: ['tool-input-schemas'] });
 
 // ---------------------------------------------------------------------------
 // Corpus index

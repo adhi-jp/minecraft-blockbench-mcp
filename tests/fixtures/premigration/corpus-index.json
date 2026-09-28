@@ -194,20 +194,6 @@
         "unknown-method",
         "unknown-tool"
       ]
-    },
-    {
-      "path": "tool-input-schemas.json",
-      "kind": "derived",
-      "covers": [
-        "tool-input-schemas"
-      ]
-    },
-    {
-      "path": "tool-order.json",
-      "kind": "derived",
-      "covers": [
-        "tool-inventory"
-      ]
     }
   ]
 }

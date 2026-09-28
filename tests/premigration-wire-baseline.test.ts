@@ -14,6 +14,12 @@
 // the controls at the end of this file fail if a ledger entry stops being
 // exercised or starts applying somewhere it does not declare.
 //
+// The tool catalogue a `tools/list` response carries (tool names, order,
+// descriptions, input schemas) is not compared with the recording: it changes
+// whenever a tool is added or reworded, and it no longer serves as a guard for
+// the migration it was frozen for. The rest of every such response, and every
+// other recorded message, is still compared in full; see `withoutToolCatalog`.
+//
 // The corpus is read from `tests/fixtures/premigration` unless
 // BLOCKBENCH_MCP_BASELINE_FIXTURE_DIR names another directory, which lets a
 // throwaway copy be corrupted on purpose to confirm these assertions are able
@@ -24,6 +30,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
+  carriesToolCatalog,
   fixtureRoot,
   listScenarioNames,
   measureUnhandledTermination,
@@ -32,6 +39,7 @@ import {
   readScenarioFixture,
   runScenarioProgram,
   sha256,
+  withoutToolCatalog,
 } from './helpers/premigration-baseline.ts';
 import type {
   ScenarioFixture,
@@ -60,8 +68,6 @@ import {
   HEALTH_STRICT_ARGUMENTS_PROBE_SITE,
   HEALTH_STRICT_ARGUMENTS_REJECTION_TEXT,
   HEALTH_STRICT_ID,
-  applyAcceptedDeviationsToAdvertisedSchema,
-  applyAcceptedDeviationsToRecordedExecutionMap,
   applyAcceptedDeviationsToRecordedMessage,
 } from './premigration-accepted-deviations.ts';
 
@@ -72,19 +78,13 @@ const SHUTDOWN_LOG_PREFIX = '[minecraft-blockbench-mcp] Shutting down';
  * measured against the current build and the current ledger.
  *
  * Every message the accepted-deviation ledger rewrites is exempt from the byte
- * comparison, because the accepted change altered its bytes. This is the count
+ * comparison, because the accepted change altered its bytes, and so is every
+ * `tools/list` response, because the tool catalogue it carries is not held to
+ * the recording. This is the count
  * of everything that is not exempt, and it is pinned rather than floored so
  * that widening the ledger has to be a deliberate, visible edit here.
  */
 const BYTE_IDENTITY_MESSAGE_COUNT = 23;
-
-/**
- * `properties` maps compared across every advertised tool input schema,
- * measured the same way. The order of property names inside each of them is
- * what a model reads the parameters in, so losing one of these maps means the
- * order check silently covers less than it did.
- */
-const ADVERTISED_PROPERTY_MAP_COUNT = 46;
 
 /**
  * The recorded terminations the harness drives with a signal, and the signal it
@@ -143,9 +143,9 @@ const deviationUsage = new DeviationUsage();
 
 /**
  * The recorded messages for one step, rewritten through the accepted-deviation
- * ledger into what must be observed now.
+ * ledger into what must be observed now, before the tool catalogue is set aside.
  */
-function expectedMessages(fixture: ScenarioFixture, stepIndex: number): unknown[] {
+function ledgerExpectedMessages(fixture: ScenarioFixture, stepIndex: number): unknown[] {
   const step = fixture.steps[stepIndex];
   return step.expect.map((entry, messageIndex) =>
     applyAcceptedDeviationsToRecordedMessage(
@@ -163,13 +163,22 @@ function expectedMessages(fixture: ScenarioFixture, stepIndex: number): unknown[
 }
 
 /**
+ * What must be observed now for one step: the ledger-rewritten recording, with
+ * any `tools/list` tool catalogue replaced by a placeholder. The replayed
+ * messages go through the same replacement before they are compared.
+ */
+function expectedMessages(fixture: ScenarioFixture, stepIndex: number): unknown[] {
+  return ledgerExpectedMessages(fixture, stepIndex).map(withoutToolCatalog);
+}
+
+/**
  * Whether the ledger rewrote a recorded message. A rewritten message can no
  * longer be held to its recorded byte identity, because the accepted change
  * altered its bytes; every other message still is.
  */
 function ledgerRewroteMessage(fixture: ScenarioFixture, stepIndex: number, messageIndex: number): boolean {
   const recorded = fixture.steps[stepIndex].expect[messageIndex].message;
-  const expected = expectedMessages(fixture, stepIndex)[messageIndex];
+  const expected = ledgerExpectedMessages(fixture, stepIndex)[messageIndex];
   return JSON.stringify(recorded) !== JSON.stringify(expected);
 }
 
@@ -208,7 +217,7 @@ for (const name of scenarioNames) {
     );
 
     fixture.steps.forEach((step, index) => {
-      const observed = parseStdoutMessages(observation.stepMessages[index]);
+      const observed = parseStdoutMessages(observation.stepMessages[index]).map(withoutToolCatalog);
       assert.deepEqual(
         observed,
         expectedMessages(fixture, index),
@@ -324,6 +333,16 @@ test('the JSON property order emitted on the wire still matches the recording', 
       step.expect.forEach((entry, messageIndex) => {
         const line = observation.stepMessages[stepIndex][messageIndex];
         if (line === undefined) return;
+        // A `tools/list` response carries the tool catalogue, which is not held
+        // to the recording, so its bytes cannot be. The order of the members
+        // around the catalogue still is.
+        if (carriesToolCatalog(entry.message)) {
+          const observedOrder = JSON.stringify(withoutToolCatalog(JSON.parse(line) as unknown));
+          if (observedOrder !== JSON.stringify(withoutToolCatalog(entry.message))) {
+            changed.push(`${name} step ${String(stepIndex)} (${step.label}) message ${String(messageIndex)}`);
+          }
+          return;
+        }
         // A message the ledger rewrites has an accepted content change, so its
         // recorded bytes cannot be reproduced. Its content is still pinned
         // exactly, by the per-scenario assertion above.
@@ -374,118 +393,6 @@ test('adapter logs stay on stderr and never appear on stdout', async () => {
       `${name}: no adapter log line was captured on stderr, so the stdout purity check has no positive control`,
     );
   }
-});
-
-test('tools/list still advertises the recorded tool order, descriptions, and execution metadata', async () => {
-  const frozen = readJsonFixture<{
-    toolCount: number;
-    order: string[];
-    descriptions: Record<string, string>;
-    execution: Record<string, unknown>;
-  }>('tool-order.json');
-  const observation = await replay('tools-list-inventory');
-  const listMessage = parseStdoutMessages(observation.stepMessages.at(-1) ?? []).at(-1);
-  const tools = ((listMessage?.result as { tools?: Array<Record<string, unknown>> } | undefined)?.tools ?? []);
-
-  assert.equal(tools.length, frozen.toolCount, 'the number of advertised tools changed');
-  assert.deepEqual(tools.map((tool) => tool.name), frozen.order, 'the advertised tool order changed');
-  assert.deepEqual(
-    Object.fromEntries(tools.map((tool) => [tool.name, tool.description])),
-    frozen.descriptions,
-    'an advertised tool description changed',
-  );
-  assert.deepEqual(
-    Object.fromEntries(tools.map((tool) => [tool.name, tool.execution ?? null])),
-    applyAcceptedDeviationsToRecordedExecutionMap(frozen.execution, deviationUsage),
-    'the per-tool execution metadata advertised in tools/list changed in a way the accepted-deviation ledger ' +
-      'does not describe',
-  );
-});
-
-test('every advertised tool input schema still matches the recorded schema', async () => {
-  const frozen = readJsonFixture<{ toolCount: number; schemas: Record<string, unknown> }>('tool-input-schemas.json');
-  const observation = await replay('tools-list-inventory');
-  const listMessage = parseStdoutMessages(observation.stepMessages.at(-1) ?? []).at(-1);
-  const tools = ((listMessage?.result as { tools?: Array<Record<string, unknown>> } | undefined)?.tools ?? []);
-  const observed = Object.fromEntries(tools.map((tool) => [tool.name, tool.inputSchema]));
-
-  assert.deepEqual(
-    Object.keys(observed).sort(),
-    Object.keys(frozen.schemas).sort(),
-    'the set of tools with an advertised input schema changed',
-  );
-  for (const toolName of Object.keys(frozen.schemas)) {
-    assert.deepEqual(
-      observed[toolName],
-      applyAcceptedDeviationsToAdvertisedSchema(toolName, frozen.schemas[toolName], deviationUsage),
-      `the advertised input schema for the ${toolName} tool changed in a way the accepted-deviation ledger ` +
-        'does not describe',
-    );
-  }
-});
-
-/**
- * The ledger accepts that members inside a schema object are serialized in a
- * different order. It does not accept a change to the order of the property
- * names themselves: that order is what a model reads the parameters in, so it
- * is held to the recording at every level of every advertised schema.
- */
-test('the order of the property names inside every advertised tool input schema is unchanged', async () => {
-  const frozen = readJsonFixture<{ schemas: Record<string, unknown> }>('tool-input-schemas.json');
-  const observation = await replay('tools-list-inventory');
-  const listMessage = parseStdoutMessages(observation.stepMessages.at(-1) ?? []).at(-1);
-  const tools = (listMessage?.result as { tools?: Array<Record<string, unknown>> } | undefined)?.tools ?? [];
-  const observed = Object.fromEntries(tools.map((tool) => [tool.name, tool.inputSchema]));
-
-  /** Every `properties` map in the document, keyed by where it was found. */
-  function propertyNameOrder(node: unknown, pointer: string, into: Map<string, string[]>): Map<string, string[]> {
-    if (Array.isArray(node)) {
-      node.forEach((child, index) => propertyNameOrder(child, `${pointer}/${String(index)}`, into));
-      return into;
-    }
-    if (typeof node !== 'object' || node === null) return into;
-    const record = node as Record<string, unknown>;
-    const properties = record.properties;
-    if (typeof properties === 'object' && properties !== null && !Array.isArray(properties)) {
-      into.set(`${pointer}/properties`, Object.keys(properties as Record<string, unknown>));
-    }
-    for (const [key, value] of Object.entries(record)) propertyNameOrder(value, `${pointer}/${key}`, into);
-    return into;
-  }
-
-  let mapsCompared = 0;
-  for (const toolName of Object.keys(frozen.schemas)) {
-    // Compare against the ledger-rewritten recording, so an inlined subschema
-    // is compared where the `$ref` used to stand rather than being skipped.
-    const expected = propertyNameOrder(
-      applyAcceptedDeviationsToAdvertisedSchema(toolName, frozen.schemas[toolName], deviationUsage),
-      toolName,
-      new Map(),
-    );
-    const actual = propertyNameOrder(observed[toolName], toolName, new Map());
-    assert.deepEqual(
-      [...actual.keys()].sort(),
-      [...expected.keys()].sort(),
-      `the ${toolName} tool advertises its object properties in a different set of places than recorded`,
-    );
-    for (const [location, names] of expected) {
-      assert.deepEqual(
-        actual.get(location),
-        names,
-        `the ${toolName} tool advertises the properties at ${location} in a different order than recorded`,
-      );
-      mapsCompared += 1;
-    }
-  }
-  // As above, the measured count rather than a round number below it: this is
-  // what stops the property-order check from quietly covering less of the
-  // advertised schemas than it did.
-  assert.equal(
-    mapsCompared,
-    ADVERTISED_PROPERTY_MAP_COUNT,
-    `${String(mapsCompared)} property map(s) were compared, not the ${String(ADVERTISED_PROPERTY_MAP_COUNT)} ` +
-      'measured when this floor was set, so the advertised schemas gained or lost an object level',
-  );
 });
 
 // ---------------------------------------------------------------------------
@@ -660,12 +567,6 @@ function recordLedgerUsageAcrossCorpus(): DeviationUsage {
         );
       });
     });
-  }
-  const order = readJsonFixture<{ execution: Record<string, unknown> }>('tool-order.json');
-  applyAcceptedDeviationsToRecordedExecutionMap(order.execution, usage);
-  const schemas = readJsonFixture<{ schemas: Record<string, unknown> }>('tool-input-schemas.json');
-  for (const [toolName, schema] of Object.entries(schemas.schemas)) {
-    applyAcceptedDeviationsToAdvertisedSchema(toolName, schema, usage);
   }
   return usage;
 }

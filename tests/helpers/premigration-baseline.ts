@@ -385,3 +385,39 @@ export function readScenarioFixture(name: string, root: string = fixtureRoot()):
 export function readJsonFixture<T>(relativePath: string, root: string = fixtureRoot()): T {
   return JSON.parse(readFileSync(join(root, relativePath), 'utf8')) as T;
 }
+
+// ---------------------------------------------------------------------------
+// The tool catalogue is not held to the recording
+// ---------------------------------------------------------------------------
+
+/**
+ * What stands in for a `tools/list` tool catalogue when a recorded message is
+ * compared with a replayed one.
+ *
+ * The catalogue (tool names, order, descriptions, input schemas, and any other
+ * per-tool member) changes whenever a tool is added or reworded, so it is not
+ * compared with the recording. Everything around it still is: `jsonrpc`, `id`,
+ * every other `result` member, and where the message sits in the session. The
+ * placeholder also keeps the requirement that such a response carries a
+ * `tools` array at all.
+ */
+export const TOOL_CATALOG_PLACEHOLDER = '<tool catalogue: not compared>';
+
+/** Whether a JSON-RPC message is a result that carries a `tools` array. */
+export function carriesToolCatalog(message: unknown): boolean {
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) return false;
+  const result = (message as Record<string, unknown>).result;
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) return false;
+  return Array.isArray((result as Record<string, unknown>).tools);
+}
+
+/**
+ * The message with its `result.tools` array replaced by
+ * `TOOL_CATALOG_PLACEHOLDER`, keeping every member in its original order.
+ * Any other message is returned unchanged.
+ */
+export function withoutToolCatalog(message: unknown): unknown {
+  if (!carriesToolCatalog(message)) return message;
+  const record = message as Record<string, unknown>;
+  return { ...record, result: { ...(record.result as Record<string, unknown>), tools: TOOL_CATALOG_PLACEHOLDER } };
+}

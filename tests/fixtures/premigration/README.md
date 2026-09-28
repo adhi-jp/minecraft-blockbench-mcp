@@ -8,6 +8,18 @@ replayed against a rebuilt executable later and compared message by message.
 edited by hand: every file is produced by
 `node scripts/capture-premigration-baseline.mjs`, except this README.
 
+**The tool catalogue is no longer frozen.** The `tools` array of a recorded
+`tools/list` response (tool names, order, descriptions, input schemas,
+`execution` metadata) stays in the recordings but is not compared with the
+current build. It guarded the MCP `2026-07-28` migration; since then the tools
+keep evolving, and holding each addition or rewording to this recording would
+need a migration-ledger entry every time. Everything around the catalogue, and
+every other recorded message, is still compared in full. The derived
+`tool-order.json` and `tool-input-schemas.json` views were removed with it.
+None of the three recorded `tools/list` responses is hash-compared against the
+current build any more; only the member order surrounding the catalogue, and
+every non-catalog member, is checked.
+
 ## Provenance
 
 | Item | Value |
@@ -144,13 +156,6 @@ including revisions that predate it. It is recorded exactly as observed rather
 than filtered, so any later decision to scope it to a specific revision shows up
 as a visible, reviewable difference.
 
-### Derived views
-
-| File | What it pins down |
-| --- | --- |
-| `tool-order.json` | Tool count, advertised order, exact description text, and `execution` metadata per tool, split out so an ordering or wording change is a one-line diff. |
-| `tool-input-schemas.json` | Every advertised `inputSchema` keyed by tool name. Compared directly against a live `tools/list`, so it is an independent check on top of the session recording. |
-
 ## Regenerating
 
 ```sh
@@ -165,11 +170,11 @@ copy, and point the replay at it:
 
 ```sh
 cp -r tests/fixtures/premigration /tmp/wire-check
-# edit one recorded schema, description, or isError flag in /tmp/wire-check
+# edit one recorded error code, envelope code, or isError flag in /tmp/wire-check
 BLOCKBENCH_MCP_BASELINE_FIXTURE_DIR=/tmp/wire-check \
   node --test --import tsx tests/premigration-wire-baseline.test.ts
 ```
 
-The affected assertions fail and name the scenario, the step, and the tool.
+The affected assertions fail and name the scenario and the step.
 Delete the copy and re-run without the variable to return to a clean pass. Never
 edit the files in this directory to make a test pass.

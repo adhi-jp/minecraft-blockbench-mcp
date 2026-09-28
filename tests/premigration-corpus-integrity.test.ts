@@ -16,7 +16,7 @@
 //     stored in this file rather than inside the corpus, so a corpus that
 //     edited itself cannot also edit the value it is checked against.
 //   - The mutation-sensitivity test copies the corpus to a throwaway directory,
-//     perturbs three named load-bearing fields in the copy, replays each
+//     perturbs named load-bearing fields in the copy, replays each
 //     through the real oracle via the BLOCKBENCH_MCP_BASELINE_FIXTURE_DIR
 //     override, and requires each one to fail a named assertion. The checked-in
 //     corpus is never written to, and a clean control run of the same
@@ -53,11 +53,15 @@ const CORPUS_RELATIVE_ROOT = 'tests/fixtures/premigration';
  * `93a203ee825161c747bb50a5df8258f43119f65f` before the dependency change, so
  * an unexplained failure means restoring the recorded files, not updating this
  * constant. Update it only together with a deliberate, reviewed corpus change.
+ *
+ * The corpus holds only the scenario recordings captured from that commit and
+ * no tool-catalogue views, since the tool catalogue is not held to the
+ * recording.
  */
-const FROZEN_CORPUS_DIGEST = '2de05dc886383e4b2fd400b5a88d3cf338ee0868fbcae47163797b46bc857bf4';
+const FROZEN_CORPUS_DIGEST = '7c0d194649d5d7a196a607145a6e802193029284be2a2cb0edaabb9439606721';
 
 /** The number of files the corpus held when the digest above was taken. */
-const FROZEN_CORPUS_FILE_COUNT = 26;
+const FROZEN_CORPUS_FILE_COUNT = 24;
 
 const sha256 = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
 
@@ -223,33 +227,6 @@ interface Perturbation {
 }
 
 const PERTURBATIONS: readonly Perturbation[] = [
-  {
-    label: 'an advertised tool description in tool-order.json',
-    namePattern: 'tool order, descriptions, and execution metadata',
-    expectedFailureText: 'an advertised tool description changed',
-    perturb(corpusCopy) {
-      const path = join(corpusCopy, 'tool-order.json');
-      const document = readJson(path);
-      const descriptions = document.descriptions as Record<string, string>;
-      assert.equal(typeof descriptions.health, 'string', 'the corpus copy records no health tool description');
-      descriptions.health = `${descriptions.health} (perturbed by the corpus mutation-sensitivity check)`;
-      writeJson(path, document);
-    },
-  },
-  {
-    label: 'a value inside an advertised input schema in tool-input-schemas.json',
-    namePattern: 'every advertised tool input schema still matches',
-    expectedFailureText: 'the advertised input schema for the read_file tool changed',
-    perturb(corpusCopy) {
-      const path = join(corpusCopy, 'tool-input-schemas.json');
-      const document = readJson(path);
-      const schemas = document.schemas as Record<string, { properties?: Record<string, { type?: string }> }>;
-      const pathProperty = schemas.read_file?.properties?.path;
-      assert.equal(pathProperty?.type, 'string', 'the corpus copy no longer records read_file.path as a string');
-      pathProperty.type = 'number';
-      writeJson(path, document);
-    },
-  },
   {
     label: 'an E_* envelope code inside a recorded scenario response',
     namePattern: 'plugin-absent-health-and-relay',

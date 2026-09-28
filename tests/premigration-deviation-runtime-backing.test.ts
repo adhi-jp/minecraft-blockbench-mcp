@@ -8,14 +8,14 @@
 // and prose is what a reviewer has to take on trust.
 //
 // Every such claim is made here against the built executable, at the exact
-// pointer the entry names, and each test records the entry it backs. The
-// control at the end then requires every escalated entry to carry backing, so a
-// future entry cannot be added to the ledger on prose alone.
+// pointer the entry names. The control at the end then requires every
+// escalated entry to carry backing, so a future entry cannot be added to the
+// ledger on prose alone.
 //
 // Two entries are backed by named assertions in
 // `tests/premigration-wire-baseline.test.ts` rather than here: the member-order
 // entry, whose claim is about serialization and is held by the byte-identity
-// and property-order assertions there, and the `health` strictness entry, whose
+// assertion there, and the `health` strictness entry, whose
 // live probe already lives there. Those are declared as delegated backing and
 // the assertion names are checked against that file's source, so renaming one
 // fails here instead of quietly leaving the entry unbacked.
@@ -57,7 +57,7 @@ function allocatePort(): number {
 // The backing register
 // ---------------------------------------------------------------------------
 
-type BackingKind = 'measured-here' | 'delegated';
+type BackingKind = 'delegated';
 
 interface Backing {
   /** The ledger claim this backing is responsible for, in one line. */
@@ -70,19 +70,6 @@ interface Backing {
   delegatedTo?: readonly string[];
 }
 
-/** Which ledger entry each executable claim belongs to, filled in as tests run. */
-const proven = new Map<string, string>();
-
-function recordProven(deviationId: string, observation: string): void {
-  proven.set(deviationId, observation);
-}
-
-const ADDITIONAL_PROPERTIES_ID = 'non-strict-nested-object-stops-advertising-additional-properties-false';
-const SAFE_INTEGER_ID = 'safe-integer-upper-bound-advertised-on-integer-property';
-const ONE_OF_ID = 'discriminated-union-advertised-as-one-of';
-const NUMERIC_UNION_ID = 'numeric-literal-union-advertised-as-any-of-const';
-const PROPERTY_NAMES_ID = 'record-key-schema-advertised-as-property-names';
-const TUPLE_ID = 'fixed-length-tuple-advertised-with-prefix-items';
 const MEMBER_ORDER_ID = 'advertised-schema-member-order-changed';
 const HEALTH_STRICT_ID = 'no-parameter-tool-health-now-rejects-unrecognized-arguments';
 const PACKAGE_VERSION_ID = 'reported-package-version-is-0-2-0';
@@ -94,56 +81,11 @@ const PACKAGE_VERSION_ID = 'reported-package-version-is-0-2-0';
  */
 const RUNTIME_BACKING: ReadonlyMap<string, Backing> = new Map<string, Backing>([
   [
-    ADDITIONAL_PROPERTIES_ID,
-    {
-      claim: 'an unrecognized member inside cubes[0].rotation of create_cubes is still accepted and relayed',
-      kind: 'measured-here',
-    },
-  ],
-  [
-    SAFE_INTEGER_ID,
-    {
-      claim: 'set_texture_resolution with width 1e300 is now rejected against the safe-integer ceiling',
-      kind: 'measured-here',
-    },
-  ],
-  [
-    ONE_OF_ID,
-    {
-      claim: 'an assign_texture source carrying both branches’ payloads is rejected',
-      kind: 'measured-here',
-    },
-  ],
-  [
-    NUMERIC_UNION_ID,
-    {
-      claim: 'the permitted per-face rotation set is unchanged: 90 is accepted and 45 is rejected',
-      kind: 'measured-here',
-    },
-  ],
-  [
-    PROPERTY_NAMES_ID,
-    {
-      claim: 'an unrecognized set_cube_uv faces key is still rejected and the six permitted keys still pass',
-      kind: 'measured-here',
-    },
-  ],
-  [
-    TUPLE_ID,
-    {
-      claim: 'a fourth element in a three-element tuple is still rejected under the 2020-12 prefixItems spelling',
-      kind: 'measured-here',
-    },
-  ],
-  [
     MEMBER_ORDER_ID,
     {
-      claim: 'member order carries no protocol meaning, while property-name order and unrewritten bytes stay pinned',
+      claim: 'member order carries no protocol meaning, while unrewritten bytes stay pinned',
       kind: 'delegated',
-      delegatedTo: [
-        'the JSON property order emitted on the wire still matches the recording',
-        'the order of the property names inside every advertised tool input schema is unchanged',
-      ],
+      delegatedTo: ['the JSON property order emitted on the wire still matches the recording'],
     },
   ],
   [
@@ -247,7 +189,7 @@ function dependencyLayerRejection(message: Record<string, unknown>): string | nu
 // The measured claims
 // ---------------------------------------------------------------------------
 
-test('an unrecognized member inside a create_cubes rotation is still accepted and relayed, so dropping additionalProperties changed no enforcement', async (t) => {
+test('an unrecognized member inside a create_cubes rotation is still accepted and relayed with the member stripped', async (t) => {
   const { session, plugin } = await startWorld(t);
 
   const accepted = await callTool(session, 'create_cubes', {
@@ -289,8 +231,6 @@ test('an unrecognized member inside a create_cubes rotation is still accepted an
     'an unrecognized member on the strict cube object was accepted, so this check cannot tell strict from non-strict',
   );
   assert.equal(plugin.requests('create_cubes').length, 1, 'the refused call must not have been relayed');
-
-  recordProven(ADDITIONAL_PROPERTIES_ID, 'create_cubes cubes[0].rotation accepted the undeclared member and relayed');
 });
 
 test('set_texture_resolution rejects a width above the safe-integer ceiling that the recorded build accepted', async (t) => {
@@ -319,8 +259,6 @@ test('set_texture_resolution rejects a width above the safe-integer ceiling that
     () => plugin.requests('set_texture_resolution').length === 1,
     'the accepted set_texture_resolution to reach the plugin',
   );
-
-  recordProven(SAFE_INTEGER_ID, 'set_texture_resolution width 1e300 refused against the safe-integer ceiling');
 });
 
 test('an assign_texture source carrying both union branches is rejected, so the branches really are mutually exclusive', async (t) => {
@@ -351,11 +289,9 @@ test('an assign_texture source carrying both union branches is rejected, so the 
     );
   }
   await waitUntil(() => plugin.requests('assign_texture').length === 2, 'both single-branch calls to reach the plugin');
-
-  recordProven(ONE_OF_ID, 'assign_texture source carrying both branch payloads refused, each branch alone accepted');
 });
 
-test('a fourth element in a three-element tuple is still rejected, which prefixItems alone no longer advertises', async (t) => {
+test('a three-element tuple still rejects a fourth element and a missing element', async (t) => {
   const { session, plugin } = await startWorld(t);
 
   // The advertisement moved to the 2020-12 `prefixItems` spelling. This is the
@@ -376,8 +312,6 @@ test('a fourth element in a three-element tuple is still rejected, which prefixI
   const exact = await callTool(session, 'create_cubes', { cubes: [{ from: [0, 0, 0], to: [1, 1, 1] }] });
   assert.equal(dependencyLayerRejection(exact), null, 'a three-element tuple was rejected');
   await waitUntil(() => plugin.requests('create_cubes').length === 1, 'the well-formed create_cubes to reach the plugin');
-
-  recordProven(TUPLE_ID, 'create_cubes from with four and with two elements refused, three accepted');
 });
 
 test('the permitted per-face texture rotation set is unchanged: a quarter turn is accepted and 45 degrees is rejected', async (t) => {
@@ -403,8 +337,6 @@ test('the permitted per-face texture rotation set is unchanged: a quarter turn i
     dependencyLayerRejection(refused) !== null,
     'rotation 45 was accepted, so advertising the union branch by branch widened what the server takes',
   );
-
-  recordProven(NUMERIC_UNION_ID, 'set_cube_uv face rotations 0/90/180/270 accepted and 45 refused');
 });
 
 test('the set_cube_uv faces record still takes exactly the six named faces and rejects any other key', async (t) => {
@@ -429,8 +361,6 @@ test('the set_cube_uv faces record still takes exactly the six named faces and r
     dependencyLayerRejection(refused) !== null,
     'an unrecognized faces key was accepted, so stating the key type alongside the enum lost the enforcement',
   );
-
-  recordProven(PROPERTY_NAMES_ID, 'set_cube_uv faces accepted all six named keys and refused an unnamed one');
 });
 
 // ---------------------------------------------------------------------------
@@ -464,24 +394,13 @@ test('every escalated wire deviation is backed by an executable assertion rather
       'RUNTIME_BACKING, or withdraw the entry.',
   );
 
-  const notProven: string[] = [];
   const missingDelegate: string[] = [];
   const baselineTestNames = namedTestsInBaselineFile();
   for (const [id, backing] of RUNTIME_BACKING) {
-    if (backing.kind === 'measured-here') {
-      if (!proven.has(id)) notProven.push(id);
-      continue;
-    }
     for (const name of backing.delegatedTo ?? []) {
       if (!baselineTestNames.has(name)) missingDelegate.push(`${id} -> ${name}`);
     }
   }
-  assert.deepEqual(
-    notProven,
-    [],
-    'these entries declare that their runtime claim is measured in this file, but the assertion that measures ' +
-      'it did not run or did not record itself',
-  );
   assert.deepEqual(
     missingDelegate,
     [],

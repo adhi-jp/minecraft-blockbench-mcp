@@ -15,6 +15,10 @@
 // a difference the ledger does not describe still fails, and a difference that
 // does not match what the ledger says must appear still fails.
 //
+// The tool catalogue a recorded `tools/list` response carries is not compared
+// with the current build at all, so no entry here describes it: adding a tool
+// or changing a description or input schema needs no entry.
+//
 // Two controls in `tests/premigration-wire-baseline.test.ts` guard this file
 // against drift. Both drive the ledger over the frozen corpus files directly —
 // no replay, no child process — so what they see is which entries still match
@@ -55,7 +59,6 @@
 //     `ESCALATED_DEVIATION_IDS` pins this set so it cannot grow unnoticed.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 
 export type DeviationAuthority = 'adjudicated-in-plan' | 'escalated-for-adjudication';
 
@@ -74,8 +77,7 @@ export interface AcceptedDeviation {
   /**
    * Every location this entry must rewrite, and the only ones it may rewrite.
    * Scenario entries use `<scenario> :: <step label> :: message <index>`.
-   * Advertised-schema entries use `<tool name><JSON pointer>`, deduplicated
-   * across the catalogues that carry the same tool list. An entry that changes
+   * An entry that changes
    * enforcement at a location the corpus never recorded uses the live-probe
    * form `live probe :: <what is sent> :: message <index>`, and the probe that
    * observes it is what records the entry as exercised there.
@@ -109,22 +111,10 @@ export class DeviationUsage {
 // Values shared by several entries
 // ---------------------------------------------------------------------------
 
-const DIALECT_RECORDED = 'http://json-schema.org/draft-07/schema#';
-const DIALECT_NOW = 'https://json-schema.org/draft/2020-12/schema';
-const RECORDED_EXECUTION_METADATA = { taskSupport: 'forbidden' } as const;
 const RECORDED_ERROR_TEXT_PREFIX = 'MCP error -32602: ';
 const UNKNOWN_TOOL_TEXT = /^MCP error -32602: (Tool .+ not found)$/;
 const INVALID_ARGUMENTS_TEXT = /^MCP error -32602: (Input validation error: Invalid arguments for tool ([A-Za-z_]+): )\[/;
 
-const DIALECT_ID = 'advertised-json-schema-dialect-is-2020-12';
-const TUPLE_ID = 'fixed-length-tuple-advertised-with-prefix-items';
-const REF_ID = 'shared-subschema-inlined-instead-of-ref-shared';
-const EXECUTION_ID = 'per-tool-execution-metadata-withdrawn';
-const ADDITIONAL_PROPERTIES_ID = 'non-strict-nested-object-stops-advertising-additional-properties-false';
-const NUMERIC_UNION_ID = 'numeric-literal-union-advertised-as-any-of-const';
-const PROPERTY_NAMES_ID = 'record-key-schema-advertised-as-property-names';
-const SAFE_INTEGER_ID = 'safe-integer-upper-bound-advertised-on-integer-property';
-const ONE_OF_ID = 'discriminated-union-advertised-as-one-of';
 const MEMBER_ORDER_ID = 'advertised-schema-member-order-changed';
 const UNKNOWN_TOOL_ID = 'unknown-tool-returns-jsonrpc-invalid-params';
 const VALIDATION_TEXT_ID = 'dependency-layer-validation-text-restated-by-zod-4';
@@ -193,42 +183,6 @@ export const HEALTH_STRICT_ARGUMENTS_REJECTION_TEXT =
 export const HEALTH_STRICT_ARGUMENTS_PROBE_KEY = 'foo';
 
 /**
- * Recorded locations that stop advertising `additionalProperties: false`.
- *
- * Both are `cubeRotationSchema` in `src/shared/protocol.ts`, which is a plain
- * `z.object({...})` with no `.strict()`. A plain object strips unknown keys
- * rather than rejecting them, in zod 3 and zod 4 alike, so the recorded
- * `additionalProperties: false` over-stated what the server enforced and the
- * omission now matches it. Measured against the built executable: a
- * `create_cubes` call whose `cubes[0].rotation` carries an unrecognized member
- * is still accepted and relayed, exactly as the recorded build accepted it.
- */
-const ADDITIONAL_PROPERTIES_POINTERS: readonly string[] = [
-  'create_cubes/properties/cubes/items/properties/rotation',
-  'update_cube/properties/set/properties/rotation/anyOf/0',
-];
-
-/** Recorded locations where a record key schema is now advertised. */
-const PROPERTY_NAMES_POINTERS: readonly Array<{ pointer: string; add: Record<string, unknown> }> = [
-  // `z.partialRecord(z.enum(cubeFaceNames), ...)`: the recorded schema
-  // advertised the permitted keys as a bare `enum`; the key type is now stated
-  // alongside it.
-  { pointer: 'set_cube_uv/properties/faces/propertyNames', add: { type: 'string' } },
-  // `z.record(z.string(), ...)`: the recorded schema advertised no key schema
-  // at all.
-  { pointer: 'upsert_geckolib_animation/properties/bones', add: { propertyNames: { type: 'string' } } },
-];
-
-/** Recorded integer properties that now advertise the safe-integer ceiling. */
-const SAFE_INTEGER_POINTERS: readonly string[] = [
-  'set_texture_resolution/properties/width',
-  'set_texture_resolution/properties/height',
-];
-
-/** Recorded location where a discriminated union changed keyword. */
-const ONE_OF_POINTERS: readonly string[] = ['assign_texture/properties/source'];
-
-/**
  * The exact replacement text for each recorded dependency-layer rejection.
  *
  * The invariant part of the message is asserted structurally by the applier:
@@ -283,126 +237,14 @@ export const OMITTED_ARGUMENTS_REFERENCE = {
 } as const;
 
 /**
- * The recorded tool catalogue, in recorded order. Two entries apply once per
- * tool, so naming the catalogue here makes both of their location lists a
- * statement about the whole catalogue rather than 64 hand-copied lines.
+ * The recorded `tools/list` response the ledger reads to learn whether a
+ * recorded tool took parameters.
  */
-const ADVERTISED_TOOL_NAMES: readonly string[] = [
-  'health',
-  'get_plugin_status',
-  'get_project_state',
-  'get_elements',
-  'create_cubes',
-  'update_cube',
-  'set_cube_uv',
-  'set_texture_resolution',
-  'delete_cubes',
-  'create_group',
-  'update_group',
-  'delete_group',
-  'assign_texture',
-  'read_file',
-  'write_files',
-  'save_project',
-  'capture_screenshot',
-  'validate_project',
-  'propose_scoped_directory',
-  'create_project',
-  'open_model',
-  'set_display_transform',
-  'export_model',
-  'create_geckolib_project',
-  'open_geckolib_model',
-  'export_geckolib_model',
-  'export_geckolib_animations',
-  'validate_geckolib_file',
-  'upsert_geckolib_animation',
-  'delete_geckolib_animation',
-  'get_geckolib_animation',
-  'capture_geckolib_animation_frame',
-];
-
-/** Every recorded fixed-length tuple, by tool name and pointer within it. */
-const TUPLE_SITES: readonly string[] = [
-  'create_cubes/properties/cubes/items/properties/from',
-  'create_cubes/properties/cubes/items/properties/origin',
-  'create_cubes/properties/cubes/items/properties/rotation/properties/origin',
-  'create_cubes/properties/cubes/items/properties/to',
-  'create_cubes/properties/cubes/items/properties/uv_offset',
-  'create_group/properties/origin',
-  'set_cube_uv/properties/faces/additionalProperties/properties/uv',
-  'set_cube_uv/properties/uv_offset',
-  'set_display_transform/properties/rotation',
-  'set_display_transform/properties/scale',
-  'set_display_transform/properties/translation',
-  'update_cube/properties/set/properties/from',
-  'update_cube/properties/set/properties/origin',
-  'update_cube/properties/set/properties/rotation/anyOf/0/properties/origin',
-  'update_cube/properties/set/properties/to',
-  'update_group/properties/set/properties/origin',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/position/items/properties/value/anyOf/2',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/rotation/items/properties/value/anyOf/2',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/scale/items/properties/value/anyOf/2',
-];
-
-/**
- * Every place a recorded `$ref` stood. Pointers inside an inlined subschema
- * appear too, because inlining a subschema that itself shared a subschema has
- * to resolve that one as well.
- */
-const REF_SITES: readonly string[] = [
-  'create_cubes/properties/cubes/items/properties/from/items/1',
-  'create_cubes/properties/cubes/items/properties/from/items/2',
-  'create_cubes/properties/cubes/items/properties/origin',
-  'create_cubes/properties/cubes/items/properties/origin/items/1',
-  'create_cubes/properties/cubes/items/properties/origin/items/2',
-  'create_cubes/properties/cubes/items/properties/rotation/properties/angle',
-  'create_cubes/properties/cubes/items/properties/rotation/properties/origin',
-  'create_cubes/properties/cubes/items/properties/rotation/properties/origin/items/1',
-  'create_cubes/properties/cubes/items/properties/rotation/properties/origin/items/2',
-  'create_cubes/properties/cubes/items/properties/to',
-  'create_cubes/properties/cubes/items/properties/to/items/1',
-  'create_cubes/properties/cubes/items/properties/to/items/2',
-  'create_cubes/properties/cubes/items/properties/uv_offset/items/0',
-  'create_cubes/properties/cubes/items/properties/uv_offset/items/1',
-  'create_group/properties/origin/items/1',
-  'create_group/properties/origin/items/2',
-  'set_cube_uv/properties/faces/additionalProperties/properties/uv/items/0',
-  'set_cube_uv/properties/faces/additionalProperties/properties/uv/items/1',
-  'set_cube_uv/properties/faces/additionalProperties/properties/uv/items/2',
-  'set_cube_uv/properties/faces/additionalProperties/properties/uv/items/3',
-  'set_cube_uv/properties/uv_offset/items/1',
-  'set_display_transform/properties/rotation',
-  'set_display_transform/properties/rotation/items/1',
-  'set_display_transform/properties/rotation/items/2',
-  'set_display_transform/properties/scale',
-  'set_display_transform/properties/scale/items/1',
-  'set_display_transform/properties/scale/items/2',
-  'set_display_transform/properties/translation/items/1',
-  'set_display_transform/properties/translation/items/2',
-  'update_cube/properties/set/properties/from/items/1',
-  'update_cube/properties/set/properties/from/items/2',
-  'update_cube/properties/set/properties/origin',
-  'update_cube/properties/set/properties/origin/items/1',
-  'update_cube/properties/set/properties/origin/items/2',
-  'update_cube/properties/set/properties/rotation/anyOf/0/properties/angle',
-  'update_cube/properties/set/properties/rotation/anyOf/0/properties/origin',
-  'update_cube/properties/set/properties/rotation/anyOf/0/properties/origin/items/1',
-  'update_cube/properties/set/properties/rotation/anyOf/0/properties/origin/items/2',
-  'update_cube/properties/set/properties/to',
-  'update_cube/properties/set/properties/to/items/1',
-  'update_cube/properties/set/properties/to/items/2',
-  'update_group/properties/set/properties/origin/items/1',
-  'update_group/properties/set/properties/origin/items/2',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/position',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/position/items/properties/value/anyOf/2/items/1',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/position/items/properties/value/anyOf/2/items/2',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/rotation/items/properties/value/anyOf/2/items/1',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/rotation/items/properties/value/anyOf/2/items/2',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/scale',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/scale/items/properties/value/anyOf/2/items/1',
-  'upsert_geckolib_animation/properties/bones/additionalProperties/properties/scale/items/properties/value/anyOf/2/items/2',
-];
+const RECORDED_CATALOG_REFERENCE = {
+  scenario: 'tools-list-inventory',
+  stepLabel: 'tools/list',
+  messageIndex: 0,
+} as const;
 
 /**
  * Every recorded message whose bytes this ledger changes. These are exactly
@@ -410,14 +252,11 @@ const REF_SITES: readonly string[] = [
  * listing them is what keeps that exemption from spreading.
  */
 const MEMBER_ORDER_SITES: readonly string[] = [
-  'method-inventory :: method tools/list :: message 0',
   'tool-arguments-invalid-dependency-layer :: unrecognized extra key for read_file :: message 0',
   'tool-arguments-invalid-dependency-layer :: wrong value type for read_file.path :: message 0',
   'tool-arguments-invalid-handler-layer :: validate_geckolib_file with neither optional path, accepted by the advertised schema :: message 0',
   'tool-arguments-omitted :: tools/call health with no arguments member :: message 0',
   'tool-arguments-omitted :: tools/call read_file with no arguments member :: message 0',
-  'tools-list-before-initialize :: tools/list as the very first request :: message 0',
-  'tools-list-inventory :: tools/list :: message 0',
   'unknown-method-and-unknown-tool :: unknown tool name :: message 0',
 ];
 
@@ -437,103 +276,13 @@ export const ACCEPTED_DEVIATIONS: readonly AcceptedDeviation[] = [
     expectedSites: ['unknown-method-and-unknown-tool :: unknown tool name :: message 0'],
   },
   {
-    id: EXECUTION_ID,
-    authority: 'adjudicated-in-plan',
-    appliesTo: 'every tool object in a recorded `tools/list` result and in `tool-order.json`',
-    was: 'each tool carried `execution: { "taskSupport": "forbidden" }`',
-    now: 'no tool carries an `execution` member',
-    reason:
-      'Neither specification revision defines an `execution` member on the tool type, so the recorded build advertised a field outside the contract.',
-    expectedSites: ADVERTISED_TOOL_NAMES.map((name) => `${name}/execution`),
-  },
-  {
-    id: DIALECT_ID,
-    authority: 'adjudicated-in-plan',
-    appliesTo: 'the `$schema` member at the root of every advertised tool input schema',
-    was: DIALECT_RECORDED,
-    now: DIALECT_NOW,
-    reason:
-      'The target specification states that a tool input schema defaults to JSON Schema 2020-12 when no `$schema` is present, so the advertised dialect follows it.',
-    expectedSites: ADVERTISED_TOOL_NAMES.map((name) => `${name}/$schema`),
-  },
-  {
-    id: TUPLE_ID,
-    authority: 'adjudicated-in-plan',
-    appliesTo: 'every advertised fixed-length tuple in a tool input schema',
-    was: '`{ "type": "array", "minItems": N, "maxItems": N, "items": [ ...N schemas ] }`',
-    now: '`{ "type": "array", "prefixItems": [ ...N schemas ], "items": <the one schema all N positions share>, "minItems": N, "maxItems": N }`',
-    reason:
-      'A positional `items` array is the draft-07 spelling of a tuple; 2020-12 spells it `prefixItems`. The recorded length bound is kept, and the element schema every position shares is also stated as `items`, so a client that reads only `items` still sees the element type. Runtime length enforcement is unchanged: a fourth element in a three-element tuple is still rejected.',
-    expectedSites: TUPLE_SITES,
-  },
-  {
-    id: REF_ID,
-    authority: 'adjudicated-in-plan',
-    appliesTo: 'every advertised subschema the recorded build shared through an in-document `$ref`',
-    was: '`{ "$ref": "#/<pointer into the same tool schema>" }`',
-    now: 'the referenced subschema written out in place, itself converted to 2020-12',
-    reason:
-      'Repeated subschemas are inlined rather than `$ref`-shared. The inlined value is required to equal the recorded value the pointer resolved to, so no content may change while being inlined.',
-    expectedSites: REF_SITES,
-  },
-  {
-    id: ADDITIONAL_PROPERTIES_ID,
-    authority: 'escalated-for-adjudication',
-    appliesTo: ADDITIONAL_PROPERTIES_POINTERS.join(', '),
-    was: 'the object advertised `additionalProperties: false`',
-    now: 'the object advertises no `additionalProperties` member',
-    reason:
-      'Both locations are the same non-strict `z.object` in `src/shared/protocol.ts`, which strips unknown members rather than rejecting them; the recorded advertisement over-stated the enforcement and the omission now matches it. Measured: an unrecognized member inside `cubes[0].rotation` is still accepted and relayed.',
-    expectedSites: ADDITIONAL_PROPERTIES_POINTERS.slice(),
-  },
-  {
-    id: NUMERIC_UNION_ID,
-    authority: 'escalated-for-adjudication',
-    appliesTo: 'the advertised per-face texture rotation in `set_cube_uv`',
-    was: '`{ "type": "number", "enum": [0, 90, 180, 270] }`',
-    now: '`{ "anyOf": [ { "type": "number", "const": 0 }, ... ] }`, one branch per permitted value',
-    reason:
-      'A union of numeric literals is advertised branch by branch rather than collapsed into `enum`. The permitted values are identical and runtime enforcement is unchanged: rotation 90 is accepted and rotation 45 is rejected.',
-    expectedSites: ['set_cube_uv/properties/faces/additionalProperties/properties/rotation'],
-  },
-  {
-    id: PROPERTY_NAMES_ID,
-    authority: 'escalated-for-adjudication',
-    appliesTo: PROPERTY_NAMES_POINTERS.map((entry) => entry.pointer).join(', '),
-    was: 'the record key schema was advertised as a bare `enum`, or not advertised at all',
-    now: 'the record key schema states its `type`, alongside the recorded `enum` where one existed',
-    reason:
-      'The advertisement now describes the key type the server already enforced. Measured: an unrecognized `faces` key is still rejected and the permitted key set is unchanged.',
-    expectedSites: PROPERTY_NAMES_POINTERS.map((entry) => entry.pointer),
-  },
-  {
-    id: SAFE_INTEGER_ID,
-    authority: 'escalated-for-adjudication',
-    appliesTo: SAFE_INTEGER_POINTERS.join(', '),
-    was: 'the integer property advertised only `exclusiveMinimum: 0`',
-    now: 'the integer property also advertises `maximum: 9007199254740991`',
-    reason:
-      'The dependency now enforces the safe-integer ceiling on an integer property and advertises it. This is a runtime narrowing, not an advertisement-only change: a width of 1e300 was an integer to the recorded build and is now rejected with `Too big: expected int to be <=9007199254740991`.',
-    expectedSites: SAFE_INTEGER_POINTERS.slice(),
-  },
-  {
-    id: ONE_OF_ID,
-    authority: 'escalated-for-adjudication',
-    appliesTo: ONE_OF_POINTERS.join(', '),
-    was: 'the discriminated union was advertised under `anyOf`',
-    now: 'the same branch list, unchanged member for member, is advertised under `oneOf`',
-    reason:
-      'The branches are mutually exclusive: each is strict and pinned by a distinct `kind` constant, so at most one can match. Measured: a value carrying both branches\' payloads is rejected.',
-    expectedSites: ONE_OF_POINTERS.slice(),
-  },
-  {
     id: MEMBER_ORDER_ID,
     authority: 'escalated-for-adjudication',
     appliesTo: 'the byte-level serialization of any recorded message this ledger rewrites',
-    was: 'members were serialized in the recorded order, for example `type` before `$schema` and before `description`',
+    was: 'members were serialized in the recorded order, for example `result` before `jsonrpc` and `id`',
     now: 'the same member set is serialized in a different order',
     reason:
-      'Member order inside a JSON object carries no protocol meaning. The oracle keeps the recorded byte identity as a required check for every message no ledger entry rewrites, and separately keeps asserting that the ordered list of property names at every level of every advertised schema is unchanged.',
+      'Member order inside a JSON object carries no protocol meaning. The oracle keeps the recorded byte identity as a required check for every message no ledger entry rewrites.',
     expectedSites: MEMBER_ORDER_SITES,
   },
   {
@@ -595,28 +344,15 @@ export const ACCEPTED_DEVIATIONS: readonly AcceptedDeviation[] = [
  * entry added with `escalated-for-adjudication` authority and not listed here
  * fails `tests/premigration-wire-baseline.test.ts`, so a reviewer has to see it.
  */
-export const ESCALATED_DEVIATION_IDS: readonly string[] = [
-  ADDITIONAL_PROPERTIES_ID,
-  HEALTH_STRICT_ID,
-  MEMBER_ORDER_ID,
-  NUMERIC_UNION_ID,
-  ONE_OF_ID,
-  PACKAGE_VERSION_ID,
-  PROPERTY_NAMES_ID,
-  SAFE_INTEGER_ID,
-].sort();
+export const ESCALATED_DEVIATION_IDS: readonly string[] = [HEALTH_STRICT_ID, MEMBER_ORDER_ID, PACKAGE_VERSION_ID].sort();
 
 /**
  * Notes carried alongside the escalated entries, recording what was measured
  * about runtime behaviour rather than about the advertisement.
  */
 export const ESCALATED_DEVIATION_NOTES: Readonly<Record<string, string>> = {
-  [TUPLE_ID]:
-    'The advertised tuple keeps the recorded `minItems`/`maxItems` pair beside `prefixItems`, so the advertised length bound still equals the enforced one. Runtime enforcement is unchanged: a fourth element in a three-element tuple is still rejected.',
-  [SAFE_INTEGER_ID]:
-    'One of the two escalated entries with a measured runtime effect. An integer above `Number.MAX_SAFE_INTEGER` was accepted by the recorded build and is now rejected.',
   [HEALTH_STRICT_ID]:
-    'The other escalated entry with a measured runtime effect, and the only entry whose difference the corpus does not record at all: `tools/call health` with an undeclared argument key was accepted by the recorded build and is now rejected. Measured live against the current build by the probe in `tests/premigration-wire-baseline.test.ts`.',
+    'The escalated entry with a measured runtime effect, and the only entry whose difference the corpus does not record at all: `tools/call health` with an undeclared argument key was accepted by the recorded build and is now rejected. Measured live against the current build by the probe in `tests/premigration-wire-baseline.test.ts`.',
 };
 
 // ---------------------------------------------------------------------------
@@ -629,148 +365,6 @@ function clone<T>(value: T): T {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Resolve one `#/...` pointer against the document it belongs to. */
-function resolvePointer(root: unknown, pointer: string): unknown {
-  const segments = pointer.replace(/^#\//, '').split('/');
-  let current: unknown = root;
-  for (const segment of segments) {
-    if (Array.isArray(current)) current = current[Number(segment)];
-    else if (isPlainObject(current)) current = current[segment];
-    else return undefined;
-    if (current === undefined) return undefined;
-  }
-  return current;
-}
-
-function isRecordedFixedLengthTuple(node: Record<string, unknown>): boolean {
-  return (
-    node.type === 'array' &&
-    Array.isArray(node.items) &&
-    node.minItems === node.items.length &&
-    node.maxItems === node.items.length
-  );
-}
-
-function isRecordedNumericLiteralUnion(node: Record<string, unknown>): boolean {
-  return (
-    node.type === 'number' &&
-    Array.isArray(node.enum) &&
-    node.enum.length > 0 &&
-    node.enum.every((value) => typeof value === 'number')
-  );
-}
-
-/**
- * Rewrite one recorded tool input schema into the schema that must be
- * advertised now.
- *
- * Pointer-scoped entries are applied first, against the recorded document, so
- * every pointer in this file can be checked by eye against the checked-in
- * fixture. The dialect, tuple, `$ref` and numeric-union rewrites are then
- * applied by shape while walking the document, which is what lets the site
- * controls notice a shape appearing somewhere new.
- */
-export function applyAcceptedDeviationsToAdvertisedSchema(
-  toolName: string,
-  recordedSchema: unknown,
-  usage: DeviationUsage,
-): unknown {
-  const root = clone(recordedSchema);
-
-  for (const pointer of ADDITIONAL_PROPERTIES_POINTERS) {
-    if (!pointer.startsWith(`${toolName}/`)) continue;
-    const node = resolvePointer(root, `#/${pointer.slice(toolName.length + 1)}`);
-    if (isPlainObject(node) && node.additionalProperties === false) {
-      delete node.additionalProperties;
-      usage.note(ADDITIONAL_PROPERTIES_ID, pointer);
-    }
-  }
-  for (const { pointer, add } of PROPERTY_NAMES_POINTERS) {
-    if (!pointer.startsWith(`${toolName}/`)) continue;
-    const node = resolvePointer(root, `#/${pointer.slice(toolName.length + 1)}`);
-    if (isPlainObject(node)) {
-      Object.assign(node, add);
-      usage.note(PROPERTY_NAMES_ID, pointer);
-    }
-  }
-  for (const pointer of SAFE_INTEGER_POINTERS) {
-    if (!pointer.startsWith(`${toolName}/`)) continue;
-    const node = resolvePointer(root, `#/${pointer.slice(toolName.length + 1)}`);
-    if (isPlainObject(node) && node.type === 'integer' && node.maximum === undefined) {
-      node.maximum = Number.MAX_SAFE_INTEGER;
-      usage.note(SAFE_INTEGER_ID, pointer);
-    }
-  }
-  for (const pointer of ONE_OF_POINTERS) {
-    if (!pointer.startsWith(`${toolName}/`)) continue;
-    const node = resolvePointer(root, `#/${pointer.slice(toolName.length + 1)}`);
-    if (isPlainObject(node) && Array.isArray(node.anyOf) && node.oneOf === undefined) {
-      node.oneOf = node.anyOf;
-      delete node.anyOf;
-      usage.note(ONE_OF_ID, pointer);
-    }
-  }
-
-  const walk = (node: unknown, pointer: string, depth: number): unknown => {
-    if (depth > 32) throw new Error(`${toolName}${pointer}: recorded schema nests deeper than the ledger will follow`);
-    if (Array.isArray(node)) return node.map((child, index) => walk(child, `${pointer}/${index}`, depth + 1));
-    if (!isPlainObject(node)) return node;
-
-    if (typeof node.$ref === 'string') {
-      const target = resolvePointer(root, node.$ref);
-      if (target === undefined) {
-        throw new Error(`${toolName}${pointer}: recorded $ref ${node.$ref} does not resolve inside the recorded schema`);
-      }
-      usage.note(REF_ID, `${toolName}${pointer}`);
-      return walk(clone(target), pointer, depth + 1);
-    }
-
-    const rewritten: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(node)) rewritten[key] = walk(value, `${pointer}/${key}`, depth + 1);
-
-    if (rewritten.$schema === DIALECT_RECORDED) {
-      rewritten.$schema = DIALECT_NOW;
-      usage.note(DIALECT_ID, `${toolName}${pointer}/$schema`);
-    }
-    if (isRecordedFixedLengthTuple(rewritten)) {
-      const elements = rewritten.items as unknown[];
-      if (!elements.every((element) => isDeepStrictEqual(element, elements[0]))) {
-        throw new Error(`${toolName}${pointer}: recorded tuple positions differ, so no single items schema describes them`);
-      }
-      rewritten.prefixItems = elements;
-      rewritten.items = clone(elements[0]);
-      usage.note(TUPLE_ID, `${toolName}${pointer}`);
-    }
-    if (isRecordedNumericLiteralUnion(rewritten)) {
-      const values = rewritten.enum as number[];
-      delete rewritten.type;
-      delete rewritten.enum;
-      rewritten.anyOf = values.map((value) => ({ type: 'number', const: value }));
-      usage.note(NUMERIC_UNION_ID, `${toolName}${pointer}`);
-    }
-    return rewritten;
-  };
-
-  return walk(root, '', 0);
-}
-
-/** Rewrite the `execution` map that `tool-order.json` records. */
-export function applyAcceptedDeviationsToRecordedExecutionMap(
-  recorded: Readonly<Record<string, unknown>>,
-  usage: DeviationUsage,
-): Record<string, unknown> {
-  const rewritten: Record<string, unknown> = {};
-  for (const [toolName, value] of Object.entries(recorded)) {
-    if (JSON.stringify(value) === JSON.stringify(RECORDED_EXECUTION_METADATA)) {
-      rewritten[toolName] = null;
-      usage.note(EXECUTION_ID, `${toolName}/execution`);
-    } else {
-      rewritten[toolName] = value;
-    }
-  }
-  return rewritten;
 }
 
 export interface RecordedMessageContext {
@@ -787,36 +381,40 @@ function siteOf(context: RecordedMessageContext): string {
   return `${context.scenario} :: ${context.stepLabel} :: message ${String(context.messageIndex)}`;
 }
 
-function readRecordedCatalogProperties(fixtureRoot: string): Record<string, unknown> {
-  const raw = readFileSync(join(fixtureRoot, 'tool-input-schemas.json'), 'utf8');
-  return (JSON.parse(raw) as { schemas: Record<string, { properties?: Record<string, unknown> }> }).schemas;
+interface RecordedMessageReference {
+  readonly scenario: string;
+  readonly stepLabel: string;
+  readonly messageIndex: number;
 }
 
-function recordedToolTakesNoParameters(fixtureRoot: string, toolName: string): boolean {
-  const schema = readRecordedCatalogProperties(fixtureRoot)[toolName] as
-    | { properties?: Record<string, unknown> }
-    | undefined;
-  return schema !== undefined && Object.keys(schema.properties ?? {}).length === 0;
-}
-
-function readRecordedReferenceResult(fixtureRoot: string): unknown {
-  const raw = readFileSync(
-    join(fixtureRoot, 'scenarios', `${OMITTED_ARGUMENTS_REFERENCE.scenario}.json`),
-    'utf8',
-  );
+function readRecordedMessage(fixtureRoot: string, reference: RecordedMessageReference): unknown {
+  const raw = readFileSync(join(fixtureRoot, 'scenarios', `${reference.scenario}.json`), 'utf8');
   const fixture = JSON.parse(raw) as {
     steps: Array<{ label: string; expect: Array<{ message: unknown }> }>;
   };
-  const step = fixture.steps.find((entry) => entry.label === OMITTED_ARGUMENTS_REFERENCE.stepLabel);
+  const step = fixture.steps.find((entry) => entry.label === reference.stepLabel);
   if (step === undefined) {
     throw new Error(
-      `the ledger expects ${OMITTED_ARGUMENTS_REFERENCE.scenario} to record a step labelled ` +
-        `${JSON.stringify(OMITTED_ARGUMENTS_REFERENCE.stepLabel)}`,
+      `the ledger expects ${reference.scenario} to record a step labelled ${JSON.stringify(reference.stepLabel)}`,
     );
   }
-  const message = step.expect[OMITTED_ARGUMENTS_REFERENCE.messageIndex]?.message;
-  if (message === undefined) throw new Error('the referenced recorded result is missing');
+  const message = step.expect[reference.messageIndex]?.message;
+  if (message === undefined) throw new Error(`the referenced recorded message in ${reference.scenario} is missing`);
   return message;
+}
+
+/**
+ * Whether a tool advertised no parameters when the corpus was recorded, read
+ * from the recorded `tools/list` response. That catalogue is no longer compared
+ * with the current build, but it is still the record of what each tool
+ * accepted at the time the recorded rejection was captured.
+ */
+function recordedToolTakesNoParameters(fixtureRoot: string, toolName: string): boolean {
+  const message = readRecordedMessage(fixtureRoot, RECORDED_CATALOG_REFERENCE) as {
+    result?: { tools?: Array<{ name?: unknown; inputSchema?: { properties?: Record<string, unknown> } }> };
+  };
+  const tool = message.result?.tools?.find((entry) => entry.name === toolName);
+  return tool?.inputSchema !== undefined && Object.keys(tool.inputSchema.properties ?? {}).length === 0;
 }
 
 function textResultOf(message: unknown): { result: Record<string, unknown>; text: string } | null {
@@ -888,27 +486,6 @@ export function applyAcceptedDeviationsToRecordedMessage(
 ): unknown {
   const site = siteOf(context);
 
-  // `tools/list` catalogue: withdraw `execution` and modernize every schema.
-  if (isPlainObject(recordedMessage)) {
-    const result = recordedMessage.result;
-    if (isPlainObject(result) && Array.isArray(result.tools)) {
-      const rewritten = clone(recordedMessage) as Record<string, unknown>;
-      const tools = (rewritten.result as { tools: Array<Record<string, unknown>> }).tools;
-      for (const tool of tools) {
-        const toolName = String(tool.name);
-        if (JSON.stringify(tool.execution) === JSON.stringify(RECORDED_EXECUTION_METADATA)) {
-          delete tool.execution;
-          usage.note(EXECUTION_ID, `${toolName}/execution`);
-        }
-        if (tool.inputSchema !== undefined) {
-          tool.inputSchema = applyAcceptedDeviationsToAdvertisedSchema(toolName, tool.inputSchema, usage);
-        }
-      }
-      usage.note(MEMBER_ORDER_ID, site);
-      return rewritten;
-    }
-  }
-
   const serverInfoRewrite = withRewrittenServerInfoVersion(recordedMessage);
   if (serverInfoRewrite !== null) {
     usage.note(PACKAGE_VERSION_ID, site);
@@ -941,7 +518,7 @@ export function applyAcceptedDeviationsToRecordedMessage(
     if (omittedArguments && recordedToolTakesNoParameters(context.fixtureRoot, toolName)) {
       usage.note(OMITTED_ARGUMENTS_ID, site);
       usage.note(MEMBER_ORDER_ID, site);
-      const reference = readRecordedReferenceResult(context.fixtureRoot);
+      const reference = readRecordedMessage(context.fixtureRoot, OMITTED_ARGUMENTS_REFERENCE);
       const referenceVersionRewrite = withRewrittenHealthAdapterVersion(reference);
       if (referenceVersionRewrite !== null) {
         usage.note(PACKAGE_VERSION_ID, site);
