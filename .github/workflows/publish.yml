@@ -1,0 +1,64 @@
+name: Publish to npm
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# `npm run check` is not repeated here: it needs the Blockbench type checkout,
+# and the tagged commit's CI already ran it. Tag only a `main` commit whose CI
+# passed.
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify the pushed tag matches the package version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Narrow the ephemeral port range away from the test band
+        continue-on-error: true
+        run: |
+          echo "ephemeral port range (initial): $(cat /proc/sys/net/ipv4/ip_local_port_range)"
+          sudo sysctl -w net.ipv4.ip_local_port_range="49152 60999" || true
+          echo "ephemeral port range (effective): $(cat /proc/sys/net/ipv4/ip_local_port_range)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Verify the packed package
+        run: npm run test:package
+
+      # Trusted publishing (OIDC) needs npm 11.5.1 or later; Node 22 bundles
+      # npm 10, so npm is pinned to 11.5.x for this step only.
+      - name: Publish to npm
+        run: npm exec --yes --package=npm@~11.5.1 -- npm publish --access public
