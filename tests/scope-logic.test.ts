@@ -122,6 +122,24 @@ test('segment walk joins drive-root and trailing-slash scopes without doubling s
   assert.equal(trailing.ok, false, 'trailing-slash scope roots must still detect symlinks');
 });
 
+test('segment walk matches entry names ignoring case, as case-insensitive filesystems resolve them', () => {
+  const linked = findSymlinkComponent('/scope', '/scope/renders/new.png', (dir) =>
+    dir === '/scope' ? [{ name: 'Renders', isSymlink: true }] : null,
+  );
+  assert.equal(linked.ok, false, 'a symlink whose name differs only in case must be rejected');
+  if (!linked.ok) assert.equal(linked.error.code, 'E_PATH_OUTSIDE_SCOPE');
+
+  const listed: string[] = [];
+  const plain = findSymlinkComponent('/scope', '/scope/renders/new.png', (dir) => {
+    listed.push(dir);
+    if (dir === '/scope') return [{ name: 'Renders', isSymlink: false }];
+    if (dir === '/scope/Renders') return [{ name: 'other.png', isSymlink: false }];
+    return null;
+  });
+  assert.equal(plain.ok, true, 'a differently cased real directory still passes');
+  assert.deepEqual(listed, ['/scope', '/scope/Renders'], 'the walk descends through the matching entry');
+});
+
 test('normalizePath handles UNC prefixes and drive roots', () => {
   assert.equal(normalizePath('//server/share/dir/../file'), '//server/share/file');
   assert.equal(normalizePath('C:/'), 'C:/');

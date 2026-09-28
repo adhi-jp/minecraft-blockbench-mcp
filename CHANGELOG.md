@@ -17,6 +17,10 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
 - Java project tabs opened via `open_model` are now named after the opened file.
 - `force` is no longer needed on `create_project`, `open_model`, `create_geckolib_project`, or `open_geckolib_model`: other open tabs, saved or not, are left untouched. The parameter is still accepted for compatibility but has no effect.
 
+### Fixed
+
+- On case-insensitive filesystems (Windows, default macOS), `write_files` and the capture tools' `output_path` now reject a path that reaches a symbolic link inside the scoped directory through a differently cased name (for example `renders/` for a link named `Renders`).
+
 ### Breaking changes
 
 - **`capture_screenshot` and `capture_geckolib_animation_frame` no longer return a `data_url` text field by default.** Without `output_path`, results now return the PNG as MCP image content instead. With `output_path`, results return `path` and `bytes` in place of `data_url`.

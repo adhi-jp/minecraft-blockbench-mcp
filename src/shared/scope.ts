@@ -5,9 +5,9 @@
 // Path policy: comparisons are case-sensitive and lexical. Both '/' and '\'
 // are accepted as separators in input; normalized output uses '/'. Windows
 // drive letters ('C:') and UNC prefixes ('//server/share') are preserved.
-// Duplicate-destination detection additionally folds case and Unicode (NFC)
-// because the common Blockbench desktop filesystems (Windows, macOS) are
-// case-insensitive.
+// Duplicate-destination detection additionally folds case and Unicode (NFC),
+// and the symlink check folds case, because the common Blockbench desktop
+// filesystems (Windows, macOS) are case-insensitive.
 
 import type { ErrorCode } from './protocol.js';
 
@@ -167,7 +167,8 @@ export function resolveInScope(
 /**
  * Segment-walk symlink rejection. Walks each component of `normalizedPath`
  * strictly below the (normalized) scope root and rejects the path when any
- * component — including the final one — is a symbolic link. Blockbench's
+ * component — including the final one — is a symbolic link, matching entry
+ * names ignoring case. Blockbench's
  * scoped filesystem does not resolve symlinks, so a link inside the scope
  * could otherwise escape it.
  *
@@ -206,9 +207,12 @@ export function findSymlinkComponent(
   for (const segment of segments) {
     const entries = listDir(currentDir);
     if (entries === null) return { ok: true }; // remaining components do not exist yet
-    const entry = entries.find((e) => e.name === segment);
-    if (entry === undefined) return { ok: true }; // this component does not exist yet
-    if (entry.isSymlink) {
+    // Case-insensitive filesystems resolve a differently cased name to the
+    // same entry, so a link matching the segment ignoring case is rejected.
+    const folded = segment.toLowerCase();
+    const matches = entries.filter((e) => e.name.toLowerCase() === folded);
+    if (matches.length === 0) return { ok: true }; // this component does not exist yet
+    if (matches.some((e) => e.isSymlink)) {
       return {
         ok: false,
         error: {
@@ -218,7 +222,8 @@ export function findSymlinkComponent(
         },
       };
     }
-    currentDir = joinSegment(currentDir, segment);
+    const entry = matches.find((e) => e.name === segment) ?? matches[0];
+    currentDir = joinSegment(currentDir, entry.name);
   }
   return { ok: true };
 }
