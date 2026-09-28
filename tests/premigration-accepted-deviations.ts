@@ -122,9 +122,9 @@ const OMITTED_ARGUMENTS_ID = 'no-parameter-tool-accepts-omitted-arguments-member
 const ISSUE_ORDER_ID = 'refined-tool-issue-member-order';
 /** Exported so the live probe records usage under the entry's own identifier. */
 export const HEALTH_STRICT_ID = 'no-parameter-tool-health-now-rejects-unrecognized-arguments';
-const PACKAGE_VERSION_ID = 'reported-package-version-is-0-2-0';
+const PACKAGE_VERSION_ID = 'reported-package-version-is-0-3-0';
 const RECORDED_PACKAGE_VERSION = '0.1.0';
-const PACKAGE_VERSION_NOW = '0.2.0';
+const PACKAGE_VERSION_NOW = '0.3.0';
 
 /**
  * Every recorded location that reports the package version: the `initialize`
@@ -332,7 +332,7 @@ export const ACCEPTED_DEVIATIONS: readonly AcceptedDeviation[] = [
     was: RECORDED_PACKAGE_VERSION,
     now: PACKAGE_VERSION_NOW,
     reason:
-      'The package version was centralized to one exported constant and bumped to 0.2.0 for four release-blocking fixes and a plugin compatibility correction (docs/plans/2026-08-28-0.2.0-release-blockers-implementation-plan.md); every reported identity now derives from that constant instead of the independently hardcoded 0.1.0 the corpus predates. No wire shape, schema, or enforcement changed.',
+      'The package version was centralized to one exported constant and bumped to 0.3.0 (0.2.0 was skipped and never published) for four release-blocking fixes and a plugin compatibility correction (docs/plans/2026-08-28-0.2.0-release-blockers-implementation-plan.md); every reported identity now derives from that constant instead of the independently hardcoded 0.1.0 the corpus predates. No wire shape, schema, or enforcement changed.',
     expectedSites: PACKAGE_VERSION_SITES,
   },
 ];

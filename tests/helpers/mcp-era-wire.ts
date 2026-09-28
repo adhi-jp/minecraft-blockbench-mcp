@@ -40,7 +40,7 @@ export const MODERN_CAPABILITIES = { tools: { listChanged: false } } as const;
 /** The one server identity both eras report. */
 export const CANONICAL_SERVER_INFO = {
   name: 'minecraft-blockbench-mcp',
-  version: '0.2.0',
+  version: '0.3.0',
 } as const;
 
 export const PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';

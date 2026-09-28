@@ -72,7 +72,7 @@ interface Backing {
 
 const MEMBER_ORDER_ID = 'advertised-schema-member-order-changed';
 const HEALTH_STRICT_ID = 'no-parameter-tool-health-now-rejects-unrecognized-arguments';
-const PACKAGE_VERSION_ID = 'reported-package-version-is-0-2-0';
+const PACKAGE_VERSION_ID = 'reported-package-version-is-0-3-0';
 
 /**
  * Every ledger entry whose justification rests on runtime behaviour, and where

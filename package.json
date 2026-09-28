@@ -1,6 +1,6 @@
 {
   "name": "@adhisang/minecraft-blockbench-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP integration for Blockbench: a Claude Code-launched stdio MCP adapter plus a Blockbench desktop plugin for AI-assisted Minecraft Java block/item model editing.",
   "type": "module",
   "bin": {

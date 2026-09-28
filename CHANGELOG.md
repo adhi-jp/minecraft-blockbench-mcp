@@ -2,7 +2,9 @@
 
 All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in this file.
 
-## [0.2.0] - 2026-09-28
+## [0.3.0] - 2026-09-28
+
+0.2.0 was skipped and never published, so this release contains every change since 0.1.0.
 
 ### Added
 
