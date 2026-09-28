@@ -262,17 +262,40 @@ const openModelParams = z
       .boolean()
       .optional()
       .describe('Required when an unsaved project is open; the model opens in a separate tab.'),
+    resolve_parents: z
+      .boolean()
+      .optional()
+      .describe(
+        'Default false. When true, inline the parent chain before opening: each parent id namespace:path (default namespace minecraft) is read from <assets>/<namespace>/models/<path>.json, first under the opened model\'s own assets directory, then under each asset_roots entry. Textures merge child-first, the nearest non-empty elements are inherited, display merges per slot child-first; builtin/* and flat item parents (item/generated, item/handheld) stay as the parent. Export then writes the inlined model.',
+      ),
+    asset_roots: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Used with resolve_parents only: extra assets directories (absolute or scope-relative, inside the confirmed scoped directory) searched in order for parent models. Textures still resolve against the opened model\'s own assets directory.',
+      ),
   })
   .strict();
+/** One texture of a freshly opened project, reported after its reload from
+ * disk settled; `error` is present only when the texture failed or timed out. */
+const openedTextureSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  path: z.string().nullable(),
+  error: z.string().optional(),
+});
 const openModelResult = z.object({
   opened: z.boolean(),
   format: z.string(),
   name: z.string().optional(),
+  path: z.string(),
   counts: z.object({
     cubes: z.number().int().nonnegative(),
     groups: z.number().int().nonnegative(),
     textures: z.number().int().nonnegative(),
   }),
+  textures: z.array(openedTextureSchema),
+  warnings: z.array(z.string()),
 });
 
 const cubeRotationSchema = z.object({
@@ -676,11 +699,13 @@ const openGeckolibModelResult = z.object({
   opened: z.boolean(),
   format: z.literal('geckolib_model'),
   name: z.string().optional(),
+  path: z.string(),
   counts: z.object({
     cubes: z.number().int().nonnegative(),
     groups: z.number().int().nonnegative(),
     textures: z.number().int().nonnegative(),
   }),
+  textures: z.array(openedTextureSchema),
 });
 
 const geckolibExportParams = z
@@ -1000,7 +1025,7 @@ export const JAVA_FORMAT_COMMAND_SPECS = {
   },
   open_model: {
     description:
-      'Open a Java block/item model JSON file from the confirmed scoped directory via the java_block codec, in a new project tab. When an unsaved project is open, force:true is required.',
+      'Open a Java block/item model JSON file from the confirmed scoped directory via the java_block codec, in a new project tab named after the file. Sprite-object textures and multi-hop #texture aliases are resolved, and a model with a parent but no elements opens without a Blockbench dialog (keeping its parent for export). File-linked textures are reloaded from disk before the result returns. The result adds the resolved path, each texture with id, name, path and an error when it failed to load, and warnings for every adjustment. When an unsaved project is open, force:true is required.',
     mutates: true,
     params: openModelParams,
     result: openModelResult,
@@ -1034,7 +1059,7 @@ export const GECKOLIB_FORMAT_COMMAND_SPECS = {
   },
   open_geckolib_model: {
     description:
-      'Open a GeckoLib .bbmodel project file from the confirmed scoped directory in a new project tab; rejects .bbmodel files whose format is not geckolib_model. When an unsaved project is open, force:true is required.',
+      'Open a GeckoLib .bbmodel project file from the confirmed scoped directory in a new project tab; rejects .bbmodel files whose format is not geckolib_model. File-linked textures are reloaded from disk before the result returns; the result adds the resolved path and each texture with id, name, path and an error when it failed to load. When an unsaved project is open, force:true is required.',
     mutates: true,
     params: openGeckolibModelParams,
     result: openGeckolibModelResult,

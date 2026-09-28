@@ -288,6 +288,17 @@ path and is marked saved; saving to a path that differs from the project's
 current save path deliberately leaves the user's Ctrl+S target and the
 unsaved indicator untouched.
 
+`open_model` and `open_geckolib_model` reload file-linked textures from disk
+before returning, and report each texture's `path` and any load `error`;
+`open_model` also reports the resolved model `path` and any adjustment
+`warnings`, accepts sprite-object texture values and multi-hop `#texture`
+variable chains, and opens a model that has a parent but no elements without
+Blockbench's own child-model dialog. Java project tabs opened via `open_model`
+are named after the opened file. `open_model`'s opt-in `resolve_parents`
+(with `asset_roots`) inlines the model's parent chain from files inside the
+confirmed scoped directory before the model opens; textures still resolve
+against the opened model's own assets directory, not `asset_roots`.
+
 GeckoLib tools (they require the third-party **GeckoLib Models & Animations**
 plugin, see below): `create_geckolib_project`, `open_geckolib_model`,
 `export_geckolib_model`, `export_geckolib_animations`,

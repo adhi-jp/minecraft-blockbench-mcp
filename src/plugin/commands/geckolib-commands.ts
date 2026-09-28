@@ -27,7 +27,14 @@ import {
   type MolangValue,
   type PayloadClip,
 } from '../geckolib-animation-mapping.js';
-import { register, projectCounts, requireGeckolibPlugin, requireGeckolibFormat } from './helpers.js';
+import {
+  register,
+  projectCounts,
+  requireGeckolibPlugin,
+  requireGeckolibFormat,
+  reloadProjectTextures,
+  TEXTURE_SETTLE_TIMEOUT_MS,
+} from './helpers.js';
 import { captureScreenshotFromPreview, enqueueScreenshot } from './screenshot-helper.js';
 
 // ---------------------------------------------------------------------------
@@ -411,7 +418,17 @@ function readScopedJson(scope: ScopeManager, path: string): { parsed: unknown; n
   }
 }
 
-export function registerGeckolibCommands(session: PluginSession, scope: ScopeManager): void {
+export interface GeckolibCommandOptions {
+  /** Bound for the post-open texture reload wait. */
+  textureSettleTimeoutMs?: number;
+}
+
+export function registerGeckolibCommands(
+  session: PluginSession,
+  scope: ScopeManager,
+  options: GeckolibCommandOptions = {},
+): void {
+  const textureSettleTimeoutMs = options.textureSettleTimeoutMs ?? TEXTURE_SETTLE_TIMEOUT_MS;
   register(session, 'create_geckolib_project', (params) => {
     requireGeckolibPlugin();
     if (Project && !Project.saved && params.force !== true) {
@@ -441,7 +458,7 @@ export function registerGeckolibCommands(session: PluginSession, scope: ScopeMan
     };
   });
 
-  register(session, 'open_geckolib_model', (params) => {
+  register(session, 'open_geckolib_model', async (params) => {
     requireGeckolibPlugin();
     if (Project && !Project.saved && params.force !== true) {
       throw new CommandError(
@@ -472,11 +489,19 @@ export function registerGeckolibCommands(session: PluginSession, scope: ScopeMan
       });
     }
     Canvas.updateAll();
+    // The texture wait yields, and the user may switch tabs meanwhile; the
+    // result describes the opened project as it was before the wait.
+    const project = Project;
+    const name = project ? project.name : undefined;
+    const counts = projectCounts();
+    const textures = await reloadProjectTextures(textureSettleTimeoutMs);
     return {
       opened: true,
       format: 'geckolib_model',
-      name: Project ? Project.name : undefined,
-      counts: projectCounts(),
+      name,
+      path: normalizedPath,
+      counts,
+      textures,
     };
   });
 

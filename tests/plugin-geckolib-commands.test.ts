@@ -1,9 +1,10 @@
 // GeckoLib handler tests through the real dispatcher (bridge → session), with
 // Blockbench globals injected on globalThis. node --test runs each file in its
-// own process, so the global assignments stay file-local. Handlers that need
-// the full Blockbench runtime (newProject, codecs) are covered by manual smoke
-// testing against a live Blockbench; these tests prove the dependency/format
-// guards, the .bbmodel format precheck, and the scoped file-validation path.
+// own process, so the global assignments stay file-local. Opening runs against
+// fakes of newProject, the project codec, and texture image events; rendering
+// itself is covered by manual smoke testing against a live Blockbench. The
+// other tests prove the dependency/format guards, the .bbmodel format
+// precheck, and the scoped file-validation path.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as nodeFs from 'node:fs';
@@ -19,7 +20,7 @@ import { ScopeManager, type ScopedFsLike } from '../src/plugin/scope-manager.js'
 import { registerGeckolibCommands } from '../src/plugin/commands/geckolib-commands.js';
 import { registerModelCommands } from '../src/plugin/commands/model-commands.js';
 import { registerScopeCommands } from '../src/plugin/commands/scope-commands.js';
-import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
+import { COMMAND_SPECS, PROTOCOL_VERSION } from '../src/shared/protocol.js';
 
 const SECRET = 'geckolib-cmd-secret-42';
 // Reserved band: 42800-42899. This file used to start at 47000, which put its
@@ -85,6 +86,9 @@ function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Screencam;
   delete injectedGlobals.DefaultCameraPresets;
   delete injectedGlobals.document;
+  delete injectedGlobals.Codecs;
+  delete injectedGlobals.Canvas;
+  delete injectedGlobals.newProject;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +310,7 @@ async function makeHarness(): Promise<Harness> {
     return scope.propose(path, reason);
   });
   registerModelCommands(session, scope);
-  registerGeckolibCommands(session, scope);
+  registerGeckolibCommands(session, scope, { textureSettleTimeoutMs: 150 });
   // The shipped plugin registers this too (src/plugin/main.ts); the adapter
   // revokes any inherited scoped directory before it relays a first command.
   registerScopeCommands(session, scope);
@@ -1304,4 +1308,86 @@ test('concurrent GeckoLib animation frame captures serialize the full pose-rende
   assert.equal(FakeAnimation.selected, walk);
   assert.equal(idle.playing, false);
   assert.equal(walk.playing, true);
+});
+
+test('open_geckolib_model reloads file-linked textures before returning the resolved path and textures', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+
+  type Listener = () => void;
+  const listeners: Array<{ type: string; listener: Listener }> = [];
+  const img = {
+    addEventListener: (type: string, listener: Listener) => listeners.push({ type, listener }),
+    removeEventListener: (type: string, listener: Listener) => {
+      const index = listeners.findIndex((entry) => entry.type === type && entry.listener === listener);
+      if (index >= 0) listeners.splice(index, 1);
+    },
+  };
+  let loaded = false;
+  const linked = {
+    id: '0',
+    name: 'ghost.png',
+    path: join(harness.scopeDir, 'ghost.png'),
+    internal: false,
+    error: 0,
+    img,
+    reloads: 0,
+    reloadTexture() {
+      this.reloads += 1;
+      setTimeout(() => {
+        loaded = true;
+        for (const entry of listeners.filter((candidate) => candidate.type === 'load')) entry.listener();
+      }, 20);
+    },
+  };
+  // An embedded texture from another machine keeps a stale, non-empty path.
+  const embedded = {
+    id: '1',
+    name: 'skin.png',
+    path: 'C:\\Users\\someone\\skin.png',
+    internal: true,
+    error: 0,
+    img,
+    reloads: 0,
+    reloadTexture() {},
+  };
+  const textures = { all: [] as unknown[] };
+  let parsedPath: string | undefined;
+  injectedGlobals.Formats = { geckolib_model: {} };
+  injectedGlobals.Project = null;
+  injectedGlobals.Cube = { all: [] };
+  injectedGlobals.Group = { all: [] };
+  injectedGlobals.Texture = textures;
+  injectedGlobals.Canvas = { updateAll: () => {} };
+  injectedGlobals.newProject = () => {
+    injectedGlobals.Project = { saved: true, name: 'ghost' };
+    return true;
+  };
+  injectedGlobals.Codecs = {
+    project: {
+      parse: (_model: unknown, path: string) => {
+        parsedPath = path;
+        textures.all.push(linked, embedded);
+      },
+    },
+  };
+  nodeFs.writeFileSync(
+    join(harness.scopeDir, 'ghost.bbmodel'),
+    JSON.stringify({ meta: { format_version: '5.0', model_format: 'geckolib_model' }, name: 'ghost' }),
+  );
+
+  const outcome = await harness.bridge.request('open_geckolib_model', { path: 'ghost.bbmodel' });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.equal(COMMAND_SPECS.open_geckolib_model.result.safeParse(outcome.result).success, true);
+  const result = outcome.result as { path: string; name: string; textures: unknown[] };
+  assert.equal(result.path, join(harness.scopeDir, 'ghost.bbmodel'));
+  assert.equal(parsedPath, result.path);
+  assert.equal(result.name, 'ghost');
+  assert.deepEqual(result.textures, [
+    { id: '0', name: 'ghost.png', path: join(harness.scopeDir, 'ghost.png') },
+    { id: '1', name: 'skin.png', path: null },
+  ]);
+  assert.equal(loaded, true, 'the result waits for the reloaded image');
+  assert.deepEqual([linked.reloads, embedded.reloads], [1, 0], 'embedded textures are not reloaded');
+  assert.equal(listeners.length, 0, 'settle listeners are detached');
 });

@@ -11,7 +11,7 @@ import {
 import { blockbenchLoopToGeckolib, type BlockbenchLoopMode } from '../geckolib-animation-mapping.js';
 import { CommandError, type PluginSession } from '../session.js';
 import type { ScopeManager } from '../scope-manager.js';
-import { normalizePath } from '../../shared/scope.js';
+import { normalizePath, resolveInScope } from '../../shared/scope.js';
 import {
   readFileCommand,
   writeFilesCommand,
@@ -19,7 +19,20 @@ import {
   resolveForIo,
   resolveSingleWriteDestination,
 } from '../file-commands.js';
-import { register, requireProject, projectCounts, detectGeckolibPluginVersion } from './helpers.js';
+import {
+  register,
+  requireProject,
+  projectCounts,
+  detectGeckolibPluginVersion,
+  reloadProjectTextures,
+  TEXTURE_SETTLE_TIMEOUT_MS,
+} from './helpers.js';
+import {
+  assetsRootOf,
+  normalizeJavaModel,
+  resolveJavaModelParents,
+  type JavaModel,
+} from '../java-model-normalize.js';
 import { captureScreenshotFromPreview, enqueueScreenshot } from './screenshot-helper.js';
 
 /** Blockbench renames its Animation global (it shadows the DOM's); read the
@@ -129,7 +142,32 @@ function rotationToVector(rotation: RotationParam): [number, number, number] {
   }
 }
 
-export function registerModelCommands(session: PluginSession, scope: ScopeManager): void {
+/** Read a parent model candidate through the scope rules; null when it does
+ * not exist or its path lies outside the confirmed scope, so the search moves
+ * on to the next root. A symlinked component still throws. */
+function readScopedModelFile(scope: ScopeManager, path: string): string | null {
+  if (!resolveInScope(scope.confirmedPath, path).ok) return null;
+  const resolved = resolveForIo(scope, path);
+  if (!scope.fs.existsSync(resolved)) return null;
+  return String(scope.fs.readFileSync(resolved, 'utf8'));
+}
+
+function modelTabName(path: string): string {
+  const base = path.slice(path.lastIndexOf('/') + 1);
+  return base.replace(/\.json$/i, '');
+}
+
+export interface ModelCommandOptions {
+  /** Bound for the post-open texture reload wait. */
+  textureSettleTimeoutMs?: number;
+}
+
+export function registerModelCommands(
+  session: PluginSession,
+  scope: ScopeManager,
+  options: ModelCommandOptions = {},
+): void {
+  const textureSettleTimeoutMs = options.textureSettleTimeoutMs ?? TEXTURE_SETTLE_TIMEOUT_MS;
   register(session, 'get_project_state', (params) => {
     if (!Project) return { open: false };
     const includeObjects = params.include_objects ?? true;
@@ -197,7 +235,7 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
     return { created: true, format: 'java_block', name: params.name };
   });
 
-  register(session, 'open_model', (params) => {
+  register(session, 'open_model', async (params) => {
     if (Project && !Project.saved && params.force !== true) {
       throw new CommandError(
         'E_INVALID_PARAMS',
@@ -224,12 +262,35 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
         { path: file.path },
       );
     }
+    const warnings: string[] = [];
+    let prepared = model as JavaModel;
+    if (params.resolve_parents === true) {
+      // Every root and parent file goes through the scope rules before a tab
+      // opens, so a scope violation leaves Blockbench untouched.
+      // The model's own assets root only builds candidate paths; it may lie
+      // above a scope narrowed to one namespace, so containment is checked on
+      // each candidate file instead.
+      const assetRoots: string[] = [];
+      const ownRoot = assetsRootOf(file.path);
+      if (ownRoot !== null) assetRoots.push(ownRoot);
+      for (const root of params.asset_roots ?? []) assetRoots.push(resolveForIo(scope, root));
+      const resolved = resolveJavaModelParents(prepared, {
+        modelPath: file.path,
+        assetRoots,
+        read: (path) => readScopedModelFile(scope, path),
+      });
+      prepared = resolved.model;
+      warnings.push(...resolved.warnings);
+    }
+    const normalized = normalizeJavaModel(prepared, { parentsResolved: params.resolve_parents === true });
+    warnings.push(...normalized.warnings);
+
     const created = newProject(Formats.java_block);
     if (!created) {
       throw new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench refused to create a project for the opened model.');
     }
     try {
-      Codecs.java_block.parse!(model, file.path);
+      Codecs.java_block.parse!(normalized.model, file.path);
     } catch (error) {
       throw new CommandError('E_BLOCKBENCH_ERROR', 'The java_block codec failed to parse the model.', {
         path: file.path,
@@ -237,7 +298,22 @@ export function registerModelCommands(session: PluginSession, scope: ScopeManage
       });
     }
     Canvas.updateAll();
-    return { opened: true, format: 'java_block', name: Project ? Project.name : undefined, counts: projectCounts() };
+    const project = Project;
+    if (project) project.name = modelTabName(file.path);
+    // The texture wait yields, and the user may switch tabs meanwhile; the
+    // result describes the opened project as it was before the wait.
+    const name = project ? project.name : undefined;
+    const counts = projectCounts();
+    const textures = await reloadProjectTextures(textureSettleTimeoutMs);
+    return {
+      opened: true,
+      format: 'java_block',
+      name,
+      path: file.path,
+      counts,
+      textures,
+      warnings,
+    };
   });
 
   register(session, 'create_cubes', (params) => {

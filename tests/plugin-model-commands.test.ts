@@ -1,14 +1,15 @@
 // Model command handler tests through the real dispatcher (bridge → session),
 // with Blockbench globals injected on globalThis. node --test runs each file
-// in its own process, so the global assignments stay file-local. Handlers that
-// need the full Blockbench runtime (newProject, codecs, canvas) are covered by
-// manual smoke testing against a live Blockbench; these tests prove the
+// in its own process, so the global assignments stay file-local. The open
+// command runs against fakes of newProject, the java_block codec's dialog
+// conditions, and texture image events; rendering itself is covered by manual
+// smoke testing against a live Blockbench. The other tests prove the
 // read-back mapping, the uuid filtering, and the guard behavior.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as nodeFs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import WsClient from 'ws';
 
@@ -20,6 +21,8 @@ import { registerScopeCommands } from '../src/plugin/commands/scope-commands.js'
 import { COMMAND_SPECS } from '../src/shared/protocol.js';
 
 const SECRET = 'model-cmd-secret-17';
+/** Short settle bound so a texture that never loads costs the test little. */
+const TEST_TEXTURE_SETTLE_TIMEOUT_MS = 150;
 let nextPort = 40900;
 
 /** Arms a one-shot write failure to exercise rollback after a clean preflight. */
@@ -49,6 +52,8 @@ function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Group;
   delete injectedGlobals.Texture;
   delete injectedGlobals.Codecs;
+  delete injectedGlobals.Formats;
+  delete injectedGlobals.newProject;
   delete injectedGlobals.Blockbench;
   delete injectedGlobals.Undo;
   delete injectedGlobals.Canvas;
@@ -291,7 +296,7 @@ async function makeHarness(): Promise<Harness> {
     const { path, reason } = params as { path: string; reason?: string };
     return scope.propose(path, reason);
   });
-  registerModelCommands(session, scope);
+  registerModelCommands(session, scope, { textureSettleTimeoutMs: TEST_TEXTURE_SETTLE_TIMEOUT_MS });
   // The shipped plugin registers this too (src/plugin/main.ts); the adapter
   // revokes any inherited scoped directory before it relays a first command.
   registerScopeCommands(session, scope);
@@ -1359,4 +1364,394 @@ test('PROBE: capture_screenshot succeeds after a previous failed capture', async
   injectedGlobals.Project = { saved: true, name: 'ghost' };
   const outcome = await harness.bridge.request('capture_screenshot', { angle_preset: 'top' });
   assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+});
+
+// ---------------------------------------------------------------------------
+// open_model: a fake java_block codec that shows Blockbench's dialogs under the
+// same conditions as the real one (Blockbench 5.1.4 java_block.js parse), a
+// fake newProject, and textures whose image fires load/error events the way a
+// linked texture's image does after reloadTexture().
+// ---------------------------------------------------------------------------
+
+type ImageListener = () => void;
+
+/** Image stand-in with inspectable listeners and Blockbench's own handler
+ * slots, so a test can prove the handlers were never replaced. */
+class FakeTextureImage {
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  private listeners: Array<{ type: string; listener: ImageListener; once: boolean }> = [];
+  addEventListener(type: string, listener: ImageListener, options?: { once?: boolean }): void {
+    this.listeners.push({ type, listener, once: options?.once === true });
+  }
+  removeEventListener(type: string, listener: ImageListener): void {
+    this.listeners = this.listeners.filter((entry) => entry.type !== type || entry.listener !== listener);
+  }
+  listenerCount(): number {
+    return this.listeners.length;
+  }
+  fire(type: 'load' | 'error'): void {
+    if (type === 'load') this.onload?.();
+    if (type === 'error') this.onerror?.();
+    for (const entry of [...this.listeners]) {
+      if (entry.type !== type) continue;
+      if (entry.once) this.removeEventListener(type, entry.listener);
+      entry.listener();
+    }
+  }
+}
+
+type ReloadBehavior = 'load' | 'sync-load' | 'error-then-late-load' | 'never';
+
+class FakeOpenedTexture {
+  id: string;
+  name: string;
+  path: string;
+  internal: boolean;
+  error = 0;
+  img = new FakeTextureImage();
+  reloads = 0;
+  loadedAfterReload = false;
+  private readonly behavior: ReloadBehavior;
+  private readonly beforeLoad: (() => void) | undefined;
+  constructor(options: {
+    id: string;
+    name: string;
+    path?: string;
+    internal?: boolean;
+    behavior?: ReloadBehavior;
+    /** Runs just before the asynchronous `load` event fires. */
+    beforeLoad?: () => void;
+  }) {
+    this.id = options.id;
+    this.name = options.name;
+    this.path = options.path ?? '';
+    this.internal = options.internal ?? false;
+    this.behavior = options.behavior ?? 'load';
+    this.beforeLoad = options.beforeLoad;
+    // Blockbench's own handlers: a failed image falls back to missing.png
+    // with the error flag set, and that fallback image then loads.
+    this.img.onerror = () => {
+      this.error = 1;
+    };
+  }
+  reloadTexture(): void {
+    this.reloads += 1;
+    this.error = 0;
+    if (this.behavior === 'load') {
+      setTimeout(() => {
+        this.beforeLoad?.();
+        this.loadedAfterReload = true;
+        this.img.fire('load');
+      }, 30);
+    } else if (this.behavior === 'sync-load') {
+      this.loadedAfterReload = true;
+      this.img.fire('load');
+    } else if (this.behavior === 'error-then-late-load') {
+      setTimeout(() => this.img.fire('error'), 10);
+      setTimeout(() => this.img.fire('load'), 400);
+    }
+  }
+}
+
+const FAKE_ITEM_PARENTS = [
+  'item/generated',
+  'minecraft:item/generated',
+  'item/handheld',
+  'minecraft:item/handheld',
+  'item/handheld_rod',
+  'minecraft:item/handheld_rod',
+  'builtin/generated',
+  'minecraft:builtin/generated',
+];
+
+interface FakeOpenRuntime {
+  parsed: Array<{ model: Record<string, unknown>; path: string }>;
+  dialogs: string[];
+  newProjects: number;
+  texturesOnParse: FakeOpenedTexture[];
+}
+
+function injectOpenRuntime(): FakeOpenRuntime {
+  const runtime: FakeOpenRuntime = { parsed: [], dialogs: [], newProjects: 0, texturesOnParse: [] };
+  const textures = { all: [] as FakeOpenedTexture[] };
+  injectedGlobals.Project = null;
+  injectedGlobals.Formats = { java_block: { id: 'java_block' } };
+  injectedGlobals.Cube = { all: [] };
+  injectedGlobals.Group = { all: [] };
+  injectedGlobals.Texture = textures;
+  injectedGlobals.Canvas = { updateAll: () => {} };
+  injectedGlobals.Blockbench = {
+    showMessageBox: (options: { translateKey: string }) => runtime.dialogs.push(options.translateKey),
+  };
+  injectedGlobals.newProject = (format: { id: string }) => {
+    runtime.newProjects += 1;
+    injectedGlobals.Project = { saved: true, name: '' };
+    injectedGlobals.Format = format;
+    return true;
+  };
+  injectedGlobals.Codecs = {
+    java_block: {
+      parse: (model: Record<string, unknown>, path: string) => {
+        runtime.parsed.push({ model: structuredClone(model), path });
+        if (!model.elements && !model.parent && !model.display && !model.textures) {
+          runtime.dialogs.push('invalid_model');
+          return;
+        }
+        const modelTextures = model.textures as Record<string, unknown> | undefined;
+        const flatSprite =
+          !model.elements &&
+          FAKE_ITEM_PARENTS.includes(model.parent as string) &&
+          modelTextures !== undefined &&
+          typeof modelTextures.layer0 === 'string';
+        if (!flatSprite && !model.elements && model.parent) {
+          runtime.dialogs.push('child_model_only');
+        }
+        textures.all.push(...runtime.texturesOnParse);
+      },
+    },
+  };
+  return runtime;
+}
+
+function writeScopedJson(scopeDir: string, relativePath: string, content: unknown): void {
+  const path = join(scopeDir, relativePath);
+  nodeFs.mkdirSync(join(path, '..'), { recursive: true });
+  nodeFs.writeFileSync(path, typeof content === 'string' ? content : JSON.stringify(content));
+}
+
+const LAMP = 'assets/mymod/models/block/lamp.json';
+
+interface OpenModelResult {
+  opened: boolean;
+  name?: string;
+  path: string;
+  textures: Array<{ id: string; name: string; path: string | null; error?: string }>;
+  warnings: string[];
+}
+
+test('open_model reloads file-linked textures, waits for each to settle, and reports path, textures, and tab name', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const linked = new FakeOpenedTexture({ id: 'all', name: 'lamp.png', path: '/pack/lamp.png' });
+  const embedded = new FakeOpenedTexture({ id: 'glow', name: 'glow.png', path: '/pack/glow.png', internal: true });
+  const unlinked = new FakeOpenedTexture({ id: 'missing', name: '#missing' });
+  const broken = new FakeOpenedTexture({
+    id: 'side',
+    name: 'side.png',
+    path: '/pack/side.png',
+    behavior: 'error-then-late-load',
+  });
+  const cached = new FakeOpenedTexture({ id: 'top', name: 'top.png', path: '/pack/top.png', behavior: 'sync-load' });
+  const ownErrorHandler = broken.img.onerror;
+  runtime.texturesOnParse = [linked, embedded, unlinked, broken, cached];
+  writeScopedJson(harness.scopeDir, LAMP, {
+    elements: [{ from: [0, 0, 0], to: [16, 16, 16] }],
+    textures: { all: { sprite: 'mymod:block/lamp' }, particle: '#all' },
+  });
+
+  const outcome = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.equal(COMMAND_SPECS.open_model.result.safeParse(outcome.result).success, true, 'result matches its schema');
+  const result = outcome.result as OpenModelResult;
+  assert.equal(result.path, join(harness.scopeDir, LAMP));
+  assert.equal(result.name, 'lamp', 'the tab is named after the file without .json');
+  assert.deepEqual(result.textures, [
+    { id: 'all', name: 'lamp.png', path: '/pack/lamp.png' },
+    { id: 'glow', name: 'glow.png', path: null },
+    { id: 'missing', name: '#missing', path: null },
+    { id: 'side', name: 'side.png', path: '/pack/side.png', error: 'failed to load' },
+    { id: 'top', name: 'top.png', path: '/pack/top.png' },
+  ]);
+  assert.equal(linked.loadedAfterReload, true, 'the result waits for the reloaded image');
+  assert.deepEqual(
+    [linked.reloads, embedded.reloads, unlinked.reloads, broken.reloads],
+    [1, 0, 0, 1],
+    'only non-internal textures with a path are reloaded',
+  );
+  assert.equal(broken.img.listenerCount(), 0, 'the first event settles the texture and detaches both listeners');
+  assert.equal(cached.img.listenerCount(), 0, 'a load fired inside reloadTexture() reaches listeners attached before it');
+  assert.equal(broken.img.onerror, ownErrorHandler, "Blockbench's own image handler is never replaced");
+  assert.deepEqual(runtime.parsed[0].model.textures, { all: 'mymod:block/lamp', particle: 'mymod:block/lamp' });
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /"all".*sprite object/);
+});
+
+test('a texture whose image never fires settles by the bounded wait and is reported as timed out', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const silent = new FakeOpenedTexture({ id: 'all', name: 'a.png', path: '/pack/a.png', behavior: 'never' });
+  runtime.texturesOnParse = [silent];
+  writeScopedJson(harness.scopeDir, LAMP, { elements: [], textures: { all: 'mymod:block/a' } });
+
+  const started = Date.now();
+  const outcome = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.ok(Date.now() - started >= TEST_TEXTURE_SETTLE_TIMEOUT_MS, 'the open waited for the bound');
+  const result = outcome.result as OpenModelResult;
+  assert.deepEqual(result.textures, [{ id: 'all', name: 'a.png', path: '/pack/a.png', error: 'timed out' }]);
+  assert.equal(silent.img.listenerCount(), 0, 'listeners are detached after the bound passes');
+});
+
+test('open_model reports the opened project even when another tab becomes active during the texture wait', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const switching = new FakeOpenedTexture({
+    id: 'all',
+    name: 'a.png',
+    path: '/pack/a.png',
+    beforeLoad: () => {
+      injectedGlobals.Project = { saved: true, name: 'other tab' };
+      injectedGlobals.Cube = { all: [{}, {}] };
+      injectedGlobals.Group = { all: [{}] };
+      injectedGlobals.Texture = { all: [] };
+    },
+  });
+  runtime.texturesOnParse = [switching];
+  writeScopedJson(harness.scopeDir, LAMP, { elements: [], textures: { all: 'mymod:block/a' } });
+
+  const outcome = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.equal(switching.loadedAfterReload, true, 'the tab switched before the texture settled');
+  const result = outcome.result as OpenModelResult & { counts: unknown };
+  assert.equal(result.name, 'lamp');
+  assert.deepEqual(result.counts, { cubes: 0, groups: 0, textures: 1 });
+  assert.deepEqual(result.textures, [{ id: 'all', name: 'a.png', path: '/pack/a.png' }]);
+});
+
+test('parent-only, builtin, and sprite-less item models reach the codec with empty elements and no dialog', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const childModels = [
+    { parent: 'block/x' },
+    { parent: 'block/x', textures: { all: 'mymod:block/lamp' } },
+    { parent: 'builtin/entity' },
+    { parent: 'item/generated' },
+    { parent: 'item/generated', textures: { layer1: 'mymod:item/overlay' } },
+  ];
+  for (const child of childModels) {
+    writeScopedJson(harness.scopeDir, LAMP, child);
+    const outcome = await harness.bridge.request('open_model', { path: LAMP });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+    const received = runtime.parsed.at(-1)!.model;
+    assert.deepEqual(received.elements, [], JSON.stringify(child));
+    assert.equal(received.parent, child.parent, 'the parent is kept for export');
+    assert.equal((outcome.result as OpenModelResult).warnings.length, 1);
+  }
+  const sprite = { parent: 'item/generated', textures: { layer0: 'mymod:item/lamp' } };
+  writeScopedJson(harness.scopeDir, LAMP, sprite);
+  const spriteOutcome = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(spriteOutcome.ok, true, JSON.stringify(spriteOutcome.error));
+  assert.deepEqual(runtime.parsed.at(-1)!.model, sprite, 'a flat item sprite reaches the codec unchanged');
+  assert.deepEqual(runtime.dialogs, [], 'no Blockbench dialog was shown');
+});
+
+test('resolve_parents inlines a scoped parent chain from the model assets root, then asset_roots in order', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const cube = [{ from: [0, 0, 0], to: [16, 16, 16], faces: { up: { texture: '#up' } } }];
+  writeScopedJson(harness.scopeDir, LAMP, { parent: 'mymod:block/template', textures: { all: 'mymod:block/lamp' } });
+  writeScopedJson(harness.scopeDir, 'assets/mymod/models/block/template.json', {
+    parent: 'block/cube_all',
+    textures: { particle: '#all' },
+  });
+  writeScopedJson(harness.scopeDir, 'vanilla/assets/minecraft/models/block/cube_all.json', {
+    parent: 'block/cube',
+    textures: { up: '#all' },
+  });
+  writeScopedJson(harness.scopeDir, 'vanilla/assets/minecraft/models/block/cube.json', { elements: cube });
+  writeScopedJson(harness.scopeDir, 'other/assets/minecraft/models/block/cube.json', { elements: [{ name: 'decoy' }] });
+
+  const plain = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(plain.ok, true, JSON.stringify(plain.error));
+  assert.equal(runtime.parsed.at(-1)!.model.parent, 'mymod:block/template');
+  assert.match((plain.result as OpenModelResult).warnings[0], /"mymod:block\/template".*resolve_parents/);
+
+  const outcome = await harness.bridge.request('open_model', {
+    path: LAMP,
+    resolve_parents: true,
+    asset_roots: ['vanilla/assets', 'other/assets'],
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual((outcome.result as OpenModelResult).warnings, []);
+  const received = runtime.parsed.at(-1)!.model;
+  assert.deepEqual(received.elements, cube, 'the first asset root holding the parent wins');
+  assert.equal('parent' in received, false);
+  assert.deepEqual(received.textures, {
+    up: 'mymod:block/lamp',
+    particle: 'mymod:block/lamp',
+    all: 'mymod:block/lamp',
+  });
+  assert.deepEqual(runtime.dialogs, []);
+});
+
+test('resolve_parents treats a parent outside the scope as not found and rejects an asset root outside it before opening a tab', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+
+  // The parent id climbs one level above the scope to an existing file.
+  const outsideName = `${basename(harness.scopeDir)}-escape`;
+  const outsideFile = join(harness.scopeDir, '..', `${outsideName}.json`);
+  nodeFs.writeFileSync(outsideFile, JSON.stringify({ elements: [{ name: 'outside' }] }));
+  t.after(() => nodeFs.rmSync(outsideFile, { force: true }));
+  const escapingId = `mymod:block/../../../../../${outsideName}`;
+  writeScopedJson(harness.scopeDir, LAMP, { parent: escapingId });
+  const escapingParent = await harness.bridge.request('open_model', { path: LAMP, resolve_parents: true });
+  assert.equal(escapingParent.ok, true, JSON.stringify(escapingParent.error));
+  assert.match((escapingParent.result as OpenModelResult).warnings[0], /was not found/);
+  assert.equal(runtime.parsed.at(-1)!.model.parent, escapingId);
+  assert.deepEqual(runtime.parsed.at(-1)!.model.elements, [], 'the file outside the scope is never read');
+  const tabsBefore = runtime.newProjects;
+
+  writeScopedJson(harness.scopeDir, LAMP, { parent: 'block/x' });
+  const outsideRoot = await harness.bridge.request('open_model', {
+    path: LAMP,
+    resolve_parents: true,
+    asset_roots: ['../elsewhere/assets'],
+  });
+  assert.equal(outsideRoot.ok, false);
+  assert.equal(outsideRoot.error?.code, 'E_PATH_OUTSIDE_SCOPE');
+  assert.equal(runtime.newProjects, tabsBefore, 'no project tab was opened');
+});
+
+test('resolve_parents rejects a parent reached through a symlink that leaves the scope', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const outside = nodeFs.mkdtempSync(join(tmpdir(), 'bbmcp-outside-'));
+  t.after(() => nodeFs.rmSync(outside, { recursive: true, force: true }));
+  nodeFs.writeFileSync(join(outside, 'template.json'), JSON.stringify({ elements: [{ name: 'outside' }] }));
+  nodeFs.mkdirSync(join(harness.scopeDir, 'assets', 'mymod', 'models'), { recursive: true });
+  nodeFs.symlinkSync(outside, join(harness.scopeDir, 'assets', 'mymod', 'models', 'linked'));
+  writeScopedJson(harness.scopeDir, LAMP, { parent: 'mymod:linked/template' });
+
+  const outcome = await harness.bridge.request('open_model', { path: LAMP, resolve_parents: true });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_PATH_OUTSIDE_SCOPE');
+  assert.equal(runtime.newProjects, 0, 'no project tab was opened');
+});
+
+test('resolve_parents finds a parent inside a scope narrowed below the assets directory', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const namespaceDir = join(harness.scopeDir, 'assets', 'mymod');
+  const cube = [{ from: [0, 0, 0], to: [16, 16, 16] }];
+  writeScopedJson(namespaceDir, 'models/block/child.json', { parent: 'mymod:block/template' });
+  writeScopedJson(namespaceDir, 'models/block/template.json', { elements: cube });
+  const narrowed = await harness.bridge.request('propose_scoped_directory', { path: namespaceDir });
+  assert.equal(narrowed.ok, true, JSON.stringify(narrowed.error));
+
+  const outcome = await harness.bridge.request('open_model', { path: 'models/block/child.json', resolve_parents: true });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual((outcome.result as OpenModelResult).warnings, []);
+  const received = runtime.parsed.at(-1)!.model;
+  assert.deepEqual(received.elements, cube, 'the child inherits the parent cubes');
+  assert.equal('parent' in received, false);
 });

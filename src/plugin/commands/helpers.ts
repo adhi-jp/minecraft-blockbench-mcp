@@ -73,3 +73,109 @@ export function requireGeckolibFormat(): void {
     );
   }
 }
+
+/** Upper bound for the post-open texture reload wait, shared by all textures
+ * of one open. Local files normally settle in milliseconds. */
+export const TEXTURE_SETTLE_TIMEOUT_MS = 5_000;
+
+export interface OpenedTextureReport {
+  id: string;
+  name: string;
+  path: string | null;
+  error?: string;
+}
+
+/** The texture surface the reload relies on (Blockbench 5.1.4 Texture). */
+interface ReloadableTexture {
+  id?: unknown;
+  name?: unknown;
+  path?: unknown;
+  internal?: boolean;
+  error?: unknown;
+  img: {
+    addEventListener(type: 'load' | 'error', listener: () => void): void;
+    removeEventListener(type: 'load' | 'error', listener: () => void): void;
+  };
+  reloadTexture(): void;
+}
+
+type SettleOutcome = 'load' | 'error' | 'timed out';
+
+/**
+ * Reload every file-linked texture of the current project from disk and wait
+ * until each one's image fired its first `load` or `error` event, or until the
+ * shared timeout passes. Blockbench caches a linked texture's image URL per
+ * path until its version counter changes, so a texture rewritten between two
+ * opens would otherwise show the old bytes; `reloadTexture()` bumps that
+ * counter. The first event itself is the outcome: Blockbench's own error
+ * handler may start a fallback load that resets `texture.error`. Listeners
+ * are added before the reload and never replace the texture's own
+ * `onload`/`onerror` handlers. Internal (embedded) textures and textures
+ * without a path are reported without reloading, and an internal texture
+ * reports no path because its pixels do not come from one.
+ */
+export async function reloadProjectTextures(
+  timeoutMs: number = TEXTURE_SETTLE_TIMEOUT_MS,
+): Promise<OpenedTextureReport[]> {
+  const textures = Texture.all as unknown as ReloadableTexture[];
+  const reloadable = textures.filter(
+    (texture) => texture.internal !== true && typeof texture.path === 'string' && texture.path !== '',
+  );
+  const unsettled = new Set<ReloadableTexture>(reloadable);
+  const listeners = new Map<ReloadableTexture, { load: () => void; error: () => void }>();
+  const outcomes = new Map<ReloadableTexture, SettleOutcome>();
+  let resolveAll: () => void = () => {};
+  const allSettled = new Promise<void>((resolve) => {
+    resolveAll = resolve;
+  });
+
+  const settle = (texture: ReloadableTexture, outcome: SettleOutcome): void => {
+    if (!unsettled.has(texture)) return;
+    unsettled.delete(texture);
+    outcomes.set(texture, outcome);
+    const own = listeners.get(texture);
+    if (own !== undefined) {
+      texture.img.removeEventListener('load', own.load);
+      texture.img.removeEventListener('error', own.error);
+    }
+    if (unsettled.size === 0) resolveAll();
+  };
+
+  if (reloadable.length > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      for (const texture of reloadable) {
+        const own = { load: () => settle(texture, 'load'), error: () => settle(texture, 'error') };
+        listeners.set(texture, own);
+        texture.img.addEventListener('load', own.load);
+        texture.img.addEventListener('error', own.error);
+        texture.reloadTexture();
+      }
+      await Promise.race([
+        allSettled,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      for (const texture of [...unsettled]) settle(texture, 'timed out');
+    }
+  }
+
+  return textures.map((texture) => {
+    const report: OpenedTextureReport = {
+      id: String(texture.id ?? ''),
+      name: String(texture.name ?? ''),
+      path:
+        texture.internal !== true && typeof texture.path === 'string' && texture.path !== '' ? texture.path : null,
+    };
+    const outcome = outcomes.get(texture);
+    if (outcome === 'timed out') {
+      report.error = 'timed out';
+    } else if (outcome === 'error' || (outcome === undefined && texture.error)) {
+      report.error = 'failed to load';
+    }
+    return report;
+  });
+}
