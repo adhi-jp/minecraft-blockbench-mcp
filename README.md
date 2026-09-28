@@ -394,11 +394,15 @@ every call, so installing or re-enabling GeckoLib takes effect immediately.
   the Blockbench UI since the clip was last read. Every upsert/delete is one
   undo step, so Ctrl+Z in Blockbench recovers the previous state.
 - **Still-frame screenshots**: `capture_geckolib_animation_frame` poses a named
-  animation at a still timestamp and returns `{ data_url, width, height,
-  animation, time, rendered_time, angle_preset? }`. It accepts the same
+  animation at a still timestamp and returns MCP image content, or writes a PNG
+  to `output_path` inside the scoped directory with optional `overwrite` and
+  returns `path` and `bytes`; results also carry `project`, `counts`, `width`,
+  `height`, `animation`, `time`, `rendered_time`, and `angle_preset` when one
+  was requested. It accepts the same
   optional `width`, `height`, and native `angle_preset` values as
   `capture_screenshot`; preset renders use the offscreen preview so the visible
-  camera does not move. The command is read-only for project/files: it
+  camera does not move. The command leaves the project unchanged and writes no
+  file except the `output_path` PNG: it
   temporarily marks only the target animation as playing, calls Blockbench's
   still preview, renders the screenshot, then restores the previous selected
   animation, playing flags, timeline time/playback flag, effect mute flags, and
