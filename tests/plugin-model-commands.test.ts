@@ -63,6 +63,7 @@ function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Screencam;
   delete injectedGlobals.DefaultCameraPresets;
   delete injectedGlobals.document;
+  delete injectedGlobals.osfs;
   delete (Math as unknown as Record<string, unknown>).areMultiples;
 }
 
@@ -1483,6 +1484,8 @@ function injectOpenRuntime(): FakeOpenRuntime {
   const textures = { all: [] as FakeOpenedTexture[] };
   injectedGlobals.Project = null;
   injectedGlobals.Formats = { java_block: { id: 'java_block' } };
+  // Blockbench's path separator global: '/' by default, '\\' on Windows.
+  injectedGlobals.osfs = '/';
   injectedGlobals.Cube = { all: [] };
   injectedGlobals.Group = { all: [] };
   injectedGlobals.Texture = textures;
@@ -1626,6 +1629,24 @@ test('open_model reports the opened project even when another tab becomes active
   assert.equal(result.name, 'lamp');
   assert.deepEqual(result.counts, { cubes: 0, groups: 0, textures: 1 });
   assert.deepEqual(result.textures, [{ id: 'all', name: 'a.png', path: '/pack/a.png' }]);
+});
+
+test('open_model hands the codec the model path with Blockbench native separators', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  writeScopedJson(harness.scopeDir, LAMP, { elements: [], textures: { all: 'mymod:block/a' } });
+  const modelPath = join(harness.scopeDir, LAMP).replace(/\\/g, '/');
+
+  const posix = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(posix.ok, true, JSON.stringify(posix.error));
+  assert.equal(runtime.parsed[0].path, modelPath, "with '/' the path is unchanged");
+
+  injectedGlobals.osfs = '\\';
+  const windows = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(windows.ok, true, JSON.stringify(windows.error));
+  assert.equal(runtime.parsed[1].path, modelPath.split('/').join('\\'), "with '\\' every separator is native");
+  assert.equal((windows.result as OpenModelResult).path, modelPath, 'the result path keeps normalized separators');
 });
 
 test('parent-only, builtin, and sprite-less item models reach the codec with empty elements and no dialog', async (t) => {

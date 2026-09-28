@@ -19,6 +19,7 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
 
 ### Fixed
 
+- `open_model` on Windows now resolves the model's textures; Blockbench previously received the model path with `/` separators and found none of them.
 - On case-insensitive filesystems (Windows, default macOS), `write_files` and the capture tools' `output_path` now reject a path that reaches a symbolic link inside the scoped directory through a differently cased name (for example `renders/` for a link named `Renders`).
 
 ### Breaking changes

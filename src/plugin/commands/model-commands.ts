@@ -287,7 +287,9 @@ export function registerModelCommands(
     // still be closed without a prompt.
     trackMcpProject();
     try {
-      Codecs.java_block.parse!(normalized.model, file.path);
+      // The codec splits the path on `osfs` to find the texture lookup root,
+      // so it gets native separators ('\\' on Windows).
+      Codecs.java_block.parse!(normalized.model, file.path.split('/').join(osfs));
     } catch (error) {
       throw new CommandError('E_BLOCKBENCH_ERROR', 'The java_block codec failed to parse the model.', {
         path: file.path,
