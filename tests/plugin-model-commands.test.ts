@@ -1176,7 +1176,7 @@ function makeFakePreview(id: string): FakePreview {
 /** Inject the screenshot surface: a visible selected preview, the offscreen
  * NoAAPreview singleton, native preset ids, and a screenshotPreview stub whose
  * callback timing is controllable for the serialization test. */
-function injectScreenshotProject(options: { captureDelayMs?: number; failFirstCapture?: boolean } = {}): {
+function injectScreenshotProject(options: { captureDelayMs?: number; failFirstCapture?: boolean; dataUrl?: string } = {}): {
   visible: FakePreview;
   offscreen: FakePreview;
   captures: Array<{ preview: string; options: Record<string, unknown> }>;
@@ -1188,7 +1188,10 @@ function injectScreenshotProject(options: { captureDelayMs?: number; failFirstCa
   const events: string[] = [];
   let sequence = 0;
   let failNext = options.failFirstCapture === true;
-  injectedGlobals.Project = { saved: true, name: 'ghost' };
+  injectedGlobals.Project = { uuid: 'project-model', saved: true, name: 'ghost' };
+  injectedGlobals.Cube = { all: [{}, {}, {}] };
+  injectedGlobals.Group = { all: [{}] };
+  injectedGlobals.Texture = { all: [{}, {}] };
   injectedGlobals.Format = { id: 'java_block' };
   injectedGlobals.Preview = { selected: visible };
   injectedGlobals.DefaultCameraPresets = [
@@ -1213,7 +1216,7 @@ function injectScreenshotProject(options: { captureDelayMs?: number; failFirstCa
       captures.push({ preview: preview.id, options: captureOptions });
       const finish = () => {
         events.push(`end:${id}`);
-        cb(`data:image/png;base64,capture-${id}`);
+        cb(options.dataUrl ?? `data:image/png;base64,capture-${id}`);
       };
       if (options.captureDelayMs !== undefined) {
         setTimeout(finish, options.captureDelayMs);
@@ -1312,6 +1315,9 @@ test('capture_screenshot without a preset shoots the selected preview exactly as
   const outcome = await harness.bridge.request('capture_screenshot', { width: 64 });
   assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
   const result = outcome.result as Record<string, unknown>;
+  assert.deepEqual(result.project, { uuid: 'project-model', name: 'ghost' });
+  assert.deepEqual(result.counts, { cubes: 3, groups: 1, textures: 2 });
+  assert.equal(result.data_url, 'data:image/png;base64,capture-1');
   assert.equal(captures[0].preview, 'visible');
   assert.deepEqual(
     captures[0].options,
@@ -1754,4 +1760,101 @@ test('resolve_parents finds a parent inside a scope narrowed below the assets di
   const received = runtime.parsed.at(-1)!.model;
   assert.deepEqual(received.elements, cube, 'the child inherits the parent cubes');
   assert.equal('parent' in received, false);
+});
+
+test('capture_screenshot preflights file conflicts before rendering and requires an output path for overwrite', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const dataUrl = 'data:image/png;base64,aGVsbG8=';
+  const surface = injectScreenshotProject({ dataUrl });
+  const args = {};
+  const destination = join(harness.scopeDir, 'existing.png');
+  nodeFs.writeFileSync(destination, 'original');
+  const conflict = await harness.bridge.request('capture_screenshot', { ...args, output_path: 'existing.png' });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.error?.code, 'E_FILE_EXISTS');
+  assert.equal(surface.captures.length, 0);
+  assert.equal(nodeFs.readFileSync(destination, 'utf8'), 'original');
+  for (const overwrite of [false, true]) {
+    const invalid = await harness.bridge.request('capture_screenshot', { ...args, overwrite });
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.error?.code, 'E_INVALID_PARAMS');
+    assert.equal(surface.captures.length, 0);
+  }
+  const [first, second] = await Promise.all([
+    harness.bridge.request('capture_screenshot', { ...args, output_path: 'queued.png' }),
+    harness.bridge.request('capture_screenshot', { ...args, output_path: 'queued.png' }),
+  ]);
+  assert.equal(first.ok, true, JSON.stringify(first.error));
+  assert.equal(second.ok, false);
+  assert.equal(second.error?.code, 'E_FILE_EXISTS', 'the file the earlier queued capture wrote is a conflict');
+  assert.equal(surface.captures.length, 1, 'the conflicting capture never renders');
+});
+
+test('capture_screenshot writes scoped PNG bytes and returns file metadata without a data URL', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6sAAAAABJRU5ErkJggg==';
+  const dataUrl = `data:image/png;base64,${base64}`;
+  const surface = injectScreenshotProject({ dataUrl });
+  const args = { width: 64, height: 64, angle_preset: 'top' };
+  const writes: Array<{ path: unknown; content: unknown; options: unknown }> = [];
+  const originalWrite = nodeFsAdapter.writeFileSync;
+  nodeFsAdapter.writeFileSync = (path, content, options) => {
+    writes.push({ path, content, options });
+    return originalWrite(path, content, options);
+  };
+  t.after(() => { nodeFsAdapter.writeFileSync = originalWrite; });
+  const destination = join(harness.scopeDir, 'renders', 'capture.png');
+  for (const output_path of ['renders/capture.png', destination]) {
+    const overwrite = output_path === destination;
+    const outcome = await harness.bridge.request('capture_screenshot', { ...args, output_path, overwrite });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+    const result = outcome.result as Record<string, unknown>;
+    assert.equal('data_url' in result, false);
+    assert.equal(result.path, destination);
+    assert.equal(result.bytes, Buffer.from(base64, 'base64').length);
+    assert.equal(result.width, 64);
+    assert.equal(result.height, 64);
+    assert.equal(result.angle_preset, 'top');
+    assert.deepEqual(result.project, { uuid: 'project-model', name: 'ghost' });
+    assert.deepEqual(result.counts, { cubes: 3, groups: 1, textures: 2 });
+    assert.deepEqual(nodeFs.readFileSync(destination), Buffer.from(base64, 'base64'));
+  }
+  assert.equal(surface.captures.length, 2);
+  assert.equal(writes.length, 2);
+});
+
+test('queued captures sample project identity and counts when their render starts', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectScreenshotProject({ captureDelayMs: 40 });
+  const screencam = injectedGlobals.Screencam as {
+    screenshotPreview: (preview: FakePreview, options: Record<string, unknown>, callback: (dataUrl: string) => void) => void;
+  };
+  const originalRender = screencam.screenshotPreview;
+  let renderCount = 0;
+  screencam.screenshotPreview = (preview, options, callback) => {
+    originalRender(preview, options, (dataUrl) => {
+      if (++renderCount === 1) {
+        injectedGlobals.Project = { uuid: 'project-next', name: 'next' };
+        injectedGlobals.Cube = { all: [{}] };
+        injectedGlobals.Group = { all: [] };
+        injectedGlobals.Texture = { all: [] };
+      }
+      callback(dataUrl);
+    });
+  };
+  const [first, second] = await Promise.all([
+    harness.bridge.request('capture_screenshot', {}),
+    harness.bridge.request('capture_screenshot', {}),
+  ]);
+  assert.equal(first.ok, true, JSON.stringify(first.error));
+  assert.equal(second.ok, true, JSON.stringify(second.error));
+  const firstResult = first.result as Record<string, unknown>;
+  const secondResult = second.result as Record<string, unknown>;
+  assert.deepEqual(firstResult.project, { uuid: 'project-model', name: 'ghost' });
+  assert.deepEqual(firstResult.counts, { cubes: 3, groups: 1, textures: 2 });
+  assert.deepEqual(secondResult.project, { uuid: 'project-next', name: 'next' });
+  assert.deepEqual(secondResult.counts, { cubes: 1, groups: 0, textures: 0 });
 });

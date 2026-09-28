@@ -704,7 +704,12 @@ export function registerModelCommands(
     requireProject();
     return enqueueScreenshot(async () => {
       requireProject();
-      return captureScreenshotFromPreview(params);
+      // The output preflight runs in the queue so a file an earlier queued
+      // capture wrote counts as a conflict before this one renders.
+      const outputPath = params.output_path === undefined
+        ? undefined
+        : resolveSingleWriteDestination(scope, params.output_path, params.overwrite);
+      return captureScreenshotFromPreview({ ...params, output_path: outputPath }, scope);
     });
   });
 

@@ -579,17 +579,34 @@ const captureScreenshotParams = z
       .describe(
         'Render from a native Blockbench camera preset through the offscreen preview; the visible viewport camera is never modified. Compass directions are model-space (the model\'s "front" depends on the format\'s forward_direction). Omit to capture the currently visible view.',
       ),
+    output_path: z.string().min(1).optional().describe(
+      'Write the PNG to a scope-relative path or an absolute path inside the confirmed scope; omit to return MCP image content.',
+    ),
+    overwrite: z.boolean().optional().describe('Allow replacing output_path; requires output_path.'),
   })
-  .strict();
-const captureScreenshotResult = z.object({
-  data_url: z.string(),
+  .strict()
+  .refine((params) => params.overwrite === undefined || params.output_path !== undefined, {
+    message: 'overwrite requires output_path.',
+    path: ['overwrite'],
+  });
+const captureMetadata = {
+  project: z.object({ uuid: z.string(), name: z.string() }),
+  counts: z.object({
+    cubes: z.number().int().nonnegative(),
+    groups: z.number().int().nonnegative(),
+    textures: z.number().int().nonnegative(),
+  }),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   angle_preset: z
     .enum(SCREENSHOT_ANGLE_PRESETS)
     .optional()
     .describe('Echoes the applied camera preset when one was requested.'),
-});
+};
+const captureScreenshotResult = z.union([
+  z.object({ ...captureMetadata, data_url: z.string().startsWith('data:image/png;base64,'), path: z.never().optional(), bytes: z.never().optional() }),
+  z.object({ ...captureMetadata, path: z.string(), bytes: z.number().int().nonnegative(), data_url: z.never().optional() }),
+]);
 
 
 const captureGeckolibAnimationFrameParams = z
@@ -604,20 +621,26 @@ const captureGeckolibAnimationFrameParams = z
       .describe(
         'Render the posed GeckoLib model from a native Blockbench camera preset through the offscreen preview; omit to capture the currently visible view.',
       ),
+    output_path: z.string().min(1).optional().describe(
+      'Write the PNG to a scope-relative path or an absolute path inside the confirmed scope; omit to return MCP image content.',
+    ),
+    overwrite: z.boolean().optional().describe('Allow replacing output_path; requires output_path.'),
   })
-  .strict();
-const captureGeckolibAnimationFrameResult = z.object({
-  data_url: z.string(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  .strict()
+  .refine((params) => params.overwrite === undefined || params.output_path !== undefined, {
+    message: 'overwrite requires output_path.',
+    path: ['overwrite'],
+  });
+const captureAnimationMetadata = {
+  ...captureMetadata,
   animation: z.string(),
   time: z.number().nonnegative(),
   rendered_time: z.number().nonnegative(),
-  angle_preset: z
-    .enum(SCREENSHOT_ANGLE_PRESETS)
-    .optional()
-    .describe('Echoes the applied camera preset when one was requested.'),
-});
+};
+const captureGeckolibAnimationFrameResult = z.union([
+  z.object({ ...captureAnimationMetadata, data_url: z.string().startsWith('data:image/png;base64,'), path: z.never().optional(), bytes: z.never().optional() }),
+  z.object({ ...captureAnimationMetadata, path: z.string(), bytes: z.number().int().nonnegative(), data_url: z.never().optional() }),
+]);
 
 const validateProjectParams = z.object({}).strict();
 const validateProjectResult = z.object({
@@ -988,7 +1011,7 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
   },
   capture_screenshot: {
     description:
-      'Capture a bounded screenshot of the model preview as a data URL, optionally from a named camera preset rendered offscreen (the visible viewport camera is never modified; "front" depends on the format\'s forward_direction). Preset renders share the offscreen preview that Blockbench\'s own screenshot dialog and recorder use; captures are serialized and fail while a recording is running. Read-only.',
+      'Capture a bounded screenshot of the model preview as MCP image content with project identity and counts, or write a PNG inside the confirmed scope with output_path and optional overwrite. Optionally render from a named camera preset rendered offscreen (the visible viewport camera is never modified; "front" depends on the format\'s forward_direction). Preset renders share the offscreen preview that Blockbench\'s own screenshot dialog and recorder use; captures are serialized and fail while a recording is running. Read-only for the project; only output_path writes a file.',
     mutates: false,
     params: captureScreenshotParams,
     result: captureScreenshotResult,
@@ -1108,7 +1131,7 @@ export const GECKOLIB_FORMAT_COMMAND_SPECS = {
   },
   capture_geckolib_animation_frame: {
     description:
-      'Capture a bounded screenshot of one named GeckoLib animation posed at a still timestamp. The command temporarily sets only that animation playing for preview, applies GeckoLib loop timing (loop wraps, hold clamps, once rejects out-of-range time), renders through the existing screenshot path, rejects active timeline playback, suppresses effect keyframes during the still preview, and restores animation/timeline state after success or failure. Read-only.',
+      'Capture a bounded screenshot of one named GeckoLib animation posed at a still timestamp as MCP image content with project identity and counts, or write a PNG inside the confirmed scope with output_path and optional overwrite. The command temporarily sets only that animation playing for preview, applies GeckoLib loop timing (loop wraps, hold clamps, once rejects out-of-range time), renders through the existing screenshot path, rejects active timeline playback, suppresses effect keyframes during the still preview, and restores animation/timeline state after success or failure. Read-only for the project; only output_path writes a file.',
     mutates: false,
     params: captureGeckolibAnimationFrameParams,
     result: captureGeckolibAnimationFrameResult,

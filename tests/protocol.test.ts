@@ -514,12 +514,19 @@ test('capture_screenshot accepts the native camera preset ids and echoes the app
     );
   }
   assert.equal(
-    spec.result.safeParse({ data_url: 'data:image/png;base64,x', width: 512, height: 512 }).success,
+    spec.result.safeParse({ data_url: 'data:image/png;base64,x', width: 512, height: 512, project: { uuid: 'u', name: 'm' }, counts: { cubes: 1, groups: 0, textures: 1 } }).success,
     true,
-    'the no-preset result shape is unchanged',
+    'the no-preset inline result validates',
   );
   assert.equal(
-    spec.result.safeParse({ data_url: 'data:image/png;base64,x', width: 512, height: 512, angle_preset: 'top' })
+    spec.result.safeParse({
+      data_url: 'data:image/png;base64,x',
+      width: 512,
+      height: 512,
+      angle_preset: 'top',
+      project: { uuid: 'u', name: 'm' },
+      counts: { cubes: 1, groups: 0, textures: 1 },
+    })
       .success,
     true,
   );
@@ -558,6 +565,8 @@ test('capture_geckolib_animation_frame validates timing, dimensions, presets, an
       time: 1.5,
       rendered_time: 0.5,
       angle_preset: 'top',
+      project: { uuid: 'u', name: 'm' },
+      counts: { cubes: 1, groups: 0, textures: 1 },
     }).success,
     true,
   );

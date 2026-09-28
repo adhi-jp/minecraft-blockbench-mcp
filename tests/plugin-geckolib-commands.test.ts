@@ -670,7 +670,7 @@ function makeFakePreview(id: string): FakePreview {
   };
 }
 
-function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; failFirstCapture?: boolean } = {}): {
+function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; failFirstCapture?: boolean; dataUrl?: string } = {}): {
   visible: FakePreview;
   offscreen: FakePreview;
   captures: Array<{ preview: string; options: Record<string, unknown> }>;
@@ -678,6 +678,9 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
   previewStates: Array<{ time: number; playing: string[]; muted: boolean[] }>;
   defaultPoseCalls: number;
 } {
+  injectedGlobals.Project = { uuid: 'project-animation', saved: true, name: 'ghost' };
+  injectedGlobals.Cube = { all: [{}, {}, {}] };
+  injectedGlobals.Texture = { all: [{}] };
   const visible = makeFakePreview('visible');
   const offscreen = makeFakePreview('offscreen');
   const captures: Array<{ preview: string; options: Record<string, unknown> }> = [];
@@ -735,7 +738,7 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
       captures.push({ preview: preview.id, options: captureOptions });
       const finish = () => {
         events.push(`end:${id}`);
-        cb(`data:image/png;base64,pose-${id}`);
+        cb(options.dataUrl ?? `data:image/png;base64,pose-${id}`);
       };
       if (options.captureDelayMs !== undefined) {
         setTimeout(finish, options.captureDelayMs);
@@ -1145,6 +1148,8 @@ test('capture_geckolib_animation_frame poses one animation, renders, and restore
   assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
   assert.deepEqual(outcome.result, {
     data_url: 'data:image/png;base64,pose-1',
+    project: { uuid: 'project-animation', name: 'ghost' },
+    counts: { cubes: 3, groups: 2, textures: 1 },
     width: 320,
     height: 240,
     animation: 'animation.ghost.idle',
@@ -1390,4 +1395,74 @@ test('open_geckolib_model reloads file-linked textures before returning the reso
   assert.equal(loaded, true, 'the result waits for the reloaded image');
   assert.deepEqual([linked.reloads, embedded.reloads], [1, 0], 'embedded textures are not reloaded');
   assert.equal(listeners.length, 0, 'settle listeners are detached');
+});
+
+test('capture_geckolib_animation_frame preflights file conflicts before rendering and requires an output path for overwrite', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const dataUrl = 'data:image/png;base64,aGVsbG8=';
+  injectAnimationGlobals();
+  const surface = injectAnimationScreenshotSurface({ dataUrl });
+  addFakeAnimation('animation.ghost.idle', 'once', 1);
+  const args = { animation: 'animation.ghost.idle', time: 0.5 };
+  const destination = join(harness.scopeDir, 'existing.png');
+  nodeFs.writeFileSync(destination, 'original');
+  const conflict = await harness.bridge.request('capture_geckolib_animation_frame', { ...args, output_path: 'existing.png' });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.error?.code, 'E_FILE_EXISTS');
+  assert.equal(surface.captures.length, 0);
+  assert.equal(nodeFs.readFileSync(destination, 'utf8'), 'original');
+  for (const overwrite of [false, true]) {
+    const invalid = await harness.bridge.request('capture_geckolib_animation_frame', { ...args, overwrite });
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.error?.code, 'E_INVALID_PARAMS');
+    assert.equal(surface.captures.length, 0);
+  }
+  const [first, second] = await Promise.all([
+    harness.bridge.request('capture_geckolib_animation_frame', { ...args, output_path: 'queued.png' }),
+    harness.bridge.request('capture_geckolib_animation_frame', { ...args, output_path: 'queued.png' }),
+  ]);
+  assert.equal(first.ok, true, JSON.stringify(first.error));
+  assert.equal(second.ok, false);
+  assert.equal(second.error?.code, 'E_FILE_EXISTS', 'the file the earlier queued capture wrote is a conflict');
+  assert.equal(surface.captures.length, 1, 'the conflicting capture never poses or renders');
+});
+
+test('capture_geckolib_animation_frame writes scoped PNG bytes and returns file metadata without a data URL', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6sAAAAABJRU5ErkJggg==';
+  const dataUrl = `data:image/png;base64,${base64}`;
+  injectAnimationGlobals();
+  const surface = injectAnimationScreenshotSurface({ dataUrl });
+  addFakeAnimation('animation.ghost.idle', 'once', 1);
+  const args = { animation: 'animation.ghost.idle', time: 0.5, width: 64, height: 64, angle_preset: 'top' };
+  const writes: Array<{ path: unknown; content: unknown; options: unknown }> = [];
+  const originalWrite = nodeFsAdapter.writeFileSync;
+  nodeFsAdapter.writeFileSync = (path, content, options) => {
+    writes.push({ path, content, options });
+    return originalWrite(path, content, options);
+  };
+  t.after(() => { nodeFsAdapter.writeFileSync = originalWrite; });
+  const destination = join(harness.scopeDir, 'renders', 'capture.png');
+  for (const output_path of ['renders/capture.png', destination]) {
+    const overwrite = output_path === destination;
+    const outcome = await harness.bridge.request('capture_geckolib_animation_frame', { ...args, output_path, overwrite });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+    const result = outcome.result as Record<string, unknown>;
+    assert.equal('data_url' in result, false);
+    assert.equal(result.path, destination);
+    assert.equal(result.bytes, Buffer.from(base64, 'base64').length);
+    assert.equal(result.width, 64);
+    assert.equal(result.height, 64);
+    assert.equal(result.angle_preset, 'top');
+    assert.equal(result.animation, args.animation);
+    assert.equal(result.time, args.time);
+    assert.equal(result.rendered_time, args.time);
+    assert.deepEqual(result.project, { uuid: 'project-animation', name: 'ghost' });
+    assert.deepEqual(result.counts, { cubes: 3, groups: 2, textures: 1 });
+    assert.deepEqual(nodeFs.readFileSync(destination), Buffer.from(base64, 'base64'));
+  }
+  assert.equal(surface.captures.length, 2);
+  assert.equal(writes.length, 2);
 });

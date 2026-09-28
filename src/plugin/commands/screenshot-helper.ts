@@ -1,5 +1,8 @@
 import { DEFAULTS, type SCREENSHOT_ANGLE_PRESETS } from '../../shared/protocol.js';
 import { CommandError } from '../session.js';
+import type { ScopeManager } from '../scope-manager.js';
+import { writeFilesCommand } from '../file-commands.js';
+import { projectCounts } from './helpers.js';
 
 export type ScreenshotAnglePreset = (typeof SCREENSHOT_ANGLE_PRESETS)[number];
 
@@ -7,14 +10,19 @@ export interface ScreenshotParams {
   width?: number;
   height?: number;
   angle_preset?: ScreenshotAnglePreset;
+  output_path?: string;
+  overwrite?: boolean;
 }
 
-export interface ScreenshotResult {
-  data_url: string;
+interface ScreenshotMetadata {
   width: number;
   height: number;
   angle_preset?: ScreenshotAnglePreset;
+  project: { uuid: string; name: string };
+  counts: ReturnType<typeof projectCounts>;
 }
+
+export type ScreenshotResult = ScreenshotMetadata & ({ data_url: string } | { path: string; bytes: number });
 
 // Screenshot and animation-pose captures share global Blockbench preview state:
 // the offscreen NoAAPreview singleton, recorder state, and GeckoLib timeline
@@ -30,7 +38,12 @@ export function enqueueScreenshot<T>(task: () => Promise<T>): Promise<T> {
   return result;
 }
 
-export async function captureScreenshotFromPreview(params: ScreenshotParams): Promise<ScreenshotResult> {
+export async function captureScreenshotFromPreview(
+  params: ScreenshotParams,
+  scope: ScopeManager,
+): Promise<ScreenshotResult> {
+  const project = { uuid: Project.uuid, name: Project.name };
+  const counts = projectCounts();
   const width = params.width ?? DEFAULTS.screenshotDefaultSize;
   const height = params.height ?? DEFAULTS.screenshotDefaultSize;
   let preview: Preview;
@@ -89,10 +102,21 @@ export async function captureScreenshotFromPreview(params: ScreenshotParams): Pr
       reject(error);
     }
   });
-  return {
-    data_url: dataUrl,
+  const metadata = {
+    project,
+    counts,
     width,
     height,
     ...(params.angle_preset !== undefined ? { angle_preset: params.angle_preset } : {}),
   };
+  if (params.output_path !== undefined) {
+    const { results } = writeFilesCommand(scope, [{
+      path: params.output_path,
+      content: dataUrl.slice('data:image/png;base64,'.length),
+      encoding: 'base64',
+      overwrite: params.overwrite,
+    }]);
+    return { ...metadata, path: results[0].path, bytes: results[0].bytes };
+  }
+  return { ...metadata, data_url: dataUrl };
 }

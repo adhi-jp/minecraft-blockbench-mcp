@@ -57,10 +57,25 @@ interface Envelope {
   error?: ErrorPayload;
 }
 
-function toToolResult(envelope: Envelope): {
-  content: Array<{ type: 'text'; text: string }>;
+export function toToolResult(envelope: Envelope): {
+  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' }>;
   isError?: boolean;
 } {
+  if (
+    envelope.ok &&
+    (envelope.command === 'capture_screenshot' || envelope.command === 'capture_geckolib_animation_frame') &&
+    typeof envelope.result === 'object' && envelope.result !== null && 'data_url' in envelope.result
+  ) {
+    // The capture result schemas admit only a PNG data URL here.
+    const { data_url, ...metadata } = envelope.result as { data_url: string };
+    const prefix = 'data:image/png;base64,';
+    return {
+      content: [
+        { type: 'text', text: JSON.stringify({ ...envelope, result: metadata }, null, 2) },
+        { type: 'image', data: data_url.slice(prefix.length), mimeType: 'image/png' },
+      ],
+    };
+  }
   return {
     content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
     ...(envelope.ok ? {} : { isError: true }),
@@ -87,7 +102,7 @@ function cancelledByClient(command: string): Error {
  * The input schema advertised in `tools/list`, derived from the shared command
  * schema.
  *
- * Two commands (`set_cube_uv` and `validate_geckolib_file`) carry a top-level
+ * Some commands (including both capture tools) carry a top-level
  * `.refine()`/`.superRefine()` check that no single field can express. Under
  * zod 4 a refinement no longer wraps its object in a separate node — it is
  * added to the very same `ZodObject` — so advertising the shared schema

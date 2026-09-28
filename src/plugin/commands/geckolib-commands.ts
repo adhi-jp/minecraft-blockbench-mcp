@@ -12,7 +12,7 @@ import {
 } from '../../shared/geckolib-validate.js';
 import { CommandError, type PluginSession } from '../session.js';
 import type { ScopeManager } from '../scope-manager.js';
-import { readFileCommand, writeSingleFile } from '../file-commands.js';
+import { readFileCommand, resolveSingleWriteDestination, writeSingleFile } from '../file-commands.js';
 import {
   payloadClipToBlockbench,
   blockbenchClipToPayload,
@@ -673,6 +673,11 @@ export function registerGeckolibCommands(
     return enqueueScreenshot(async () => {
       requireGeckolibPlugin();
       requireGeckolibFormat();
+      // The output preflight runs in the queue so a file an earlier queued
+      // capture wrote counts as a conflict before this one poses or renders.
+      const outputPath = params.output_path === undefined
+        ? undefined
+        : resolveSingleWriteDestination(scope, params.output_path, params.overwrite);
       const animationClass = blockbenchAnimationClass();
       const timeline = timelineApi();
       const animator = animatorApi();
@@ -699,7 +704,7 @@ export function registerGeckolibCommands(
         timeline.setTime(renderedTime);
         setEffectMutes(snapshot.effectMutes, true);
         animator.preview(false);
-        const screenshot = await captureScreenshotFromPreview(params);
+        const screenshot = await captureScreenshotFromPreview({ ...params, output_path: outputPath }, scope);
         return {
           ...screenshot,
           animation: params.animation,

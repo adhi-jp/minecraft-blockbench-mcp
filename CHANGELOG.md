@@ -9,10 +9,15 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
 - **`open_model` and `open_geckolib_model` reload file-linked textures on every open** and return `path` plus `textures` (each with `id`, `name`, `path`, and an `error` when it failed to load); `open_model` also returns `warnings` describing any adjustment it made while opening the file.
 - **`open_model` resolves more real-world Java block/item models.** It accepts sprite-object texture values, resolves multi-hop `#texture` variable chains, and opens a model that has a parent but no elements without Blockbench's own child-model dialog (keeping the parent for export).
 - **`open_model` can inline the parent chain.** New opt-in `resolve_parents` (with optional `asset_roots`) reads each parent model only from inside the confirmed scoped directory — first under the opened model's own assets directory, then each `asset_roots` entry in order — and merges it into the opened model: textures child-first, the nearest ancestor's elements when the child has none, and display settings per slot child-first. `builtin/*` and flat item parents (`item/generated`, `item/handheld`) are kept as the parent instead of being inlined. Textures still resolve against the opened model's own assets directory, not `asset_roots`.
+- **`capture_screenshot` and `capture_geckolib_animation_frame` can write directly to a file.** New `output_path` (inside the confirmed scoped directory) and `overwrite` parameters; results also carry `project` (`uuid`, `name`) and `counts` (`cubes`, `groups`, `textures`) identity.
 
 ### Changed
 
 - Java project tabs opened via `open_model` are now named after the opened file.
+
+### Breaking changes
+
+- **`capture_screenshot` and `capture_geckolib_animation_frame` no longer return a `data_url` text field by default.** Without `output_path`, results now return the PNG as MCP image content instead. With `output_path`, results return `path` and `bytes` in place of `data_url`.
 
 ## [0.2.0] - 2026-08-28
 

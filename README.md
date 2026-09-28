@@ -278,7 +278,9 @@ rescale), `delete_cubes`, `create_group`, `update_group`, `delete_group`,
 camera preset — `initial`, `top`, `bottom`, `north`, `south`, `east`, `west`,
 and the isometric variants — rendered offscreen so the visible viewport
 camera never moves; which side is a model's "front" depends on the format's
-`forward_direction`), `validate_project`, `propose_scoped_directory`.
+`forward_direction`; returns MCP image content, or writes a PNG to
+`output_path` inside the scoped directory with optional `overwrite`),
+`validate_project`, `propose_scoped_directory`.
 
 `save_project` writes the open project of any format as a `.bbmodel` into the
 scoped directory through `Codecs.project.compile()`; other installed plugins
