@@ -3,7 +3,7 @@ import { chmod, mkdir } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
 
 export function computeConfigIdentity(resolvedConfigPath: string): string {
-  return createHash('sha256').update(resolvedConfigPath).digest('hex').slice(0, 16);
+  return createHash('sha256').update(resolvedConfigPath).digest('hex').slice(0, 8);
 }
 
 export interface RuntimeDirectoryOptions {
@@ -56,7 +56,7 @@ export function ipcEndpointFor(options: IpcEndpointOptions): string {
   if (options.platform === 'win32') {
     return `\\\\.\\pipe\\minecraft-blockbench-mcp-${options.identity}`;
   }
-  const composedPath = posix.join(options.runtimeDir, `broker-${options.identity}.sock`);
+  const composedPath = posix.join(options.runtimeDir, `${options.identity}.sock`);
   const measuredByteLength = Buffer.byteLength(composedPath, 'utf8');
   if (measuredByteLength > MAX_UNIX_SOCKET_PATH_LENGTH) {
     throw new UnixSocketPathTooLongError(composedPath, measuredByteLength, MAX_UNIX_SOCKET_PATH_LENGTH);

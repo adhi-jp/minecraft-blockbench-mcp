@@ -152,6 +152,9 @@ const SETUP_SUBCOMMAND_PROBES = [
 /** Neither probe waits for anything, so exceeding this means it hung. */
 const SETUP_SUBCOMMAND_TIMEOUT_MS = 30_000;
 
+/** Removed in the `finally` block below; only created on non-Windows. */
+let packageRuntimeDir = null;
+
 try {
   mkdirSync(packDir, { recursive: true });
   mkdirSync(installDir, { recursive: true });
@@ -207,6 +210,13 @@ try {
   env.HOME = emptyConfigHome;
   env.APPDATA = emptyConfigHome;
   env.USERPROFILE = emptyConfigHome;
+  if (process.platform !== 'win32') {
+    // `workDir` sits under `os.tmpdir()`, which can put the brokered adapter's
+    // Unix socket path over the platform limit; give the probe a short runtime
+    // root instead (mirrors tests/helpers/runtime-root.ts).
+    packageRuntimeDir = mkdtempSync('/tmp/bbmcp-pkg-');
+    env.BLOCKBENCH_MCP_RUNTIME_DIR = packageRuntimeDir;
+  }
   // The packaged executable serves two MCP wire eras, so the smoke has to open
   // the packaged bin on each of them. `legacy` is the client default and is
   // what negotiates a 2025-era handshake; pinning the modern revision fails
@@ -279,4 +289,5 @@ try {
   );
 } finally {
   rmSync(workDir, { recursive: true, force: true });
+  if (packageRuntimeDir !== null) rmSync(packageRuntimeDir, { recursive: true, force: true });
 }

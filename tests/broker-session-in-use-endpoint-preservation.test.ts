@@ -189,7 +189,7 @@ async function createWorld(t: TestContext): Promise<World> {
     `${JSON.stringify({ version: 1, mode: 'shared-secret', port, secret: SECRET }, null, 2)}\n`,
     { mode: 0o600 },
   );
-  const identity = createHash('sha256').update(configPath).digest('hex').slice(0, 16);
+  const identity = createHash('sha256').update(configPath).digest('hex').slice(0, 8);
   const world: World = {
     root,
     runtimeRoot,

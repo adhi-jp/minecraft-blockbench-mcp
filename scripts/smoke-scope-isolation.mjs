@@ -331,7 +331,7 @@ export function disruptionForMode(mode) {
  */
 export function brokerRecordPathFor({ resolvedConfigPath, platform, runtimeDirOverride = undefined }) {
   const pathApi = platform === 'win32' ? win32 : posix;
-  const configIdentity = sha256(resolvedConfigPath).slice(0, 16);
+  const configIdentity = sha256(resolvedConfigPath).slice(0, 8);
   const trimmed = typeof runtimeDirOverride === 'string' ? runtimeDirOverride.trim() : '';
   const runtimeDir =
     trimmed !== '' && pathApi.isAbsolute(trimmed)

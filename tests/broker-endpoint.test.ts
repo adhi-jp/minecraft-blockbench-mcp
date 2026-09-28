@@ -41,12 +41,12 @@ function record(overrides: Partial<BrokerRecord> = {}): BrokerRecord {
   };
 }
 
-test('config identity is stable per resolved path and contains 16 lowercase hex characters', async () => {
+test('config identity is stable per resolved path and contains 8 lowercase hex characters', async () => {
   await withTempDirectory(async (dir) => {
     const configPath = join(dir, 'config.json');
     const identity = computeConfigIdentity(configPath);
     assert.equal(computeConfigIdentity(configPath), identity);
-    assert.match(identity, /^[0-9a-f]{16}$/);
+    assert.match(identity, /^[0-9a-f]{8}$/);
     assert.notEqual(computeConfigIdentity(join(dir, 'other.json')), identity);
   });
 });
@@ -122,14 +122,14 @@ test('Windows endpoints use the named-pipe namespace while POSIX endpoints use t
   const runtimeDir = '/run/user/1000/minecraft-blockbench-mcp';
   assert.equal(
     ipcEndpointFor({ platform: 'linux', runtimeDir, identity: '0123456789abcdef' }),
-    posix.join(runtimeDir, 'broker-0123456789abcdef.sock'),
+    posix.join(runtimeDir, '0123456789abcdef.sock'),
   );
 });
 
 test('POSIX endpoints reject a composed path one byte over the unix socket limit with actionable remediation', () => {
   const identity = '0123456789abcdef';
-  const runtimeDir = `/${'r'.repeat(74)}`;
-  const composedPath = posix.join(runtimeDir, `broker-${identity}.sock`);
+  const runtimeDir = `/${'r'.repeat(81)}`;
+  const composedPath = posix.join(runtimeDir, `${identity}.sock`);
   assert.equal(Buffer.byteLength(composedPath, 'utf8'), 104);
 
   assert.throws(
@@ -149,8 +149,8 @@ test('POSIX endpoints reject a composed path one byte over the unix socket limit
 
 test('POSIX endpoints allow a composed path exactly at the unix socket limit', () => {
   const identity = '0123456789abcdef';
-  const runtimeDir = `/${'r'.repeat(73)}`;
-  const composedPath = posix.join(runtimeDir, `broker-${identity}.sock`);
+  const runtimeDir = `/${'r'.repeat(80)}`;
+  const composedPath = posix.join(runtimeDir, `${identity}.sock`);
   assert.equal(Buffer.byteLength(composedPath, 'utf8'), MAX_UNIX_SOCKET_PATH_LENGTH);
   assert.doesNotThrow(() => ipcEndpointFor({ platform: 'darwin', runtimeDir, identity }));
 });
@@ -158,7 +158,7 @@ test('POSIX endpoints allow a composed path exactly at the unix socket limit', (
 test('POSIX endpoint length is measured in UTF-8 bytes rather than JavaScript string length', () => {
   const identity = '😀'.repeat(25);
   const runtimeDir = '/run';
-  const composedPath = posix.join(runtimeDir, `broker-${identity}.sock`);
+  const composedPath = posix.join(runtimeDir, `${identity}.sock`);
   assert.ok(composedPath.length <= MAX_UNIX_SOCKET_PATH_LENGTH);
   assert.ok(Buffer.byteLength(composedPath, 'utf8') > MAX_UNIX_SOCKET_PATH_LENGTH);
   assert.throws(
@@ -169,8 +169,8 @@ test('POSIX endpoint length is measured in UTF-8 bytes rather than JavaScript st
 
 test('Windows named pipes ignore an over-length runtime directory', () => {
   const identity = '0123456789abcdef';
-  const runtimeDir = `/${'r'.repeat(74)}`;
-  const composedPosixPath = posix.join(runtimeDir, `broker-${identity}.sock`);
+  const runtimeDir = `/${'r'.repeat(81)}`;
+  const composedPosixPath = posix.join(runtimeDir, `${identity}.sock`);
   assert.equal(Buffer.byteLength(composedPosixPath, 'utf8'), MAX_UNIX_SOCKET_PATH_LENGTH + 1);
   assert.equal(
     ipcEndpointFor({ platform: 'win32', runtimeDir, identity }),

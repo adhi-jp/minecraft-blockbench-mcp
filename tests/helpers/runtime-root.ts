@@ -2,8 +2,8 @@
 // still fits in a UNIX socket path.
 //
 // `resolveRuntimeDirectory` + `ipcEndpointFor` turn `BLOCKBENCH_MCP_RUNTIME_DIR`
-// into `<BLOCKBENCH_MCP_RUNTIME_DIR>/minecraft-blockbench-mcp/broker-<16 hex>.sock`,
-// a fixed 54-character tail no test can shorten. (Without that override the
+// into `<BLOCKBENCH_MCP_RUNTIME_DIR>/minecraft-blockbench-mcp/<8 hex>.sock`,
+// a fixed 39-character tail no test can shorten. (Without that override the
 // socket sits in `run/` beside the config file, which a test would then have to
 // keep short itself.) macOS allows 103 usable characters in a `sun_path` (104
 // with the NUL), and the GitHub `macos-latest` runner's `os.tmpdir()` is
@@ -11,10 +11,10 @@
 //
 //   /var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T
 //
-// `mkdtemp` adds 6 more, so even a zero-length prefix with no extra segment
-// lands at 48 + 1 + 6 + 54 = 109. Every runtime root taken from `os.tmpdir()`
-// on macOS overflows before its prefix is counted, which is why shortening
-// prefixes cannot fix this and the root has to leave `os.tmpdir()` entirely.
+// `mkdtemp` adds 6 more, and every prefix here adds a handful on top of that,
+// so a runtime root taken from `os.tmpdir()` on macOS can still overflow once
+// its prefix is counted. The root leaves `os.tmpdir()` entirely rather than
+// stay one prefix away from that limit.
 //
 // The overflow is silent. On the macOS runner `net.Server.listen()` on a
 // 143-character path resolved successfully and a later `stat()` of that path
@@ -36,10 +36,10 @@ import { MAX_UNIX_SOCKET_PATH_LENGTH } from '../../src/adapter/broker/endpoint.j
 export { MAX_UNIX_SOCKET_PATH_LENGTH };
 
 /**
- * The length of `/minecraft-blockbench-mcp/broker-<16 hex>.sock`, the tail the
+ * The length of `/minecraft-blockbench-mcp/<8 hex>.sock`, the tail the
  * adapter appends to `BLOCKBENCH_MCP_RUNTIME_DIR` to reach its POSIX endpoint.
  */
-export const BROKER_ENDPOINT_TAIL_LENGTH = 54;
+export const BROKER_ENDPOINT_TAIL_LENGTH = 39;
 
 /**
  * How long the socket a broker binds under `runtimeRoot` will be. Only

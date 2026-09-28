@@ -89,7 +89,7 @@ function allocatePort(): number {
 }
 
 function configIdentity(configPath: string): string {
-  return createHash('sha256').update(configPath).digest('hex').slice(0, 16);
+  return createHash('sha256').update(configPath).digest('hex').slice(0, 8);
 }
 
 /** Where the adapter keeps broker files when handed `runtimeRoot` as BLOCKBENCH_MCP_RUNTIME_DIR. */
@@ -725,7 +725,7 @@ test('an over-length broker endpoint is reported through health with its actiona
     { mode: 0o600 },
   );
   const identity = configIdentity(configPath);
-  const endpointTail = join('minecraft-blockbench-mcp', `broker-${identity}.sock`);
+  const endpointTail = join('minecraft-blockbench-mcp', `${identity}.sock`);
   const paddingLength = Math.max(
     1,
     MAX_UNIX_SOCKET_PATH_LENGTH + 1 - Buffer.byteLength(root, 'utf8') - Buffer.byteLength(endpointTail, 'utf8') - 2,
@@ -733,7 +733,7 @@ test('an over-length broker endpoint is reported through health with its actiona
   const runtimeRoot = join(root, 'r'.repeat(paddingLength));
   await mkdir(runtimeRoot);
   const brokerRuntime = join(runtimeRoot, 'minecraft-blockbench-mcp');
-  const endpoint = join(brokerRuntime, `broker-${identity}.sock`);
+  const endpoint = join(brokerRuntime, `${identity}.sock`);
   const endpointLength = Buffer.byteLength(endpoint, 'utf8');
   const fixture: ConfigFixture = {
     path: configPath,
@@ -811,7 +811,7 @@ test('clients launched with different harness environments share the broker of t
   const port = allocatePort();
   const world = await TestWorld.create(t, port);
   // The config lives in the world's short runtime root, not its `os.tmpdir()`
-  // root: with no override the socket is `<config dir>/run/broker-<16 hex>.sock`,
+  // root: with no override the socket is `<config dir>/run/<8 hex>.sock`,
   // which would not fit in a `sun_path` under a macOS `os.tmpdir()`.
   const fixture = await TestWorld.writeConfig(world.runtimeRoot, join(world.runtimeRoot, 'run'), 'config.json', port);
 

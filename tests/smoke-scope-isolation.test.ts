@@ -198,7 +198,7 @@ test('adapterEnvForMode always writes or removes both mode switches so an inheri
 
 test('brokerRecordPathFor reproduces the adapter runtime-directory rules on both platform branches', () => {
   const posixConfig = '/tmp/ac21-run/adapter-config.json';
-  const posixIdentity = createHash('sha256').update(posixConfig).digest('hex').slice(0, 16);
+  const posixIdentity = createHash('sha256').update(posixConfig).digest('hex').slice(0, 8);
 
   const withoutOverride = brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux' });
   assert.equal(withoutOverride.configIdentity, posixIdentity);
@@ -214,7 +214,7 @@ test('brokerRecordPathFor reproduces the adapter runtime-directory rules on both
   assert.equal(brokerRecordPathFor({ resolvedConfigPath: posixConfig, platform: 'linux', runtimeDirOverride: 'relative/dir' }).runtimeDir, withoutOverride.runtimeDir);
 
   const windowsConfig = 'C:\\smoke\\ac21-run\\adapter-config.json';
-  const windowsIdentity = createHash('sha256').update(windowsConfig).digest('hex').slice(0, 16);
+  const windowsIdentity = createHash('sha256').update(windowsConfig).digest('hex').slice(0, 8);
   const windows = brokerRecordPathFor({ resolvedConfigPath: windowsConfig, platform: 'win32' });
   assert.equal(windows.configIdentity, windowsIdentity);
   assert.equal(windows.runtimeDir, win32.join('C:\\smoke\\ac21-run', 'run'));
