@@ -29,6 +29,20 @@ export function requireProject(hint = 'Use create_project or open_model first.')
   }
 }
 
+/** Project tabs that MCP create/open commands made during this plugin load.
+ * close_project closes these without a save prompt; the user's own tabs are
+ * never in the set. A WeakSet lets closed projects be collected. */
+const mcpProjects = new WeakSet<object>();
+
+/** Record the active project as one MCP created or opened. */
+export function trackMcpProject(): void {
+  if (Project) mcpProjects.add(Project);
+}
+
+export function isMcpProject(project: object): boolean {
+  return mcpProjects.has(project);
+}
+
 export function projectCounts(): { cubes: number; groups: number; textures: number } {
   return { cubes: Cube.all.length, groups: Group.all.length, textures: Texture.all.length };
 }

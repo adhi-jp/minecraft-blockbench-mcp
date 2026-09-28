@@ -555,27 +555,97 @@ test('export_geckolib_animations reports E_NOT_FOUND when the project has no ani
   assert.equal(nodeFs.existsSync(join(harness.scopeDir, 'ghost.animation.json')), false, 'nothing may be written');
 });
 
-test('an unsaved open project blocks create/open without force:true, matching the java_block guard', async (t) => {
+test('create/open open a new tab while an unsaved user project is open, and close_project closes those tabs with force', async (t) => {
   const harness = await makeHarness();
   t.after(harness.cleanup);
 
+  const closeCalls = new Map<string, unknown[][]>();
+  const makeProject = (name: string, saved: boolean) => {
+    const calls: unknown[][] = [];
+    closeCalls.set(name, calls);
+    const project = {
+      name,
+      saved,
+      close: (...args: unknown[]) => {
+        calls.push(args);
+        if (injectedGlobals.Project === project) injectedGlobals.Project = null;
+        return Promise.resolve(true);
+      },
+    };
+    return project;
+  };
+  const user = makeProject('user draft', false);
+  const tabs: Array<ReturnType<typeof makeProject>> = [];
+  let newProjects = 0;
   injectedGlobals.Formats = { geckolib_model: {} };
-  injectedGlobals.Project = { saved: false, name: 'unsaved' };
+  injectedGlobals.Project = user;
+  injectedGlobals.Cube = { all: [] };
+  injectedGlobals.Group = { all: [] };
+  injectedGlobals.Texture = { all: [] };
+  injectedGlobals.Canvas = { updateAll: () => {} };
+  injectedGlobals.newProject = () => {
+    newProjects += 1;
+    const tab = makeProject(`tab-${newProjects}`, true);
+    tabs.push(tab);
+    injectedGlobals.Project = tab;
+    return true;
+  };
+  injectedGlobals.Codecs = { project: { parse: () => {} } };
 
   const create = await harness.bridge.request('create_geckolib_project', {
     modid: 'examplemod',
     model_type: 'Entity',
     identifier: 'ghost',
+    name: 'ghost',
   });
-  assert.equal(create.ok, false);
-  assert.equal(create.error?.code, 'E_INVALID_PARAMS');
-  assert.match(create.error?.message ?? '', /force:true/);
+  assert.equal(create.ok, true, JSON.stringify(create.error));
+  assert.equal(newProjects, 1);
 
-  nodeFs.copyFileSync(join(fixturesDir, 'valid.geo.json'), join(harness.scopeDir, 'any.bbmodel'));
-  const open = await harness.bridge.request('open_geckolib_model', { path: 'any.bbmodel' });
-  assert.equal(open.ok, false);
-  assert.equal(open.error?.code, 'E_INVALID_PARAMS');
-  assert.match(open.error?.message ?? '', /force:true/);
+  const createForced = await harness.bridge.request('create_geckolib_project', {
+    modid: 'examplemod',
+    model_type: 'Entity',
+    identifier: 'ghost',
+    force: true,
+  });
+  assert.equal(createForced.ok, true, JSON.stringify(createForced.error));
+  assert.equal(newProjects, 2, 'force is accepted and still opens a new tab');
+
+  nodeFs.writeFileSync(
+    join(harness.scopeDir, 'ghost.bbmodel'),
+    JSON.stringify({ meta: { format_version: '5.0', model_format: 'geckolib_model' }, name: 'ghost' }),
+  );
+  // The unsaved user project is active again for the open without force.
+  injectedGlobals.Project = user;
+  const open = await harness.bridge.request('open_geckolib_model', { path: 'ghost.bbmodel' });
+  assert.equal(open.ok, true, JSON.stringify(open.error));
+  assert.equal(newProjects, 3, 'the open without force still opens a new tab');
+  const openForced = await harness.bridge.request('open_geckolib_model', { path: 'ghost.bbmodel', force: true });
+  assert.equal(openForced.ok, true, JSON.stringify(openForced.error));
+  assert.equal(newProjects, 4);
+  assert.deepEqual(closeCalls.get('user draft'), [], 'the user project is never closed');
+
+  // The active tab came from open_geckolib_model; unsaved edits do not stop
+  // close_project, which skips the save prompt with force.
+  (injectedGlobals.Project as { saved: boolean }).saved = false;
+  const closed = await harness.bridge.request('close_project', {});
+  assert.equal(closed.ok, true, JSON.stringify(closed.error));
+  assert.deepEqual(closed.result, { closed: true, name: 'tab-4' });
+  assert.deepEqual(closeCalls.get('tab-4'), [[true]]);
+
+  // A tab create_geckolib_project made closes with force once it has edits.
+  injectedGlobals.Project = tabs[0];
+  tabs[0].saved = false;
+  const closedCreated = await harness.bridge.request('close_project', {});
+  assert.equal(closedCreated.ok, true, JSON.stringify(closedCreated.error));
+  assert.deepEqual(closedCreated.result, { closed: true, name: 'ghost' });
+  assert.deepEqual(closeCalls.get('tab-1'), [[true]]);
+
+  // The user's unsaved project, active again, is refused untouched.
+  injectedGlobals.Project = user;
+  const refused = await harness.bridge.request('close_project', {});
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error?.code, 'E_INVALID_PARAMS');
+  assert.deepEqual(closeCalls.get('user draft'), [], 'close is never called on the unsaved user project');
 });
 
 test('the plugin re-validates geckolib parameters itself even when the adapter is bypassed', async (t) => {

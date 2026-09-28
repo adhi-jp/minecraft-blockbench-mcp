@@ -128,6 +128,7 @@ const MINIMAL_ARGS: Record<CommandName, Record<string, unknown>> = {
   },
   read_file: { path: 'model.json' },
   write_files: { files: [{ path: 'model.json', content: '{}' }] },
+  close_project: {},
   save_project: { path: 'model.bbmodel' },
   capture_screenshot: {},
   validate_project: {},

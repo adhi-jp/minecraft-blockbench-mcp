@@ -274,13 +274,13 @@ per-face UV rectangles with rotation, UV mode switching),
 `set_texture_resolution` (project texture resolution with optional UV
 rescale), `delete_cubes`, `create_group`, `update_group`, `delete_group`,
 `assign_texture`, `set_display_transform`, `export_model`, `read_file`,
-`write_files`, `save_project`, `capture_screenshot` (optionally from a native
-camera preset — `initial`, `top`, `bottom`, `north`, `south`, `east`, `west`,
-and the isometric variants — rendered offscreen so the visible viewport
-camera never moves; which side is a model's "front" depends on the format's
-`forward_direction`; returns MCP image content, or writes a PNG to
-`output_path` inside the scoped directory with optional `overwrite`),
-`validate_project`, `propose_scoped_directory`.
+`write_files`, `save_project`, `close_project`, `capture_screenshot`
+(optionally from a native camera preset — `initial`, `top`, `bottom`, `north`,
+`south`, `east`, `west`, and the isometric variants — rendered offscreen so
+the visible viewport camera never moves; which side is a model's "front"
+depends on the format's `forward_direction`; returns MCP image content, or
+writes a PNG to `output_path` inside the scoped directory with optional
+`overwrite`), `validate_project`, `propose_scoped_directory`.
 
 `save_project` writes the open project of any format as a `.bbmodel` into the
 scoped directory through `Codecs.project.compile()`; other installed plugins
@@ -290,14 +290,24 @@ path and is marked saved; saving to a path that differs from the project's
 current save path deliberately leaves the user's Ctrl+S target and the
 unsaved indicator untouched.
 
+`close_project` closes the active project tab without ever showing a dialog:
+a tab created or opened by `create_project`, `open_model`,
+`create_geckolib_project`, or `open_geckolib_model` in the current plugin
+session closes without a save prompt (discarding unsaved changes); any other
+tab closes only when it is saved, and an unsaved one is refused with
+`E_INVALID_PARAMS`, closing nothing.
+
 `open_model` and `open_geckolib_model` reload file-linked textures from disk
 before returning, and report each texture's `path` and any load `error`;
 `open_model` also reports the resolved model `path` and any adjustment
 `warnings`, accepts sprite-object texture values and multi-hop `#texture`
 variable chains, and opens a model that has a parent but no elements without
 Blockbench's own child-model dialog. Java project tabs opened via `open_model`
-are named after the opened file. `open_model`'s opt-in `resolve_parents`
-(with `asset_roots`) inlines the model's parent chain from files inside the
+are named after the opened file. `create_project`, `open_model`,
+`create_geckolib_project`, and `open_geckolib_model` no longer need `force`:
+other open tabs, saved or not, are left untouched (the parameter is still
+accepted but has no effect). `open_model`'s opt-in `resolve_parents` (with
+`asset_roots`) inlines the model's parent chain from files inside the
 confirmed scoped directory before the model opens; textures still resolve
 against the opened model's own assets directory, not `asset_roots`.
 

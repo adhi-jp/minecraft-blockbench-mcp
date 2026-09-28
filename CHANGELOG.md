@@ -6,6 +6,7 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
 
 ### Added
 
+- **New `close_project` tool.** Closes the active project tab without ever showing a dialog: a tab created or opened by `create_project`, `open_model`, `create_geckolib_project`, or `open_geckolib_model` in the current plugin session closes without a save prompt (discarding unsaved changes); any other tab closes only when it is saved, and an unsaved one is refused with `E_INVALID_PARAMS`, closing nothing.
 - **`open_model` and `open_geckolib_model` reload file-linked textures on every open** and return `path` plus `textures` (each with `id`, `name`, `path`, and an `error` when it failed to load); `open_model` also returns `warnings` describing any adjustment it made while opening the file.
 - **`open_model` resolves more real-world Java block/item models.** It accepts sprite-object texture values, resolves multi-hop `#texture` variable chains, and opens a model that has a parent but no elements without Blockbench's own child-model dialog (keeping the parent for export).
 - **`open_model` can inline the parent chain.** New opt-in `resolve_parents` (with optional `asset_roots`) reads each parent model only from inside the confirmed scoped directory — first under the opened model's own assets directory, then each `asset_roots` entry in order — and merges it into the opened model: textures child-first, the nearest ancestor's elements when the child has none, and display settings per slot child-first. `builtin/*` and flat item parents (`item/generated`, `item/handheld`) are kept as the parent instead of being inlined. Textures still resolve against the opened model's own assets directory, not `asset_roots`.
@@ -14,6 +15,7 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
 ### Changed
 
 - Java project tabs opened via `open_model` are now named after the opened file.
+- `force` is no longer needed on `create_project`, `open_model`, `create_geckolib_project`, or `open_geckolib_model`: other open tabs, saved or not, are left untouched. The parameter is still accepted for compatibility but has no effect.
 
 ### Breaking changes
 

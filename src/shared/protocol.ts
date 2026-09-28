@@ -246,7 +246,9 @@ const createProjectParams = z
     force: z
       .boolean()
       .optional()
-      .describe('Required when an unsaved project is open; the new project opens in a separate tab.'),
+      .describe(
+        'Accepted for compatibility; has no effect. The project always opens in a new tab and other tabs are left untouched.',
+      ),
   })
   .strict();
 const createProjectResult = z.object({
@@ -261,7 +263,9 @@ const openModelParams = z
     force: z
       .boolean()
       .optional()
-      .describe('Required when an unsaved project is open; the model opens in a separate tab.'),
+      .describe(
+        'Accepted for compatibility; has no effect. The project always opens in a new tab and other tabs are left untouched.',
+      ),
     resolve_parents: z
       .boolean()
       .optional()
@@ -695,7 +699,9 @@ const createGeckolibProjectParams = z
     force: z
       .boolean()
       .optional()
-      .describe('Required when an unsaved project is open; the new project opens in a separate tab.'),
+      .describe(
+        'Accepted for compatibility; has no effect. The project always opens in a new tab and other tabs are left untouched.',
+      ),
   })
   .strict();
 const createGeckolibProjectResult = z.object({
@@ -715,7 +721,9 @@ const openGeckolibModelParams = z
     force: z
       .boolean()
       .optional()
-      .describe('Required when an unsaved project is open; the model opens in a separate tab.'),
+      .describe(
+        'Accepted for compatibility; has no effect. The project always opens in a new tab and other tabs are left untouched.',
+      ),
   })
   .strict();
 const openGeckolibModelResult = z.object({
@@ -909,6 +917,9 @@ const deleteGeckolibAnimationResult = z.object({ deleted: z.literal(true) });
 const getGeckolibAnimationParams = z.object({ name: z.string().min(1) }).strict();
 const getGeckolibAnimationResult = geckolibAnimationClipSchema;
 
+const closeProjectParams = z.object({}).strict();
+const closeProjectResult = z.object({ closed: z.literal(true), name: z.string() });
+
 // Format-neutral operations work in any Blockbench project format and are the
 // reuse surface for later format adapters.
 export const FORMAT_NEUTRAL_COMMAND_SPECS = {
@@ -1002,6 +1013,13 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
     params: writeFilesParams,
     result: writeFilesResult,
   },
+  close_project: {
+    description:
+      'Close the active project tab without ever showing a dialog. A tab created or opened by create_project, open_model, create_geckolib_project, or open_geckolib_model in this plugin session closes without a save prompt, discarding unsaved changes. Any other tab closes only when it is saved; an unsaved one is refused with E_INVALID_PARAMS and nothing is closed. Fails with E_NOT_FOUND when no project is open and E_BLOCKBENCH_ERROR when Blockbench refuses to close it (for example, a locked project).',
+    mutates: true,
+    params: closeProjectParams,
+    result: closeProjectResult,
+  },
   save_project: {
     description:
       'Save the open project of any format as a .bbmodel file inside the confirmed scoped directory. Compiles through the project codec, whose compile hooks other installed plugins may use to adjust the output. A project without a save path adopts the destination and is marked saved; saving to a path that differs from the current save path leaves the save target and unsaved indicator untouched. Overwrite must be explicitly flagged.',
@@ -1041,14 +1059,14 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
 export const JAVA_FORMAT_COMMAND_SPECS = {
   create_project: {
     description:
-      'Create a new Minecraft Java block/item project (Blockbench format java_block) in a new project tab. When an unsaved project is open, force:true is required.',
+      'Create a new Minecraft Java block/item project (Blockbench format java_block) in a new project tab. Other open tabs, saved or not, are left untouched, so force is not needed.',
     mutates: true,
     params: createProjectParams,
     result: createProjectResult,
   },
   open_model: {
     description:
-      'Open a Java block/item model JSON file from the confirmed scoped directory via the java_block codec, in a new project tab named after the file. Sprite-object textures and multi-hop #texture aliases are resolved, and a model with a parent but no elements opens without a Blockbench dialog (keeping its parent for export). File-linked textures are reloaded from disk before the result returns. The result adds the resolved path, each texture with id, name, path and an error when it failed to load, and warnings for every adjustment. When an unsaved project is open, force:true is required.',
+      'Open a Java block/item model JSON file from the confirmed scoped directory via the java_block codec, in a new project tab named after the file. Sprite-object textures and multi-hop #texture aliases are resolved, and a model with a parent but no elements opens without a Blockbench dialog (keeping its parent for export). File-linked textures are reloaded from disk before the result returns. The result adds the resolved path, each texture with id, name, path and an error when it failed to load, and warnings for every adjustment. Other open tabs, saved or not, are left untouched, so force is not needed.',
     mutates: true,
     params: openModelParams,
     result: openModelResult,
@@ -1075,14 +1093,14 @@ export const JAVA_FORMAT_COMMAND_SPECS = {
 export const GECKOLIB_FORMAT_COMMAND_SPECS = {
   create_geckolib_project: {
     description:
-      'Create a new GeckoLib animated model project (Blockbench format geckolib_model; requires the third-party GeckoLib plugin) in a new project tab. When an unsaved project is open, force:true is required.',
+      'Create a new GeckoLib animated model project (Blockbench format geckolib_model; requires the third-party GeckoLib plugin) in a new project tab. Other open tabs, saved or not, are left untouched, so force is not needed.',
     mutates: true,
     params: createGeckolibProjectParams,
     result: createGeckolibProjectResult,
   },
   open_geckolib_model: {
     description:
-      'Open a GeckoLib .bbmodel project file from the confirmed scoped directory in a new project tab; rejects .bbmodel files whose format is not geckolib_model. File-linked textures are reloaded from disk before the result returns; the result adds the resolved path and each texture with id, name, path and an error when it failed to load. When an unsaved project is open, force:true is required.',
+      'Open a GeckoLib .bbmodel project file from the confirmed scoped directory in a new project tab; rejects .bbmodel files whose format is not geckolib_model. File-linked textures are reloaded from disk before the result returns; the result adds the resolved path and each texture with id, name, path and an error when it failed to load. Other open tabs, saved or not, are left untouched, so force is not needed.',
     mutates: true,
     params: openGeckolibModelParams,
     result: openGeckolibModelResult,

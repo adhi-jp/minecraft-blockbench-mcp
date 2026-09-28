@@ -1858,3 +1858,173 @@ test('queued captures sample project identity and counts when their render start
   assert.deepEqual(secondResult.project, { uuid: 'project-next', name: 'next' });
   assert.deepEqual(secondResult.counts, { cubes: 1, groups: 0, textures: 0 });
 });
+
+// ---------------------------------------------------------------------------
+// Project tab lifecycle: create/open always use a new tab and never guard on
+// another tab's unsaved state; close_project closes the active tab without a
+// dialog only when that loses nothing the user did not hand to MCP.
+// ---------------------------------------------------------------------------
+
+interface FakeClosableProject {
+  name: string;
+  saved: boolean;
+  /** Arguments of every close() call, so a test can assert the force flag. */
+  closeCalls: unknown[][];
+  close: (...args: unknown[]) => Promise<boolean>;
+}
+
+/** A project whose close() mirrors ModelProject.close: it resolves false when
+ * Blockbench refuses, and removes the active project when it succeeds. */
+function fakeClosableProject(name: string, saved: boolean, closeResult = true): FakeClosableProject {
+  const project: FakeClosableProject = {
+    name,
+    saved,
+    closeCalls: [],
+    close: (...args) => {
+      project.closeCalls.push(args);
+      if (closeResult && injectedGlobals.Project === project) injectedGlobals.Project = null;
+      return Promise.resolve(closeResult);
+    },
+  };
+  return project;
+}
+
+/** Fake newProject that, like Blockbench's, selects a fresh saved project and
+ * leaves the previous one alone. */
+function injectNewProjectRuntime(): FakeClosableProject[] {
+  const created: FakeClosableProject[] = [];
+  injectedGlobals.Formats = { java_block: { id: 'java_block' } };
+  injectedGlobals.newProject = (format: { id: string }) => {
+    const project = fakeClosableProject('', true);
+    created.push(project);
+    injectedGlobals.Project = project;
+    injectedGlobals.Format = format;
+    return true;
+  };
+  return created;
+}
+
+test('create_project opens a new tab while an unsaved user project is open, with or without force', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const created = injectNewProjectRuntime();
+  const user = fakeClosableProject('user draft', false);
+  injectedGlobals.Project = user;
+
+  const plain = await harness.bridge.request('create_project', { format: 'java_block', name: 'scratch' });
+  assert.equal(plain.ok, true, JSON.stringify(plain.error));
+  assert.deepEqual(plain.result, { created: true, format: 'java_block', name: 'scratch' });
+  assert.equal(created.length, 1);
+  assert.equal(injectedGlobals.Project, created[0], 'the new tab becomes the active project');
+  assert.equal(created[0].name, 'scratch');
+
+  const forced = await harness.bridge.request('create_project', { format: 'java_block', force: true });
+  assert.equal(forced.ok, true, JSON.stringify(forced.error));
+  assert.equal(created.length, 2, 'force is accepted and still opens a new tab');
+
+  assert.equal(user.closeCalls.length, 0, 'the user project is never closed');
+  assert.equal(user.saved, false, 'the user project keeps its unsaved state');
+});
+
+test('open_model opens a new tab while an unsaved user project is open, and that tab closes with force', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const runtime = injectOpenRuntime();
+  const user = fakeClosableProject('user draft', false);
+  injectedGlobals.Project = user;
+  writeScopedJson(harness.scopeDir, LAMP, { elements: [{ from: [0, 0, 0], to: [16, 16, 16] }] });
+
+  const opened = await harness.bridge.request('open_model', { path: LAMP });
+  assert.equal(opened.ok, true, JSON.stringify(opened.error));
+  assert.equal(runtime.newProjects, 1);
+  assert.equal(user.closeCalls.length, 0, 'the user project is never closed');
+
+  const forced = await harness.bridge.request('open_model', { path: LAMP, force: true });
+  assert.equal(forced.ok, true, JSON.stringify(forced.error));
+  assert.equal(runtime.newProjects, 2, 'force is accepted and still opens a new tab');
+
+  // The fake newProject makes a plain object; give the opened tab a close()
+  // so the test can see how close_project treats a tab open_model made.
+  const tab = injectedGlobals.Project as Record<string, unknown>;
+  const closeCalls: unknown[][] = [];
+  tab.saved = false;
+  tab.close = (...args: unknown[]) => {
+    closeCalls.push(args);
+    return Promise.resolve(true);
+  };
+  const closed = await harness.bridge.request('close_project', {});
+  assert.equal(closed.ok, true, JSON.stringify(closed.error));
+  assert.deepEqual(closeCalls, [[true]], 'a tab open_model made closes with force, skipping the save prompt');
+  assert.deepEqual(closed.result, { closed: true, name: 'lamp' });
+});
+
+test('close_project closes an unsaved tab create_project made with force and reports its name', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const created = injectNewProjectRuntime();
+  injectedGlobals.Project = null;
+
+  const create = await harness.bridge.request('create_project', { format: 'java_block', name: 'scratch' });
+  assert.equal(create.ok, true, JSON.stringify(create.error));
+  created[0].saved = false; // simulate edits after creation
+
+  const outcome = await harness.bridge.request('close_project', {});
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.equal(COMMAND_SPECS.close_project.result.safeParse(outcome.result).success, true, 'result matches its schema');
+  assert.deepEqual(outcome.result, { closed: true, name: 'scratch' });
+  assert.deepEqual(created[0].closeCalls, [[true]], 'close runs with force: true, so no save prompt appears');
+  assert.equal(injectedGlobals.Project, null);
+});
+
+test('close_project closes a saved user project without force', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const user = fakeClosableProject('user model', true);
+  injectedGlobals.Project = user;
+
+  const outcome = await harness.bridge.request('close_project', {});
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(outcome.result, { closed: true, name: 'user model' });
+  assert.equal(user.closeCalls.length, 1);
+  assert.deepEqual(user.closeCalls[0], [], 'close runs without a force argument');
+  assert.equal(user.closeCalls[0][0], undefined, 'force is never set for a user project');
+});
+
+test('close_project refuses an unsaved user project and closes nothing', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const user = fakeClosableProject('user draft', false);
+  injectedGlobals.Project = user;
+
+  const outcome = await harness.bridge.request('close_project', {});
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_INVALID_PARAMS');
+  assert.deepEqual(outcome.error?.details, { name: 'user draft' });
+  assert.match(outcome.error?.message ?? '', /unsaved/);
+  assert.equal(user.closeCalls.length, 0, 'close is never called');
+  assert.equal(injectedGlobals.Project, user, 'the project stays open');
+});
+
+test('close_project with no open project fails with E_NOT_FOUND', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectedGlobals.Project = null;
+
+  const outcome = await harness.bridge.request('close_project', {});
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_NOT_FOUND');
+});
+
+test('close_project reports E_BLOCKBENCH_ERROR when Blockbench refuses to close the project', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const locked = fakeClosableProject('locked model', true, false);
+  injectedGlobals.Project = locked;
+
+  const outcome = await harness.bridge.request('close_project', {});
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error?.code, 'E_BLOCKBENCH_ERROR');
+  assert.deepEqual(outcome.error?.details, { name: 'locked model' });
+  assert.deepEqual(locked.closeCalls, [[]], 'the refusal came from close itself');
+  assert.equal(injectedGlobals.Project, locked);
+});

@@ -97,6 +97,7 @@ test('command registry is partitioned into format-neutral, Java-format, and Geck
   assert.ok(neutral.includes('get_project_state'));
   assert.ok(neutral.includes('get_elements'));
   assert.ok(neutral.includes('save_project'));
+  assert.ok(neutral.includes('close_project'));
   assert.ok(neutral.includes('set_cube_uv'));
   assert.ok(neutral.includes('set_texture_resolution'));
   assert.ok(neutral.includes('propose_scoped_directory'));
@@ -382,6 +383,30 @@ test('get_elements result carries full cube/group read-back whose values feed th
     }).success,
     true,
   );
+});
+
+test('close_project takes no params and reports the closed project name', () => {
+  const spec = COMMAND_SPECS.close_project;
+  assert.equal(spec.mutates, true);
+  assert.equal(spec.params.safeParse({}).success, true);
+  assert.equal(spec.params.safeParse({ force: true }).success, false, 'there is no discard option');
+  assert.equal(spec.result.safeParse({ closed: true, name: 'ghost' }).success, true);
+  assert.equal(spec.result.safeParse({ closed: false, name: 'ghost' }).success, false);
+});
+
+test('create and open commands still accept force for compatibility', () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['create_project', { format: 'java_block' }],
+    ['open_model', { path: 'model.json' }],
+    ['create_geckolib_project', { modid: 'examplemod', model_type: 'Entity', identifier: 'ghost' }],
+    ['open_geckolib_model', { path: 'ghost.bbmodel' }],
+  ];
+  for (const [command, valid] of cases) {
+    const spec = COMMAND_SPECS[command as keyof typeof COMMAND_SPECS];
+    assert.equal(spec.params.safeParse(valid).success, true, `${command} works without force`);
+    assert.equal(spec.params.safeParse({ ...valid, force: true }).success, true, `${command} still accepts force`);
+    assert.doesNotMatch(spec.description, /force:true is required/, `${command} no longer demands force`);
+  }
 });
 
 test('save_project params take a path with an explicit per-call overwrite flag and report a write result', () => {

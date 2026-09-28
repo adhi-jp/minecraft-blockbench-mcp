@@ -33,6 +33,7 @@ import {
   requireGeckolibPlugin,
   requireGeckolibFormat,
   reloadProjectTextures,
+  trackMcpProject,
   TEXTURE_SETTLE_TIMEOUT_MS,
 } from './helpers.js';
 import { captureScreenshotFromPreview, enqueueScreenshot } from './screenshot-helper.js';
@@ -431,16 +432,13 @@ export function registerGeckolibCommands(
   const textureSettleTimeoutMs = options.textureSettleTimeoutMs ?? TEXTURE_SETTLE_TIMEOUT_MS;
   register(session, 'create_geckolib_project', (params) => {
     requireGeckolibPlugin();
-    if (Project && !Project.saved && params.force !== true) {
-      throw new CommandError(
-        'E_INVALID_PARAMS',
-        'An unsaved project is already open in another tab. Set force:true to open a new project tab anyway.',
-      );
-    }
+    // newProject opens a separate tab, so an unsaved project elsewhere needs
+    // no guard; `force` is accepted and ignored for compatibility.
     const created = newProject(Formats.geckolib_model);
     if (!created) {
       throw new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench refused to create a new geckolib_model project.');
     }
+    trackMcpProject();
     const project = Project as unknown as Record<string, unknown>;
     project.geckolib_modid = params.modid;
     project.geckolib_model_type = params.model_type;
@@ -460,12 +458,6 @@ export function registerGeckolibCommands(
 
   register(session, 'open_geckolib_model', async (params) => {
     requireGeckolibPlugin();
-    if (Project && !Project.saved && params.force !== true) {
-      throw new CommandError(
-        'E_INVALID_PARAMS',
-        'An unsaved project is already open in another tab. Set force:true to open the model in a new tab anyway.',
-      );
-    }
     const { parsed, normalizedPath } = readScopedJson(scope, params.path);
     const meta = (parsed as { meta?: { model_format?: unknown } } | null)?.meta;
     const modelFormat = typeof meta?.model_format === 'string' ? meta.model_format : undefined;
@@ -480,6 +472,7 @@ export function registerGeckolibCommands(
     if (!created) {
       throw new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench refused to create a project for the opened model.');
     }
+    trackMcpProject();
     try {
       Codecs.project.parse!(parsed, normalizedPath);
     } catch (error) {

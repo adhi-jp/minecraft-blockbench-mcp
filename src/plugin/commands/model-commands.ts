@@ -25,6 +25,8 @@ import {
   projectCounts,
   detectGeckolibPluginVersion,
   reloadProjectTextures,
+  trackMcpProject,
+  isMcpProject,
   TEXTURE_SETTLE_TIMEOUT_MS,
 } from './helpers.js';
 import {
@@ -218,17 +220,15 @@ export function registerModelCommands(
     return { cubes: cubes.map(cubeReadback), groups: groups.map(groupReadback) };
   });
 
+  // newProject opens a separate tab and never touches the previous one, so
+  // an unsaved project elsewhere needs no guard; `force` is accepted and
+  // ignored for compatibility.
   register(session, 'create_project', (params) => {
-    if (Project && !Project.saved && params.force !== true) {
-      throw new CommandError(
-        'E_INVALID_PARAMS',
-        'An unsaved project is already open in another tab. Set force:true to open a new project tab anyway.',
-      );
-    }
     const created = newProject(Formats.java_block);
     if (!created) {
       throw new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench refused to create a new java_block project.');
     }
+    trackMcpProject();
     if (params.name !== undefined && Project) {
       Project.name = params.name;
     }
@@ -236,12 +236,6 @@ export function registerModelCommands(
   });
 
   register(session, 'open_model', async (params) => {
-    if (Project && !Project.saved && params.force !== true) {
-      throw new CommandError(
-        'E_INVALID_PARAMS',
-        'An unsaved project is already open in another tab. Set force:true to open the model in a new tab anyway.',
-      );
-    }
     const file = readFileCommand(scope, { path: params.path, encoding: 'utf8' });
     let model: unknown;
     try {
@@ -289,6 +283,9 @@ export function registerModelCommands(
     if (!created) {
       throw new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench refused to create a project for the opened model.');
     }
+    // Tracked before parsing so a tab left behind by a failed parse can
+    // still be closed without a prompt.
+    trackMcpProject();
     try {
       Codecs.java_block.parse!(normalized.model, file.path);
     } catch (error) {
@@ -641,6 +638,35 @@ export function registerModelCommands(
   register(session, 'read_file', (params) => readFileCommand(scope, params));
 
   register(session, 'write_files', (params) => writeFilesCommand(scope, params.files));
+
+  // Closes the active project without ever showing a dialog: tabs MCP
+  // created or opened close with force (no save prompt), the user's own tabs
+  // only when saved, and an unsaved user tab is refused untouched.
+  register(session, 'close_project', async () => {
+    requireProject('Nothing was closed.');
+    const project = Project!;
+    const name = project.name;
+    let closed: boolean;
+    if (isMcpProject(project)) {
+      closed = await project.close(true);
+    } else if (project.saved) {
+      closed = await project.close();
+    } else {
+      throw new CommandError(
+        'E_INVALID_PARAMS',
+        `The active project "${name}" was not created or opened through MCP and has unsaved changes; save or close it in Blockbench instead. Nothing was closed.`,
+        { name },
+      );
+    }
+    if (!closed) {
+      throw new CommandError(
+        'E_BLOCKBENCH_ERROR',
+        `Blockbench refused to close the project "${name}" (for example, because it is locked).`,
+        { name },
+      );
+    }
+    return { closed: true, name };
+  });
 
   register(session, 'save_project', (params) => {
     requireProject();
