@@ -139,12 +139,21 @@ export function normalizeJavaModel(input: JavaModel, options: NormalizeOptions =
   return { model, warnings };
 }
 
-/** Absolute path of the `assets` directory that holds a model file (the path
- * up to the segment before `models`), or null when the path has no
- * `<namespace>/models` segment. Mirrors the codec's texture lookup root. */
+/** Absolute path of the `assets` directory that holds a model file, or null
+ * when the path has no `<namespace>/models` segment. The nearest
+ * `assets/<namespace>/models` structure wins, so an ancestor directory named
+ * `models` does not move the root; without that structure the path up to the
+ * segment before the first `models` is used. */
 export function assetsRootOf(modelPath: string): string | null {
   const segments = modelPath.replace(/\\/g, '/').split('/');
-  const modelsIndex = segments.indexOf('models');
+  let modelsIndex = -1;
+  for (let i = segments.length - 1; i >= 2; i--) {
+    if (segments[i] === 'models' && segments[i - 2] === 'assets') {
+      modelsIndex = i;
+      break;
+    }
+  }
+  if (modelsIndex < 0) modelsIndex = segments.indexOf('models');
   if (modelsIndex < 2) return null;
   return segments.slice(0, modelsIndex - 1).join('/');
 }
@@ -173,12 +182,15 @@ export interface ResolveParentsOptions {
 
 /**
  * Inline a model's parent chain: textures merge child-first, the nearest
- * model with non-empty `elements` supplies them, and `display` merges per
- * slot child-first. The walk stops at `builtin/*` and flat-sprite item
+ * model with non-empty `elements` supplies them, `display` merges per slot
+ * child-first, and `ambientocclusion` and `gui_light` come from the nearest
+ * model that sets them. The walk stops at `builtin/*` and flat-sprite item
  * parents (kept as `parent`), at a parent file that cannot be found or read,
  * and at a cycle; those stops keep the id as `parent` and add a warning when
  * something could not be resolved. A chain that ends at a model without a
- * parent yields a model without `parent`. Every other field is the child's.
+ * parent yields a model without `parent`, unless no model in the chain has
+ * elements: then the child's `parent` is kept, with a warning, so the export
+ * still names it. Every other field is the child's.
  */
 export function resolveJavaModelParents(child: JavaModel, options: ResolveParentsOptions): NormalizeResult {
   const warnings: string[] = [];
@@ -249,8 +261,19 @@ export function resolveJavaModelParents(child: JavaModel, options: ResolveParent
     }
     merged.display = display;
   }
+  for (const key of ['ambientocclusion', 'gui_light']) {
+    const source = chain.find((model) => model[key] !== undefined);
+    if (source !== undefined) merged[key] = source[key];
+  }
   const withElements = chain.find((model) => Array.isArray(model.elements) && model.elements.length > 0);
-  if (withElements !== undefined) merged.elements = withElements.elements;
+  if (withElements !== undefined) {
+    merged.elements = withElements.elements;
+  } else if (stopParent === undefined && child.parent !== undefined) {
+    merged.parent = child.parent;
+    warnings.push(
+      `No model in the parent chain of "${String(child.parent)}" has elements, so the parent was kept.`,
+    );
+  }
 
   return { model: merged, warnings };
 }

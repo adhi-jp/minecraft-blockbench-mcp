@@ -106,6 +106,16 @@ test('assets roots and parent ids map onto namespace model paths', () => {
   assert.equal(parentModelPath(`${ROOT}/`, 'mymod:block/template'), `${ROOT}/mymod/models/block/template.json`);
 });
 
+test('an ancestor directory named models does not move the assets root', () => {
+  assert.equal(assetsRootOf('/home/u/models/pack/assets/mymod/models/block/lamp.json'), '/home/u/models/pack/assets');
+  assert.equal(assetsRootOf('C:\\models\\pack\\assets\\ns\\models\\item\\a.json'), 'C:/models/pack/assets');
+  assert.equal(
+    assetsRootOf('/scope/pack/ns/models/extra/models/a.json'),
+    '/scope/pack',
+    'without an assets tree the first models segment is used',
+  );
+});
+
 test('a child -> template -> cube_all chain inlines elements, merges textures child-first, and drops the parent', () => {
   const files = {
     [`${ROOT}/mymod/models/block/template.json`]: {
@@ -140,7 +150,7 @@ test('a child -> template -> cube_all chain inlines elements, merges textures ch
     ground: { scale: [0.25, 0.25, 0.25] },
   });
   assert.equal(resolved.model.ambientocclusion, false);
-  assert.equal(resolved.model.gui_light, undefined, 'gui_light stays the child own');
+  assert.equal(resolved.model.gui_light, 'side', 'gui_light comes from the nearest model that sets it');
 
   const { model } = normalizeJavaModel(resolved.model, { parentsResolved: true });
   assert.deepEqual(model.textures, {
@@ -252,4 +262,84 @@ test('a parent file that is not a JSON model stops the walk with a warning', () 
   assert.equal(model.parent, 'block/broken');
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /"block\/broken".*not a JSON model/);
+});
+
+test('ambientocclusion and gui_light come from the nearest model in the chain that sets them', () => {
+  const { read } = memoryReader({
+    [`${ROOT}/mymod/models/block/mid.json`]: { parent: 'mymod:block/base', gui_light: 'front' },
+    [`${ROOT}/mymod/models/block/base.json`]: {
+      ambientocclusion: false,
+      gui_light: 'side',
+      elements: [{ name: 'base' }],
+    },
+  });
+  const inherited = resolveJavaModelParents({ parent: 'mymod:block/mid' }, {
+    modelPath: MODEL_PATH,
+    assetRoots: [ROOT],
+    read,
+  });
+  assert.equal(inherited.model.ambientocclusion, false);
+  assert.equal(inherited.model.gui_light, 'front', 'the nearer model wins');
+
+  const own = resolveJavaModelParents({ parent: 'mymod:block/mid', ambientocclusion: true, gui_light: 'side' }, {
+    modelPath: MODEL_PATH,
+    assetRoots: [ROOT],
+    read,
+  });
+  assert.equal(own.model.ambientocclusion, true);
+  assert.equal(own.model.gui_light, 'side');
+
+  const none = resolveJavaModelParents({ parent: 'mymod:block/lone' }, {
+    modelPath: MODEL_PATH,
+    assetRoots: [ROOT],
+    read: memoryReader({ [`${ROOT}/mymod/models/block/lone.json`]: { elements: [{ name: 'lone' }] } }).read,
+  });
+  assert.equal('ambientocclusion' in none.model, false);
+  assert.equal('gui_light' in none.model, false);
+});
+
+test('a loader parent without elements is kept as the parent with a warning and opens without a dialog', () => {
+  const { read } = memoryReader({
+    [`${ROOT}/mymod/models/block/obj_base.json`]: {
+      loader: 'neoforge:obj',
+      model: 'mymod:models/block/lamp.obj',
+      textures: { particle: 'mymod:block/lamp' },
+    },
+  });
+  const resolved = resolveJavaModelParents({ parent: 'mymod:block/obj_base', textures: { all: 'mymod:block/lamp' } }, {
+    modelPath: MODEL_PATH,
+    assetRoots: [ROOT],
+    read,
+  });
+  assert.equal(resolved.model.parent, 'mymod:block/obj_base');
+  assert.equal(resolved.model.elements, undefined);
+  assert.equal(resolved.warnings.length, 1);
+  assert.match(resolved.warnings[0], /"mymod:block\/obj_base".*no model|No model.*"mymod:block\/obj_base".*kept/);
+
+  const normalized = normalizeJavaModel(resolved.model, { parentsResolved: true });
+  assert.deepEqual(normalized.model.elements, [], 'the codec gets empty elements and shows no dialog');
+  assert.equal(normalized.model.parent, 'mymod:block/obj_base');
+  assert.deepEqual(normalized.warnings, [], 'no resolve_parents hint for a chain that was resolved');
+});
+
+test('a chain whose ancestors have only empty elements keeps the child parent with a warning', () => {
+  const { read } = memoryReader({
+    [`${ROOT}/mymod/models/block/mid.json`]: { parent: 'block/block', elements: [] },
+    [`${ROOT}/minecraft/models/block/block.json`]: { elements: [], display: { gui: { rotation: [30, 225, 0] } } },
+  });
+  const resolved = resolveJavaModelParents({ parent: 'mymod:block/mid', elements: [] }, {
+    modelPath: MODEL_PATH,
+    assetRoots: [ROOT],
+    read,
+  });
+  assert.equal(resolved.model.parent, 'mymod:block/mid');
+  assert.deepEqual(resolved.model.elements, []);
+  assert.deepEqual(resolved.model.display, { gui: { rotation: [30, 225, 0] } });
+  assert.equal(resolved.warnings.length, 1);
+  assert.match(resolved.warnings[0], /No model in the parent chain.*kept/);
+
+  const normalized = normalizeJavaModel(resolved.model, { parentsResolved: true });
+  assert.deepEqual(normalized.model.elements, []);
+  assert.equal(normalized.model.parent, 'mymod:block/mid');
+  assert.deepEqual(normalized.warnings, []);
 });
