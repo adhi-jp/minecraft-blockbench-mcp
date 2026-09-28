@@ -2,31 +2,7 @@
 
 All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in this file.
 
-## [Unreleased]
-
-### Added
-
-- **New `close_project` tool.** Closes the active project tab without ever showing a dialog: a tab created or opened by `create_project`, `open_model`, `create_geckolib_project`, or `open_geckolib_model` in the current plugin session closes without a save prompt (discarding unsaved changes); any other tab closes only when it is saved, and an unsaved one is refused with `E_INVALID_PARAMS`, closing nothing.
-- **`open_model` and `open_geckolib_model` reload file-linked textures on every open** and return `path` plus `textures` (each with `id`, `name`, `path`, and an `error` when it failed to load); `open_model` also returns `warnings` describing any adjustment it made while opening the file.
-- **`open_model` resolves more real-world Java block/item models.** It accepts sprite-object texture values, resolves multi-hop `#texture` variable chains, and opens a model that has a parent but no elements without Blockbench's own child-model dialog (keeping the parent for export).
-- **`open_model` can inline the parent chain.** New opt-in `resolve_parents` (with optional `asset_roots`) reads each parent model only from inside the confirmed scoped directory — first under the opened model's own assets directory, then each `asset_roots` entry in order — and merges it into the opened model: textures child-first, the nearest ancestor's elements when the child has none, display settings per slot child-first, and `ambientocclusion` and `gui_light` from the nearest model that sets them. `builtin/*` and flat item parents (`item/generated`, `item/handheld`) are kept as the parent instead of being inlined, and when no model in the chain has elements the parent is kept too, with a warning. Textures still resolve against the opened model's own assets directory, not `asset_roots`.
-- **`capture_screenshot` and `capture_geckolib_animation_frame` can write directly to a file.** New `output_path` (inside the confirmed scoped directory) and `overwrite` parameters; results also carry `project` (`uuid`, `name`) and `counts` (`cubes`, `groups`, `textures`) identity.
-
-### Changed
-
-- Java project tabs opened via `open_model` are now named after the opened file.
-- `force` is no longer needed on `create_project`, `open_model`, `create_geckolib_project`, or `open_geckolib_model`: other open tabs, saved or not, are left untouched. The parameter is still accepted for compatibility but has no effect.
-
-### Fixed
-
-- `open_model` on Windows now resolves the model's textures; Blockbench previously received the model path with `/` separators and found none of them.
-- On case-insensitive filesystems (Windows, default macOS), `write_files` and the capture tools' `output_path` now reject a path that reaches a symbolic link inside the scoped directory through a differently cased name (for example `renders/` for a link named `Renders`).
-
-### Breaking changes
-
-- **`capture_screenshot` and `capture_geckolib_animation_frame` no longer return a `data_url` text field by default.** Without `output_path`, results now return the PNG as MCP image content instead. With `output_path`, results return `path` and `bytes` in place of `data_url`.
-
-## [0.2.0] - 2026-08-28
+## [0.2.0] - 2026-09-28
 
 ### Added
 
@@ -39,6 +15,16 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
   connection. By default, which broker a client joins depends on the config
   file alone, not on the rest of that client's environment, so different AI
   tools (for example Claude Code and Codex CLI) can share it.
+- **New `close_project` tool.** Closes the active project tab without ever showing a dialog: a tab created or opened by `create_project`, `open_model`, `create_geckolib_project`, or `open_geckolib_model` in the current plugin session closes without a save prompt (discarding unsaved changes); any other tab closes only when it is saved, and an unsaved one is refused with `E_INVALID_PARAMS`, closing nothing.
+- **`open_model` and `open_geckolib_model` reload file-linked textures on every open** and return `path` plus `textures` (each with `id`, `name`, `path`, and an `error` when it failed to load); `open_model` also returns `warnings` describing any adjustment it made while opening the file.
+- **`open_model` resolves more real-world Java block/item models.** It accepts sprite-object texture values, resolves multi-hop `#texture` variable chains, and opens a model that has a parent but no elements without Blockbench's own child-model dialog (keeping the parent for export).
+- **`open_model` can inline the parent chain.** New opt-in `resolve_parents` (with optional `asset_roots`) reads each parent model only from inside the confirmed scoped directory — first under the opened model's own assets directory, then each `asset_roots` entry in order — and merges it into the opened model: textures child-first, the nearest ancestor's elements when the child has none, display settings per slot child-first, and `ambientocclusion` and `gui_light` from the nearest model that sets them. `builtin/*` and flat item parents (`item/generated`, `item/handheld`) are kept as the parent instead of being inlined, and when no model in the chain has elements the parent is kept too, with a warning. Textures still resolve against the opened model's own assets directory, not `asset_roots`.
+- **`capture_screenshot` and `capture_geckolib_animation_frame` can write directly to a file.** New `output_path` (inside the confirmed scoped directory) and `overwrite` parameters; results also carry `project` (`uuid`, `name`) and `counts` (`cubes`, `groups`, `textures`) identity.
+
+### Changed
+
+- Java project tabs opened via `open_model` are now named after the opened file.
+- `force` is no longer needed on `create_project`, `open_model`, `create_geckolib_project`, or `open_geckolib_model`: other open tabs, saved or not, are left untouched. The parameter is still accepted for compatibility but has no effect.
 
 ### Breaking changes
 
@@ -72,6 +58,7 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
 - **An unknown tool name now returns a JSON-RPC `-32602` protocol error**
   (`Tool <name> not found`) instead of a successful result carrying
   `isError: true`.
+- **`capture_screenshot` and `capture_geckolib_animation_frame` no longer return a `data_url` text field by default.** Without `output_path`, results now return the PNG as MCP image content instead. With `output_path`, results return `path` and `bytes` in place of `data_url`.
 
 ### Fixed
 
@@ -94,6 +81,8 @@ All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in th
   malformed lock file that blocked every future startup attempt indefinitely.
   Startup-lock publication is now atomic, and a malformed lock is now
   recovered from immediately rather than left stuck.
+- `open_model` on Windows now resolves the model's textures; Blockbench previously received the model path with `/` separators and found none of them.
+- On case-insensitive filesystems (Windows, default macOS), `write_files` and the capture tools' `output_path` now reject a path that reaches a symbolic link inside the scoped directory through a differently cased name (for example `renders/` for a link named `Renders`).
 
 ### Known limitations
 
