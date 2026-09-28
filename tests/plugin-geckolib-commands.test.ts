@@ -1455,7 +1455,7 @@ test('open_geckolib_model reloads file-linked textures before returning the reso
   assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
   assert.equal(COMMAND_SPECS.open_geckolib_model.result.safeParse(outcome.result).success, true);
   const result = outcome.result as { path: string; name: string; textures: unknown[] };
-  assert.equal(result.path, join(harness.scopeDir, 'ghost.bbmodel'));
+  assert.equal(result.path, join(harness.scopeDir, 'ghost.bbmodel').replace(/\\/g, '/'));
   assert.equal(parsedPath, result.path);
   assert.equal(result.name, 'ghost');
   assert.deepEqual(result.textures, [
@@ -1521,7 +1521,7 @@ test('capture_geckolib_animation_frame writes scoped PNG bytes and returns file 
     assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
     const result = outcome.result as Record<string, unknown>;
     assert.equal('data_url' in result, false);
-    assert.equal(result.path, destination);
+    assert.equal(result.path, destination.replace(/\\/g, '/'));
     assert.equal(result.bytes, Buffer.from(base64, 'base64').length);
     assert.equal(result.width, 64);
     assert.equal(result.height, 64);

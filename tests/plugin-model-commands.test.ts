@@ -1564,7 +1564,7 @@ test('open_model reloads file-linked textures, waits for each to settle, and rep
   assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
   assert.equal(COMMAND_SPECS.open_model.result.safeParse(outcome.result).success, true, 'result matches its schema');
   const result = outcome.result as OpenModelResult;
-  assert.equal(result.path, join(harness.scopeDir, LAMP));
+  assert.equal(result.path, join(harness.scopeDir, LAMP).replace(/\\/g, '/'));
   assert.equal(result.name, 'lamp', 'the tab is named after the file without .json');
   assert.deepEqual(result.textures, [
     { id: 'all', name: 'lamp.png', path: '/pack/lamp.png' },
@@ -1833,7 +1833,7 @@ test('capture_screenshot writes scoped PNG bytes and returns file metadata witho
     assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
     const result = outcome.result as Record<string, unknown>;
     assert.equal('data_url' in result, false);
-    assert.equal(result.path, destination);
+    assert.equal(result.path, destination.replace(/\\/g, '/'));
     assert.equal(result.bytes, Buffer.from(base64, 'base64').length);
     assert.equal(result.width, 64);
     assert.equal(result.height, 64);
