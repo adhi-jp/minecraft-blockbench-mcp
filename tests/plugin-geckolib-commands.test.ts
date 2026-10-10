@@ -169,7 +169,7 @@ class FakeAnimation {
   override = false;
   anim_time_update = '';
   selected = false;
-  playing = false;
+  playing: boolean | 'locked' = false;
   animators: Record<string, unknown> = {};
   constructor(data?: Record<string, unknown>) {
     Object.assign(this, data);
@@ -747,6 +747,7 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
   events: string[];
   previewStates: Array<{ time: number; playing: string[]; muted: boolean[] }>;
   defaultPoseCalls: number;
+  visiblePose: { time: number; playing: string[] };
 } {
   injectedGlobals.Project = { uuid: 'project-animation', saved: true, name: 'ghost' };
   injectedGlobals.Cube = { all: [{}, {}, {}] };
@@ -759,6 +760,7 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
   let sequence = 0;
   let failNext = options.failFirstCapture === true;
   let defaultPoseCalls = 0;
+  let visiblePose = { time: 0, playing: [] as string[] };
   injectedGlobals.Timeline = {
     time: 0,
     playing: false,
@@ -780,10 +782,13 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
             .map((muted) => muted.particle === true && muted.timeline === true),
         ),
       });
+      const state = previewStates[previewStates.length - 1];
+      visiblePose = { time: state.time, playing: [...state.playing] };
     },
     showDefaultPose() {
       defaultPoseCalls += 1;
       events.push('default-pose');
+      visiblePose = { time: 0, playing: [] };
     },
   };
   injectedGlobals.Preview = { selected: visible };
@@ -817,7 +822,11 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
       }
     },
   };
-  return { visible, offscreen, captures, events, previewStates, get defaultPoseCalls() { return defaultPoseCalls; } };
+  return {
+    visible, offscreen, captures, events, previewStates,
+    get defaultPoseCalls() { return defaultPoseCalls; },
+    get visiblePose() { return visiblePose; },
+  };
 }
 
 function addFakeAnimation(name: string, loop: string, length: number): FakeAnimation {
@@ -1243,6 +1252,56 @@ test('capture_geckolib_animation_frame poses one animation, renders, and restore
   assert.equal(effectAnimator.muted.sound, false);
   assert.equal(body.name, 'body', 'existing fake runtime remains usable after the capture');
 });
+
+for (const failCapture of [false, true]) {
+  test(`capture_geckolib_animation_frame restores the locked visible pose after screenshot ${failCapture ? 'failure' : 'success'}`, async (t) => {
+    const harness = await makeHarness();
+    t.after(harness.cleanup);
+    injectAnimationGlobals();
+    const surface = injectAnimationScreenshotSurface({ failFirstCapture: failCapture });
+    const idle = addFakeAnimation('animation.ghost.idle', 'once', 2);
+    const walk = addFakeAnimation('animation.ghost.walk', 'loop', 2);
+    const overlay = addFakeAnimation('animation.ghost.overlay', 'loop', 2);
+    const stopped = addFakeAnimation('animation.ghost.stopped', 'once', 2);
+    const targetEffects = { muted: { sound: false, particle: true, timeline: false } };
+    const lockedEffects = { muted: { sound: true, timeline: false } as Record<string, boolean> };
+    idle.animators.effects = targetEffects;
+    walk.animators.effects = lockedEffects;
+    walk.playing = 'locked';
+    overlay.playing = 'locked';
+    walk.select();
+    const timeline = injectedGlobals.Timeline as { time: number; playing: boolean; setTime(seconds: number): void };
+    timeline.setTime(0.75);
+    (injectedGlobals.Animator as { preview(inLoop?: boolean): void }).preview(false);
+    const priorPose = structuredClone(surface.visiblePose);
+    assert.deepEqual(priorPose, { time: 0.75, playing: ['animation.ghost.walk', 'animation.ghost.overlay'] });
+    surface.previewStates.length = 0;
+
+    const outcome = await harness.bridge.request('capture_geckolib_animation_frame', {
+      animation: idle.name, time: 1.25,
+    });
+    assert.equal(outcome.ok, !failCapture, JSON.stringify(outcome.error));
+    if (failCapture) assert.equal(outcome.error?.code, 'E_BLOCKBENCH_ERROR');
+    assert.deepEqual(surface.previewStates[0], {
+      time: 1.25, playing: ['animation.ghost.idle'], muted: [true, true],
+    }, 'target posing suppresses both locked animations and mutes effect channels');
+    assert.equal(walk.playing, 'locked');
+    assert.equal(overlay.playing, 'locked');
+    assert.equal(idle.playing, false);
+    assert.equal(stopped.playing, false);
+    assert.equal(FakeAnimation.selected, walk);
+    assert.deepEqual([walk.selected, idle.selected, overlay.selected, stopped.selected], [true, false, false, false]);
+    assert.equal(timeline.time, 0.75);
+    assert.equal(timeline.playing, false);
+    assert.deepEqual(targetEffects.muted, { sound: false, particle: true, timeline: false });
+    assert.deepEqual(lockedEffects.muted, { sound: true, timeline: false }, 'absent effect flags remain absent');
+    assert.deepEqual(surface.visiblePose, priorPose, 'restoration must redraw the prior locked pose');
+    assert.deepEqual(surface.previewStates[1], {
+      time: 0.75, playing: ['animation.ghost.walk', 'animation.ghost.overlay'], muted: [true, true],
+    }, 'effects stay muted while redrawing the restored pose');
+    assert.equal(surface.defaultPoseCalls, 0);
+  });
+}
 
 test('capture_geckolib_animation_frame uses preset screenshots without touching the visible preview', async (t) => {
   const harness = await makeHarness();

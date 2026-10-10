@@ -65,7 +65,7 @@ interface AnimationLike {
   override?: boolean;
   anim_time_update?: string;
   selected?: boolean;
-  playing?: boolean;
+  playing?: boolean | 'locked';
   animators: Record<string, unknown>;
   add(undo: boolean): AnimationLike;
   remove(undo: boolean, removeFromFile?: boolean): unknown;
@@ -150,7 +150,7 @@ interface AnimationStateSnapshot {
   animationClass: AnimationClassLike;
   selectedAnimation: AnimationLike | null;
   selectedFlags: Array<[AnimationLike, boolean | undefined]>;
-  playingFlags: Array<[AnimationLike, boolean | undefined]>;
+  playingFlags: Array<[AnimationLike, boolean | 'locked' | undefined]>;
   timelineTime: number;
   timelinePlaying: boolean | undefined;
   effectMutes: EffectMuteSnapshot[];
@@ -245,7 +245,7 @@ function restoreAnimationState(snapshot: AnimationStateSnapshot, timeline: Timel
     timeline.playing = snapshot.timelinePlaying;
     timeline.setTime(snapshot.timelineTime);
     setEffectMutes(snapshot.effectMutes, true);
-    if (snapshot.playingFlags.some(([, playing]) => playing === true)) {
+    if (snapshot.playingFlags.some(([, playing]) => playing === true || playing === 'locked')) {
       animator.preview(false);
     } else if (typeof animator.showDefaultPose === 'function') {
       animator.showDefaultPose(true);
