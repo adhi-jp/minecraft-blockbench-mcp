@@ -22,6 +22,7 @@ import {
 } from '../src/setup/run.js';
 import { createRealDeps, resolveConfigPath, type SetupDeps } from '../src/setup/deps.js';
 import { checkAdapterHealth, type HealthState } from '../src/setup/health-check.js';
+import { loadConfig } from '../src/adapter/config.js';
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const builtCliPath = join(projectRoot, 'dist', 'adapter', 'cli.js');
@@ -193,6 +194,20 @@ function validConfig(secret = SENTINEL, port = 39731): string {
 
 function allOutput(world: FakeWorld): string {
   return world.output.join('\n');
+}
+
+function assertPreservedRuntimeOptions(world: FakeWorld): void {
+  const written = JSON.parse(world.writes[0].content) as Record<string, unknown>;
+  const loaded = loadConfig(['--config', CONFIG_PATH], {}, world.deps.readTextFile);
+  assert.deepEqual(loaded.issues, []);
+  for (const actual of [written, loaded.config]) {
+    assert.equal(actual.requestTimeoutMs, 45000);
+    assert.equal(actual.maxMessageBytes, 2097152);
+    assert.equal(actual.brokerIdleTimeoutMs, 180000);
+    assert.equal(actual.leaseIdleTimeoutMs, 90000);
+  }
+  assert.equal(loaded.config.port, written.port);
+  assert.equal(loaded.config.secret, written.secret);
 }
 
 test('routeCli dispatches only the exact setup/doctor positionals at argv[2]', () => {
@@ -368,7 +383,11 @@ test('a matching registration with a deleted config file recovers without --repl
 
 test('--rotate-secret regenerates the secret, keeps the port, and warns about Blockbench', async () => {
   const world = makeWorld({
-    existingConfig: validConfig(SENTINEL, 40123),
+    existingConfig: JSON.stringify({
+      version: 99, mode: 'legacy', secret: SENTINEL, port: 40123,
+      requestTimeoutMs: 45000, maxMessageBytes: 2097152,
+      brokerIdleTimeoutMs: 180000, leaseIdleTimeoutMs: 90000,
+    }),
     registrationDetail: ourRegistrationDetail(CONFIG_PATH, FAKE_CLI),
   });
   const code = await runSetup(world.deps, flags({ rotateSecret: true }));
@@ -376,13 +395,20 @@ test('--rotate-secret regenerates the secret, keeps the port, and warns about Bl
   const written = JSON.parse(world.writes[0].content) as Record<string, unknown>;
   assert.notEqual(written.secret, SENTINEL);
   assert.equal(written.port, 40123);
+  assert.equal(written.version, 1);
+  assert.equal(written.mode, 'shared-secret');
+  assertPreservedRuntimeOptions(world);
   assert.match(allOutput(world), /Secret rotated — update "MCP Shared Secret" in Blockbench settings/);
   assertNoSecretLeak(world, SENTINEL, written.secret as string);
 });
 
 test('--port change rewrites the config and tells the user to update Blockbench', async () => {
   const world = makeWorld({
-    existingConfig: validConfig(SENTINEL, 39731),
+    existingConfig: JSON.stringify({
+      version: 99, mode: 'legacy', secret: SENTINEL, port: 39731,
+      requestTimeoutMs: 45000, maxMessageBytes: 2097152,
+      brokerIdleTimeoutMs: 180000, leaseIdleTimeoutMs: 90000,
+    }),
     registrationDetail: ourRegistrationDetail(CONFIG_PATH, FAKE_CLI),
   });
   const code = await runSetup(world.deps, flags({ port: 40001 }));
@@ -390,6 +416,9 @@ test('--port change rewrites the config and tells the user to update Blockbench'
   const written = JSON.parse(world.writes[0].content) as Record<string, unknown>;
   assert.equal(written.port, 40001);
   assert.equal(written.secret, SENTINEL, 'port change must not rotate the secret');
+  assert.equal(written.version, 1);
+  assert.equal(written.mode, 'shared-secret');
+  assertPreservedRuntimeOptions(world);
   assert.match(allOutput(world), /update "MCP Adapter Port" in Blockbench settings/);
   assertNoSecretLeak(world, SENTINEL);
 });
@@ -497,10 +526,12 @@ test('corrupt config file aborts without overwriting unless --rotate-secret', as
 });
 
 test('rewriting a corrupt config salvages its in-range port', async () => {
-  const world = makeWorld({ existingConfig: JSON.stringify({ secret: '', port: 40123 }) });
+  const world = makeWorld({ existingConfig: JSON.stringify({ secret: '', port: 40123, requestTimeoutMs: -1, brokerIdleTimeoutMs: 180000 }) });
   assert.equal(await runSetup(world.deps, flags({ rotateSecret: true })), 0);
   const written = JSON.parse(world.writes[0].content) as Record<string, unknown>;
   assert.equal(written.port, 40123);
+  assert.equal(written.requestTimeoutMs, undefined, 'corrupt input must not be preserved');
+  assert.equal(written.brokerIdleTimeoutMs, undefined, 'even usable options from corrupt input must not be preserved');
   assert.match(allOutput(world), /Port set to 40123 — ensure "MCP Adapter Port" in Blockbench settings matches\./);
   assertNoSecretLeak(world, writtenSecret(world));
 });

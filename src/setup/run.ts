@@ -116,6 +116,7 @@ interface ConfigRead {
   kind: 'missing' | 'corrupt' | 'valid';
   secret?: string;
   port?: number;
+  record?: Record<string, unknown>;
 }
 
 function readConfigFile(deps: SetupDeps, path: string): ConfigRead {
@@ -132,7 +133,7 @@ function readConfigFile(deps: SetupDeps, path: string): ConfigRead {
         ? rawPort
         : undefined;
     if (typeof record.secret !== 'string' || record.secret === '') return { kind: 'corrupt', port };
-    return { kind: 'valid', secret: record.secret, port };
+    return { kind: 'valid', secret: record.secret, port, record };
   } catch {
     return { kind: 'corrupt' };
   }
@@ -345,7 +346,7 @@ export async function runSetup(deps: SetupDeps, flags: SetupFlags): Promise<numb
   }
 
   if (needConfigWrite) {
-    const content = `${JSON.stringify({ version: 1, mode: 'shared-secret', port, secret }, null, 2)}\n`;
+    const content = `${JSON.stringify({ ...(existing.kind === 'valid' ? existing.record : {}), version: 1, mode: 'shared-secret', port, secret }, null, 2)}\n`;
     deps.writeSecretFile(configPath, content);
     deps.out(
       `Wrote ${configPath}${deps.osPlatform === 'win32' ? '' : ' (permissions 0600 — readable only by your user)'}.`,
