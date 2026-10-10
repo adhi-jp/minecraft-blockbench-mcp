@@ -160,7 +160,8 @@ export function encodeIpcMessage(message: IpcMessage): string {
 
 /** Incrementally decodes one direction of an NDJSON IPC stream. */
 export class IpcLineDecoder<T> {
-  private buffered = Buffer.alloc(0);
+  private fragments: Buffer[] = [];
+  private bufferedBytes = 0;
   private discardingOversizeLine = false;
 
   constructor(
@@ -189,8 +190,9 @@ export class IpcLineDecoder<T> {
       }
 
       const part = bytes.subarray(offset, partEnd);
-      if (this.buffered.length + part.length > this.maxLineBytes) {
-        this.buffered = Buffer.alloc(0);
+      if (this.bufferedBytes + part.length > this.maxLineBytes) {
+        this.fragments = [];
+        this.bufferedBytes = 0;
         results.push({
           kind: 'reject',
           reason: 'line_too_long',
@@ -205,12 +207,14 @@ export class IpcLineDecoder<T> {
       }
 
       if (part.length > 0) {
-        this.buffered = Buffer.concat([this.buffered, part]);
+        this.fragments.push(part);
+        this.bufferedBytes += part.length;
       }
       if (newlineIndex === -1) return results;
 
-      results.push(this.decodeLine(this.buffered));
-      this.buffered = Buffer.alloc(0);
+      results.push(this.decodeLine(Buffer.concat(this.fragments, this.bufferedBytes)));
+      this.fragments = [];
+      this.bufferedBytes = 0;
       offset = newlineIndex + 1;
     }
 
