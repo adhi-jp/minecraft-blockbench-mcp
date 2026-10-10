@@ -1,8 +1,9 @@
 // Tests for the full-auto orchestration, the CDP payload builder, the Windows
-// PowerShell driver generator, and the target resolver. All effects are
-// injected, so no Blockbench, CDP endpoint, or interop runs here.
+// PowerShell driver generator, and the target resolver. Launch checks use
+// isolated Node children; no Blockbench, CDP endpoint, or interop runs here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -142,6 +143,73 @@ test('a missing binary aborts and names --blockbench-path', async () => {
   assert.equal(outcome, 'aborted');
   assert.equal(world.launches.length, 0);
   assert.match(world.out.join('\n'), /--blockbench-path/);
+});
+
+test('a real launch of a missing executable returns failure without an unhandled error', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bbmcp-launch-test-'));
+  try {
+    const moduleUrl = new URL('../src/setup/full-auto.ts', import.meta.url).href;
+    const script = `
+      import { createRealFullAutoDeps } from ${JSON.stringify(moduleUrl)};
+      const deps = createRealFullAutoDeps({ osPlatform: process.platform, isWsl: false, toWindowsPath: () => null }, () => {});
+      const result = await deps.launch(${JSON.stringify(join(dir, 'missing-executable'))}, []);
+      console.log(JSON.stringify(result));
+      await new Promise((resolve) => setImmediate(resolve));
+    `;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+      encoding: 'utf8', timeout: 10000,
+    });
+    assert.equal(child.status, 0, `missing executable must not crash the caller: ${child.stderr}`);
+    assert.equal(child.stderr, '');
+    const result = JSON.parse(child.stdout) as { ok: boolean; error?: string };
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? '', /ENOENT/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a real launch succeeds for a harmless Node child', async () => {
+  const deps = createRealFullAutoDeps(
+    { osPlatform: 'linux', isWsl: false, toWindowsPath: () => null },
+    () => {},
+  );
+  assert.deepEqual(await deps.launch(process.execPath, ['-e', 'process.exit(0)']), { ok: true });
+});
+
+test('a real launch failure aborts orchestration before CDP and reports the manual fallback', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bbmcp-launch-test-'));
+  try {
+    const moduleUrl = new URL('../src/setup/full-auto.ts', import.meta.url).href;
+    const script = `
+      import { createRealFullAutoDeps, runFullAuto } from ${JSON.stringify(moduleUrl)};
+      const output = [];
+      const deps = createRealFullAutoDeps({ osPlatform: 'linux', isWsl: false, toWindowsPath: () => null }, (line) => output.push(line));
+      let versionCalls = 0;
+      let evaluateCalls = 0;
+      deps.fetchVersion = async () => { versionCalls++; return { ok: false, versionBody: '' }; };
+      deps.evaluate = async () => { evaluateCalls++; return { ok: false }; };
+      const outcome = await runFullAuto(deps, {
+        pluginPath: ${JSON.stringify(PLUGIN_PATH)}, port: 39731, secret: ${JSON.stringify(SENTINEL)},
+        skipRunningCheck: true, blockbenchPathOverride: ${JSON.stringify(join(dir, 'missing-executable'))},
+      });
+      console.log(JSON.stringify({ outcome, versionCalls, evaluateCalls, output }));
+      await new Promise((resolve) => setImmediate(resolve));
+    `;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+      encoding: 'utf8', timeout: 10000,
+    });
+    assert.equal(child.status, 0, `launch failure must not crash setup: ${child.stderr}`);
+    assert.equal(child.stderr, '');
+    const result = JSON.parse(child.stdout) as { outcome: string; versionCalls: number; evaluateCalls: number; output: string[] };
+    assert.equal(result.outcome, 'aborted');
+    assert.equal(result.versionCalls, 0, 'CDP version probing must be skipped after launch failure');
+    assert.equal(result.evaluateCalls, 0, 'CDP evaluation must be skipped after launch failure');
+    assert.match(result.output.join('\n'), /Launching Blockbench failed:.*ENOENT.*manual steps below/);
+    assert.ok(!result.output.join('\n').includes(SENTINEL));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('an unsupported target returns without launching', async () => {

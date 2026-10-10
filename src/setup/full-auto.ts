@@ -300,9 +300,14 @@ export function createRealFullAutoDeps(options: RealFullAutoOptions, out: (line:
     },
     launch: async (binaryPath, args) => {
       try {
-        const child = spawn(binaryPath, args, { detached: true, stdio: 'ignore' });
-        child.unref();
-        return { ok: true };
+        return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          const child = spawn(binaryPath, args, { detached: true, stdio: 'ignore' });
+          child.once('error', (error) => resolve({ ok: false, error: error.message }));
+          child.once('spawn', () => {
+            child.unref();
+            resolve({ ok: true });
+          });
+        });
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
