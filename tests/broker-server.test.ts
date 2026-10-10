@@ -402,7 +402,7 @@ test('an inactive controller is released on plugin disconnect and another client
   const offline = await b.request('get_elements', {});
   assert.deepEqual(offline, {
     ok: false,
-    error: { code: 'E_PLUGIN_NOT_CONNECTED', message: 'Blockbench plugin is not connected.' },
+    error: { code: 'E_PLUGIN_NOT_CONNECTED', message: 'Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.' },
   });
   assert.equal(plugin.requests('get_elements').length, 0);
 
@@ -581,6 +581,7 @@ test('a lost revocation acknowledgement is retried after plugin authentication b
   await plugin.disconnectCurrent();
   const disconnected = await firstAttempt;
   assert.equal(disconnected.error?.code, 'E_PLUGIN_NOT_CONNECTED');
+  assert.match(disconnected.error?.message ?? '', /^Plugin disconnected before answering \(.+\)\.$/);
   assert.equal(plugin.requests('get_elements').length, 0);
 
   await plugin.connect();
@@ -648,7 +649,7 @@ test('plugin-not-connected errors pass through the complete direct bridge payloa
   assert.equal(outcome.ok, false);
   assert.deepEqual(outcome.error, {
     code: 'E_PLUGIN_NOT_CONNECTED',
-    message: 'Blockbench plugin is not connected.',
+    message: 'Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.',
   });
 });
 
@@ -671,7 +672,7 @@ test('while Blockbench is not connected every client is answered E_PLUGIN_NOT_CO
   assert.equal(second.ok, false);
   assert.deepEqual(
     second.error,
-    { code: 'E_PLUGIN_NOT_CONNECTED', message: 'Blockbench plugin is not connected.' },
+    { code: 'E_PLUGIN_NOT_CONNECTED', message: 'Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.' },
     'a client was told another client controls a session no plugin is connected to',
   );
 

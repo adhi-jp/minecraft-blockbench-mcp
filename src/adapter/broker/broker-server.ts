@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   COMMAND_SPECS,
   PACKAGE_VERSION,
+  PLUGIN_NOT_CONNECTED_MESSAGE,
   isCommandName,
   makeError,
   type CommandSpec,
@@ -545,7 +546,7 @@ export class BrokerServer {
       }
       return {
         ok: false,
-        error: makeError('E_PLUGIN_NOT_CONNECTED', 'Blockbench plugin is not connected.'),
+        error: makeError('E_PLUGIN_NOT_CONNECTED', PLUGIN_NOT_CONNECTED_MESSAGE),
       };
     }
 

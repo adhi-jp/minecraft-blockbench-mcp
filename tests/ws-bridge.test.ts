@@ -391,6 +391,16 @@ test('requests without a connected plugin fail immediately with E_PLUGIN_NOT_CON
   const outcome = await bridge.request('get_project_state', {});
   assert.equal(outcome.ok, false);
   assert.equal(outcome.error?.code, 'E_PLUGIN_NOT_CONNECTED');
+  assert.equal(outcome.error?.message, 'Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.');
+});
+
+test('scope revocation without a connected plugin returns connection remediation', async (t) => {
+  const { bridge } = await startBridge();
+  t.after(() => bridge.stop());
+  const revocation = await bridge.revokeScope();
+  assert.equal(revocation.ok, false);
+  assert.equal(revocation.error?.code, 'E_PLUGIN_NOT_CONNECTED');
+  assert.equal(revocation.error?.message, 'Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.');
 });
 
 test('disconnect while a request is in flight resolves it with E_PLUGIN_NOT_CONNECTED', async (t) => {
@@ -403,6 +413,7 @@ test('disconnect while a request is in flight resolves it with E_PLUGIN_NOT_CONN
   const outcome = await pending;
   assert.equal(outcome.ok, false);
   assert.equal(outcome.error?.code, 'E_PLUGIN_NOT_CONNECTED');
+  assert.match(outcome.error?.message ?? '', /^Plugin disconnected before answering \(.+\)\.$/);
 });
 
 /**

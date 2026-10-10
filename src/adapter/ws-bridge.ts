@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import {
   PROTOCOL_VERSION,
+  PLUGIN_NOT_CONNECTED_MESSAGE,
   COMMAND_SPECS,
   INTERNAL_COMMAND_SPECS,
   isCommandName,
@@ -291,7 +292,7 @@ export class WsBridge {
     if (!this.connected) {
       return {
         ok: false,
-        error: makeError('E_PLUGIN_NOT_CONNECTED', 'Blockbench plugin is not connected.'),
+        error: makeError('E_PLUGIN_NOT_CONNECTED', PLUGIN_NOT_CONNECTED_MESSAGE),
       };
     }
     const existing = this.#scopeResetInFlight;
@@ -374,7 +375,7 @@ export class WsBridge {
     if (active === null || active.readyState !== WebSocket.OPEN) {
       return Promise.resolve({
         ok: false,
-        error: makeError('E_PLUGIN_NOT_CONNECTED', 'Blockbench plugin is not connected.'),
+        error: makeError('E_PLUGIN_NOT_CONNECTED', PLUGIN_NOT_CONNECTED_MESSAGE),
       });
     }
     const id = requestId ?? randomUUID();

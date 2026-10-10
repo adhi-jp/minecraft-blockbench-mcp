@@ -8,6 +8,7 @@ import {
   COMMAND_SPECS,
   PACKAGE_VERSION,
   PROTOCOL_VERSION,
+  PLUGIN_NOT_CONNECTED_MESSAGE,
   makeError,
   type CommandName,
   type CommandSpec,
@@ -163,7 +164,7 @@ export function buildMcpServer(options: {
     'health',
     {
       description:
-        'Report adapter status: WebSocket listener state, plugin connection, plugin versions/capabilities, scoped-directory status, and machine-readable setup errors. Read-only; works while Blockbench is closed.',
+        'Report adapter status: WebSocket listener state, plugin connection, plugin versions/capabilities, scoped-directory status, and machine-readable setup errors. Read-only; works while Blockbench is closed. plugin_connected: false does not prove Blockbench is closed. Check setup_errors and Tools → MCP Connection Status in Blockbench. Start Blockbench with a compatible MCP plugin installed and enabled, with matching port/secret settings. The plugin reconnects automatically; call health again to confirm the connection.',
       // Strict so the enforced schema matches the `additionalProperties: false`
       // that `tools/list` has always advertised for this no-argument tool.
       inputSchema: z.object({}).strict(),
@@ -241,7 +242,7 @@ export function buildMcpServer(options: {
             command,
             error: makeError(
               'E_PLUGIN_NOT_CONNECTED',
-              'Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.',
+              PLUGIN_NOT_CONNECTED_MESSAGE,
               setupIssues.length > 0 ? { setup_errors: setupIssues } : undefined,
             ),
           });

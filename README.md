@@ -195,6 +195,19 @@ long the shared broker remains running without AI clients) and
 `health` result identifies the active `mode` and reports `broker_connected`,
 `controller_state`, `controller_owner`, and `client_count`.
 
+`controller_state` describes the controller lease:
+
+| State | Meaning |
+| --- | --- |
+| `idle` | No client owns control; acquiring it may first require scope clearance. |
+| `owned` | One client owns control, including between its commands until the lease expires. |
+| `releasing` | Control is being released after the current in-flight command finishes. |
+| `recovering` | The broker requires acknowledged clearance of the previous or unknown scoped-directory grant before granting control. |
+
+`recovering` can persist while the plugin is disconnected because it cannot
+acknowledge scope clearance. That state alone does not establish an adapter
+fault; check `plugin_connected` and `setup_errors` as well.
+
 The adapter and the shared broker greet each other over a private handshake,
 and this version changed it. A broker left running from an earlier version
 therefore cannot serve an adapter from this version: the new adapter reports
@@ -230,6 +243,16 @@ before the new client can use file tools.
 
 When the connection succeeds, Blockbench shows “MCP adapter connected”. The
 `health` tool then reports `plugin_connected: true`.
+
+If `health` reports `plugin_connected: false`, it establishes only that the
+plugin is disconnected, not that Blockbench is closed or why it disconnected.
+Check `setup_errors`, start Blockbench, and ensure a compatible MCP plugin is
+installed, enabled, and configured with the adapter's port and shared secret.
+In Blockbench, **Tools → MCP Connection Status** shows the plugin's session
+and config status. The plugin retries automatically with backoff intervals up
+to 30 seconds by default; wait for a retry and call `health` again before
+concluding it is unavailable. If the running adapter's secret or listener
+configuration is stale, follow the setup/restart steps above.
 
 ## Scoped file access
 
@@ -411,6 +434,69 @@ every call, so installing or re-enabling GeckoLib takes effect immediately.
   `hold_on_last_frame` clamps to the last frame, and `once` fails with
   `E_INVALID_PARAMS` before moving the timeline. Sound, particle, and timeline
   effect channels are muted during the still preview.
+
+### Pose probe for bone directions
+
+Use this temporary clip to inspect bone-local yaw and pitch visually. Connect
+the MCP plugin and enable the GeckoLib plugin, select the intended
+`geckolib_model` project tab, and stop timeline playback. For a file-based
+open, obtain scoped-directory approval and use `open_geckolib_model` with a
+GeckoLib `.bbmodel`; it cannot open `.geo.json`. An already-created project
+needs no file scope for captures returned as images.
+
+1. Call `get_project_state` and `get_elements` with `{}` to inspect existing
+   animation names and real bone names/hierarchy. Replace `head` and `camera`
+   below with the intended bones. Choose an unused probe clip name and keep
+   that same name in every call.
+2. Call `upsert_geckolib_animation` with this payload, omitting `replace`. If
+   it returns `E_FILE_EXISTS`, choose another name; do not replace or delete
+   the existing clip.
+
+```json
+{
+  "name": "animation.pose_probe",
+  "loop": "once",
+  "length": 2,
+  "bones": {
+    "head": {"rotation": [
+      {"time": 0, "value": [0, 0, 0]},
+      {"time": 1, "value": [0, 90, 0]},
+      {"time": 2, "value": [0, 0, 0]}
+    ]},
+    "camera": {"rotation": [
+      {"time": 0, "value": [0, 0, 0]},
+      {"time": 1, "value": [0, 0, 0]},
+      {"time": 2, "value": [30, 0, 0]}
+    ]}
+  }
+}
+```
+
+3. After creation succeeds, call `capture_geckolib_animation_frame`:
+
+```json
+{"animation": "animation.pose_probe", "time": 0, "angle_preset": "north"}
+```
+
+   Repeat for times `0`, `1`, and `2` from both `north` and
+   `isometric_right`, omitting `output_path` to receive MCP images. Compare
+   the baseline at `0` with yaw alone at `1` and pitch alone at `2`.
+4. Delete only the probe you successfully created with
+   `delete_geckolib_animation` and `{"name": "animation.pose_probe"}`, even
+   if a capture fails. Do not save or export while the probe is present.
+   Creating and deleting it add Undo entries and can leave the project dirty;
+   each capture restores playback/pose state, not the whole procedure's saved
+   state or Undo history.
+
+Rotation payloads are degrees in the `.animation.json` convention: X/Y signs
+are inverted relative to the Blockbench UI, as described above. Camera
+presets do not establish which direction an arbitrary model's muzzle faces.
+These images verify visual bone-local directions, not entity/world yaw
+conversion, runtime renderer mapping, targeting, render timing, or fire timing;
+inspect runtime code or verify in-game for those conclusions.
+
+### Importing animation files
+
 - **Importing existing `.animation.json` files**: there is no dedicated import
   tool. An agent can read a file (`read_file`), translate each
   animation into an upsert payload, and call `upsert_geckolib_animation` —

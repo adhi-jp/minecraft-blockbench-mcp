@@ -8,6 +8,9 @@ export const PACKAGE_VERSION = '0.3.0';
 
 export const DEFAULT_WS_PORT = 39731;
 
+export const PLUGIN_NOT_CONNECTED_MESSAGE =
+  'Blockbench or its MCP plugin is not running or not connected. Start Blockbench, load the plugin, and match its port/secret settings.';
+
 // Operational defaults shared by both sides. All of them are configurable on
 // the adapter; the hello_ack tells the plugin the effective heartbeat settings.
 export const DEFAULTS = {
@@ -506,7 +509,7 @@ const exportModelParams = z
 
 const readFileParams = z
   .object({
-    path: z.string(),
+    path: z.string().describe('Path relative to the approved scoped directory, or an absolute path contained within it.'),
     encoding: z.enum(['utf8', 'base64']).optional(),
     // Bounded so a response can never exceed the transport's frame limit.
     max_bytes: z.number().int().positive().max(DEFAULTS.maxTextureDataUrlBytes).optional(),
@@ -525,7 +528,7 @@ const writeFilesParams = z
       .array(
         z
           .object({
-            path: z.string(),
+            path: z.string().describe('Path relative to the approved scoped directory, or an absolute path contained within it.'),
             content: z.string(),
             encoding: z.enum(['utf8', 'base64']).optional(),
             overwrite: z
@@ -1001,14 +1004,15 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
     result: assignTextureResult,
   },
   read_file: {
-    description: 'Read a file inside the confirmed scoped directory. Read-only.',
+    description:
+      'Read a file through the connected Blockbench desktop MCP plugin, inside the directory the Blockbench user approved via propose_scoped_directory. Read-only. Use the host filesystem tools for general workspace file access.',
     mutates: false,
     params: readFileParams,
     result: readFileResult,
   },
   write_files: {
     description:
-      'Write one or more files inside the confirmed scoped directory. Preflights all destinations and writes nothing when any blocker exists; each overwrite must be explicitly flagged per file.',
+      'Write one or more files through the connected Blockbench desktop MCP plugin, inside the directory the Blockbench user approved via propose_scoped_directory. Use the host filesystem tools for general workspace file access. Preflights all destinations and writes nothing when any blocker exists; each overwrite must be explicitly flagged per file.',
     mutates: true,
     params: writeFilesParams,
     result: writeFilesResult,
