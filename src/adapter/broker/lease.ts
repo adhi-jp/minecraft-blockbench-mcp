@@ -247,8 +247,8 @@ export class ControllerLease<TimerHandle> {
     this.clearIdleTimer();
 
     if (this.currentState === 'owned') {
-      this.pendingAcquirer = this.owner;
       if (this.requestInFlight) {
+        this.pendingAcquirer = this.owner;
         this.recoverAfterRelease = true;
         this.currentState = 'releasing';
       } else {

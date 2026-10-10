@@ -315,3 +315,70 @@ test('plugin re-authentication with a tainted scope requires revocation before a
   lease.revocationResolved(true);
   assert.equal(lease.ownerSessionId, 'session-a');
 });
+
+test('plugin disconnect drops an inactive owner without reserving it and keeps its scope tainted until revocation', () => {
+  const { lease, timers } = makeLease();
+  lease.acquire('session-a');
+  lease.pluginDisconnected();
+  const recovering = {
+    state: 'recovering',
+    ownerSessionId: null,
+    inFlightRequest: false,
+    scopeEraOwnerSessionId: 'session-a',
+    tainted: true,
+    pendingAcquirerSessionId: null,
+  };
+  assert.deepEqual(lease.snapshot(), recovering);
+  assert.equal(timers.callbacks.size, 0);
+
+  lease.pluginAuthenticated();
+  lease.revocationResolved(false);
+  assert.deepEqual(lease.snapshot(), recovering);
+  lease.revocationResolved(true);
+  assert.deepEqual(lease.snapshot(), {
+    state: 'idle',
+    ownerSessionId: null,
+    inFlightRequest: false,
+    scopeEraOwnerSessionId: null,
+    tainted: false,
+    pendingAcquirerSessionId: null,
+  });
+  assert.equal(timers.callbacks.size, 0, 'quiet Client A must not be regranted on reconnect');
+  assert.deepEqual(lease.acquire('session-b'), { outcome: 'granted' });
+  assert.equal(lease.ownerSessionId, 'session-b');
+});
+
+test('plugin disconnect during a request preserves the releasing owner and reservation until recovery is acknowledged', () => {
+  const { lease, timers } = makeLease();
+  lease.acquire('session-a');
+  lease.requestStarted('session-a');
+  lease.pluginDisconnected();
+  assert.deepEqual(lease.snapshot(), {
+    state: 'releasing',
+    ownerSessionId: 'session-a',
+    inFlightRequest: true,
+    scopeEraOwnerSessionId: 'session-a',
+    tainted: true,
+    pendingAcquirerSessionId: 'session-a',
+  });
+  assert.equal(timers.callbacks.size, 0);
+  assert.deepEqual(lease.acquire('session-b'), { outcome: 'busy', owner: 'session-a' });
+
+  lease.requestFinished('session-a');
+  lease.pluginAuthenticated();
+  lease.revocationResolved(false);
+  assert.deepEqual(lease.snapshot(), {
+    state: 'recovering',
+    ownerSessionId: null,
+    inFlightRequest: false,
+    scopeEraOwnerSessionId: 'session-a',
+    tainted: true,
+    pendingAcquirerSessionId: 'session-a',
+  });
+  assert.deepEqual(lease.acquire('session-b'), { outcome: 'busy', owner: 'session-a' });
+  lease.revocationResolved(true);
+  assert.equal(lease.state, 'owned');
+  assert.equal(lease.ownerSessionId, 'session-a');
+  assert.equal(lease.tainted, false);
+  assert.equal(lease.snapshot().pendingAcquirerSessionId, null);
+});

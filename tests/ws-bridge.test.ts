@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 
 import { isRequestCancelled } from '../src/adapter/request-cancellation.js';
 import { WsBridge, CLOSE_CODES, listenerSetupIssue } from '../src/adapter/ws-bridge.js';
-import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
+import { PROTOCOL_VERSION, type ScopeStatus } from '../src/shared/protocol.js';
 
 const SECRET = 'test-secret-abc123';
 let nextPort = 40100;
@@ -513,6 +513,56 @@ test('scope_changed events update the cached plugin scope status', async (t) => 
   );
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.deepEqual(bridge.pluginInfo?.scope, { state: 'confirmed', normalized_path: '/home/user/models' });
+});
+
+test('validated scope changes notify observers without changing the plugin session or scope clearance', async (t) => {
+  const scopes: Array<ScopeStatus | null> = [];
+  const sessions: boolean[] = [];
+  const { bridge, port } = await startBridge({
+    onScopeChange: () => scopes.push(bridge.pluginInfo?.scope ?? null),
+    onSessionChange: (connected) => sessions.push(connected),
+  });
+  t.after(() => bridge.stop());
+  const { socket, frames } = await connectAuthenticated(port);
+  t.after(() => socket.close());
+  const flush = async (): Promise<void> => {
+    const pong = once(socket, 'pong');
+    socket.ping();
+    await pong;
+  };
+  await flush();
+  assert.equal(bridge.scopeCleared, true);
+  assert.deepEqual(scopes, []);
+
+  const proposed: ScopeStatus = { state: 'proposed', normalized_path: '/tmp/broker-models' };
+  socket.send(JSON.stringify({ type: 'event', event: 'scope_changed', data: proposed }));
+  await flush();
+  assert.deepEqual(scopes, [proposed]);
+
+  for (const frame of [
+    { type: 'event', event: 'scope_changed', data: null },
+    { type: 'event', event: 'scope_changed', data: { state: 'bogus' } },
+    { type: 'event', event: 'scope_changed', data: { state: 'confirmed', normalized_path: 1 } },
+    { type: 'event', event: 'scope_changed' },
+    { type: 'event', event: 'scope_changed', data: { state: 'revoked' }, extra: true },
+    { type: 'event', event: 'unrelated', data: { state: 'revoked' } },
+  ]) {
+    socket.send(JSON.stringify(frame));
+  }
+  await flush();
+  assert.deepEqual(scopes, [proposed]);
+  assert.deepEqual(bridge.pluginInfo?.scope, proposed);
+
+  const confirmed: ScopeStatus = { state: 'confirmed', normalized_path: '/tmp/broker-models' };
+  socket.send(JSON.stringify({ type: 'event', event: 'scope_changed', data: confirmed }));
+  socket.send(JSON.stringify({ type: 'event', event: 'scope_changed', data: { state: 'revoked' } }));
+  await flush();
+  assert.deepEqual(scopes, [proposed, confirmed, { state: 'revoked' }]);
+  assert.deepEqual(bridge.pluginInfo?.scope, { state: 'revoked' });
+  assert.deepEqual(sessions, [true]);
+  assert.equal(bridge.connected, true);
+  assert.equal(bridge.scopeCleared, true);
+  assert.equal(frames.length, 2, 'scope events must not send another handshake or revocation');
 });
 
 test('oversized frames close the session without crashing the bridge', async (t) => {

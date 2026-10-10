@@ -20,7 +20,7 @@ import {
 import { writeBrokerRecordAtomic } from '../src/adapter/broker/rendezvous.js';
 import { buildBrokerSpawnArgs, spawnDetachedBroker } from '../src/adapter/broker/spawn.js';
 import { CONFIG_DEFAULTS } from '../src/adapter/config.js';
-import { PROTOCOL_VERSION } from '../src/shared/protocol.js';
+import { PROTOCOL_VERSION, type ScopeStatus } from '../src/shared/protocol.js';
 
 const SECRET = 'broker-test-secret-1234567890';
 const CONFIG_IDENTITY = '0123456789abcdef';
@@ -350,6 +350,94 @@ test('the first controller excludes a busy client without relaying its command',
   const unsupported = await b.request('not_a_command', {});
   assert.equal(unsupported.error?.code, 'E_UNSUPPORTED_COMMAND');
   assert.equal(plugin.requests('not_a_command').length, 0);
+});
+
+test('scope changes reach both broker clients without client or controller changes', async (t) => {
+  const harness = await createHarness(t);
+  const plugin = await harness.addPlugin();
+  const { client: a } = await harness.addClient('session-a', 'Client A');
+  const { client: b } = await harness.addClient('session-b', 'Client B');
+  assert.equal((await a.request('get_project_state', {})).ok, true);
+  await waitFor(
+    () => [a, b].every((client) => client.brokerStatus()?.controller_owner === 'Client A'),
+    'both clients to observe Client A ownership',
+  );
+  const frameCount = plugin.frames.length;
+  const scopes: ScopeStatus[] = [
+    { state: 'proposed', normalized_path: '/tmp/broker-models' },
+    { state: 'confirmed', normalized_path: '/tmp/broker-models' },
+    { state: 'revoked' },
+  ];
+  for (const scope of scopes) {
+    plugin.current!.send(JSON.stringify({ type: 'event', event: 'scope_changed', data: scope }));
+    await waitFor(
+      () => [a, b].every((client) => client.pluginInfo?.scope?.state === scope.state),
+      `both clients to cache the ${scope.state} scope`,
+    );
+    for (const client of [a, b]) {
+      assert.deepEqual(client.pluginInfo?.scope, scope);
+      assert.equal(client.listening, true);
+      assert.equal(client.connected, true);
+      assert.equal(client.brokerStatus()?.controller_state, 'owned');
+      assert.equal(client.brokerStatus()?.controller_owner, 'Client A');
+      assert.equal(client.brokerStatus()?.client_count, 2);
+      assert.equal(client.brokerStatus()?.effective_port, harness.port);
+    }
+    assert.equal(plugin.frames.length, frameCount, 'scope status must not trigger revocation or a public request');
+  }
+});
+
+test('an inactive controller is released on plugin disconnect and another client waits for acknowledged reconnect recovery', async (t) => {
+  const harness = await createHarness(t);
+  const plugin = await harness.addPlugin();
+  const { client: a } = await harness.addClient('session-a', 'Client A');
+  const { client: b } = await harness.addClient('session-b', 'Client B');
+  assert.equal((await a.request('get_project_state', {})).ok, true);
+  await plugin.disconnectCurrent();
+  await waitFor(
+    () => [a, b].every((client) => !client.connected && client.brokerStatus()?.controller_state === 'recovering'),
+    'both clients to observe disconnected recovery',
+  );
+  for (const client of [a, b]) assert.equal(client.brokerStatus()?.controller_owner, null);
+  const offline = await b.request('get_elements', {});
+  assert.deepEqual(offline, {
+    ok: false,
+    error: { code: 'E_PLUGIN_NOT_CONNECTED', message: 'Blockbench plugin is not connected.' },
+  });
+  assert.equal(plugin.requests('get_elements').length, 0);
+
+  plugin.delayRevocations = true;
+  await plugin.connect();
+  await waitFor(() => plugin.requests('revoke_scope').length === 2, 'the reconnect revocation request');
+  await waitFor(() => a.connected && b.connected, 'both clients to observe plugin reconnect');
+  let settled = false;
+  const requested = b.request('get_elements', {}).then((outcome) => {
+    settled = true;
+    return outcome;
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  for (const client of [a, b]) {
+    assert.equal(client.brokerStatus()?.controller_state, 'recovering');
+    assert.equal(client.brokerStatus()?.controller_owner, null);
+    assert.equal(client.brokerStatus()?.client_count, 2);
+  }
+  assert.equal(settled, false, 'Client B must wait for a genuine revocation acknowledgement');
+  assert.equal(plugin.requests('get_elements').length, 0, 'Client B must not inherit Client A scope');
+  assert.equal(plugin.requests('get_project_state').length, 1, 'quiet Client A must not be replayed');
+
+  plugin.acknowledgeLatestRevocation();
+  assert.equal((await requested).ok, true);
+  await waitFor(
+    () => [a, b].every((client) => client.brokerStatus()?.controller_owner === 'Client B'),
+    'both clients to observe Client B ownership',
+  );
+  assert.equal(plugin.requests('get_elements').length, 1);
+  const revokeIndex = plugin.frames.findLastIndex((frame) => frame.command === 'revoke_scope');
+  const commandIndex = plugin.frames.findIndex((frame) => frame.command === 'get_elements');
+  assert.ok(commandIndex > revokeIndex);
+  assert.equal((await a.request('get_project_state', {})).error?.code, 'E_CLIENT_BUSY');
+  assert.equal(plugin.requests('get_project_state').length, 1);
+  assert.equal(plugin.requests('revoke_scope').length, 2);
 });
 
 test('controller handoff waits for exactly one revoke_scope acknowledgement before relay', async (t) => {

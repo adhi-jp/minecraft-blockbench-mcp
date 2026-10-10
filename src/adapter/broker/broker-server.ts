@@ -31,7 +31,7 @@ import { removeBrokerRecordIfInstance } from './rendezvous.js';
 
 type TimerHandle = unknown;
 
-export interface BrokerServerOptions extends Omit<BridgeOptions, 'onSessionChange'> {
+export interface BrokerServerOptions extends Omit<BridgeOptions, 'onSessionChange' | 'onScopeChange'> {
   endpoint: string;
   configIdentity: string;
   recordPath: string;
@@ -141,6 +141,7 @@ export class BrokerServer {
       handshakeTimeoutMs: options.handshakeTimeoutMs,
       maxMessageBytes: options.maxMessageBytes,
       log: options.log,
+      onScopeChange: () => this.#broadcastStatus(),
       onSessionChange: (connected) => {
         try {
           void this.#handlePluginSessionChange(connected).catch(() => {

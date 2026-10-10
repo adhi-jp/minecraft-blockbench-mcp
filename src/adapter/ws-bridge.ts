@@ -48,6 +48,8 @@ export interface BridgeOptions {
   /** Receives sanitized log lines only; secrets must never reach this. */
   log: (line: string) => void;
   onSessionChange?: (connected: boolean) => void;
+  /** Called after a validated `scope_changed` event updates pluginInfo. */
+  onScopeChange?: () => void;
   /** How long one authenticated session waits for its `revoke_scope` answer. */
   scopeRevocationTimeoutMs?: number;
 }
@@ -540,7 +542,10 @@ export class WsBridge {
     if (message.type === 'event') {
       if (message.event === 'scope_changed' && this.#pluginInfo !== null) {
         const scope = scopeStatusSchema.safeParse(message.data);
-        if (scope.success) this.#pluginInfo.scope = scope.data;
+        if (scope.success) {
+          this.#pluginInfo.scope = scope.data;
+          this.#options.onScopeChange?.();
+        }
       }
       return;
     }
