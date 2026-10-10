@@ -45,6 +45,26 @@ const nodeFsAdapter: ScopedFsLike = {
 
 const injectedGlobals = globalThis as Record<string, unknown>;
 
+// Unclamped autouv=1 subset of external/blockbench/js/outliner/types/cube.js:697.
+// This fixture is characterized against native mapAutoUV locally; CI fetches
+// only Blockbench types. Expected rectangles below are hand-derived literals.
+function mapUnclampedAutoUV(cube: Pick<FakeCube, 'box_uv' | 'autouv' | 'faces' | 'size' | 'preview_controller'>): void {
+  if (cube.box_uv || cube.autouv !== 1) return;
+  const axes: Record<string, [number, number]> = {
+    north: [0, 1], south: [0, 1], east: [2, 1], west: [2, 1], up: [0, 2], down: [0, 2],
+  };
+  for (const [side, dimensions] of Object.entries(axes)) {
+    const face = cube.faces[side];
+    const sizes = dimensions.map((axis) => Math.abs(cube.size(axis)));
+    if (face.rotation === 90 || face.rotation === 270) sizes.reverse();
+    const previous = face.uv_size;
+    face.uv = [face.uv[0], face.uv[1],
+      face.uv[0] + sizes[0] * (Math.sign(previous[0]) || 1),
+      face.uv[1] + sizes[1] * (Math.sign(previous[1]) || 1)];
+  }
+  cube.preview_controller.updateUV();
+}
+
 function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Project;
   delete injectedGlobals.Format;
@@ -76,8 +96,11 @@ function clearBlockbenchGlobals(): void {
 
 class FakeTexture {
   static all: FakeTexture[] = [];
+  static loadedPaths: string[] = [];
   uuid: string;
   name: string;
+  path = '';
+  saved = true;
   constructor(uuidOrOptions: string | { name?: string }, name?: string) {
     if (typeof uuidOrOptions === 'string') {
       this.uuid = uuidOrOptions;
@@ -91,8 +114,19 @@ class FakeTexture {
   fromDataURL(_dataUrl: string): this {
     return this;
   }
-  add(_undo: boolean): this {
-    FakeTexture.all.push(this);
+  fromPath(path: string): this {
+    FakeTexture.loadedPaths.push(path);
+    this.path = path;
+    return this;
+  }
+  add(undo: boolean): FakeTexture {
+    // textures.js:942 returns a path match before creating an undo entry.
+    const existing = this.path && FakeTexture.all.find((texture) => texture.path === this.path);
+    if (existing) return existing;
+    const undoSystem = injectedGlobals.Undo as FakeUndo;
+    if (undo) undoSystem.initEdit({ textures: [] });
+    if (!FakeTexture.all.includes(this)) FakeTexture.all.push(this);
+    if (undo) undoSystem.finishEdit('Add texture', { textures: [this] });
     return this;
   }
 }
@@ -101,6 +135,12 @@ class FakeCubeFace {
   uv: [number, number, number, number];
   rotation: number;
   texture: string | false | null;
+  get uv_size(): number[] {
+    return [this.uv[2] - this.uv[0], this.uv[3] - this.uv[1]];
+  }
+  getTexture(): FakeTexture | undefined {
+    return FakeTexture.all.find((texture) => texture.uuid === this.texture);
+  }
   constructor(uv: [number, number, number, number], texture: string | false | null, rotation = 0) {
     this.uv = uv;
     this.texture = texture;
@@ -123,6 +163,8 @@ class FakeCube {
   box_uv = false;
   uv_offset: [number, number] = [0, 0];
   mirror_uv = false;
+  autouv = 1;
+  preview_controller = { updateUV: () => {} };
   faces: Record<string, FakeCubeFace>;
   parent: FakeParent = 'root';
   applyTextureCalls: Array<{ texture: FakeTexture; faces: unknown }> = [];
@@ -146,6 +188,19 @@ class FakeCube {
   }
   applyTexture(texture: FakeTexture, faces: unknown): void {
     this.applyTextureCalls.push({ texture, faces });
+    for (const side of faces === true || this.box_uv ? Object.keys(this.faces) : faces as string[]) {
+      if (this.faces[side].texture !== null) this.faces[side].texture = texture.uuid;
+    }
+  }
+  size(axis: number): number {
+    return this.to[axis] - this.from[axis];
+  }
+  extend(changes: Record<string, unknown>): this {
+    Object.assign(this, changes);
+    return this;
+  }
+  mapAutoUV(): void {
+    mapUnclampedAutoUV(this);
   }
 }
 
@@ -207,6 +262,7 @@ function injectModelProject(): {
   head: FakeGroup;
 } {
   FakeTexture.all = [];
+  FakeTexture.loadedPaths = [];
   FakeCube.all = [];
   FakeGroup.all = [];
   const texture = new FakeTexture('t-1', 'skin');
@@ -701,6 +757,45 @@ interface FakeUndo {
   finishEdit(action: string, aspects?: unknown): void;
 }
 
+type ModelUndoAspects = { elements?: Array<{ uuid: string; faces: Record<string, FakeCubeFace> }>; textures?: FakeTexture[] };
+type ModelUndoSnapshot = { aspects: ModelUndoAspects; elements: Record<string, Record<string, FakeCubeFace>>; textures: FakeTexture[] };
+
+// Narrow undo fixture for existing cubes and added textures: native undo.js
+// snapshots the requested aspects and removes post-only texture UUIDs.
+function makeModelUndo(): FakeUndo & {
+  history: Array<{ before: ModelUndoSnapshot; post: ModelUndoSnapshot }>;
+  undo(): void;
+} {
+  const snapshot = (aspects: ModelUndoAspects): ModelUndoSnapshot => ({
+    aspects,
+    elements: Object.fromEntries((aspects.elements ?? []).map((cube) => [cube.uuid, structuredClone(cube.faces)])),
+    textures: [...(aspects.textures ?? [])],
+  });
+  let before: ModelUndoSnapshot;
+  return {
+    ...makeFakeUndo(),
+    history: [],
+    initEdit(aspects: ModelUndoAspects) {
+      this.initCalls.push(aspects);
+      before = snapshot(aspects);
+    },
+    finishEdit(action: string, aspects?: ModelUndoAspects) {
+      this.finishCalls.push({ action, aspects });
+      this.history.push({ before, post: snapshot(aspects ?? before.aspects) });
+    },
+    undo() {
+      const entry = this.history.pop()!;
+      for (const [uuid, faces] of Object.entries(entry.before.elements)) {
+        const cube = FakeCube.all.find((cube) => cube.uuid === uuid)!;
+        for (const [side, face] of Object.entries(faces)) Object.assign(cube.faces[side], face);
+      }
+      for (const texture of entry.post.textures) {
+        if (!entry.before.textures.includes(texture)) FakeTexture.all.splice(FakeTexture.all.indexOf(texture), 1);
+      }
+    },
+  };
+}
+
 function makeFakeUndo(): FakeUndo {
   return {
     initCalls: [],
@@ -738,7 +833,7 @@ test('assign_texture adds and applies a texture in one undo step', async (t) => 
   const harness = await makeHarness();
   t.after(harness.cleanup);
   const { body } = injectModelProject();
-  const undo = makeFakeUndo();
+  const undo = makeModelUndo();
   let canvasUpdates = 0;
   injectedGlobals.Undo = undo;
   injectedGlobals.Canvas = { updateAll: () => (canvasUpdates += 1) };
@@ -755,11 +850,64 @@ test('assign_texture adds and applies a texture in one undo step', async (t) => 
   assert.deepEqual(result.applied_to, ['c-body']);
   assert.equal(FakeTexture.all.length, 2, 'the assigned texture is added to the project');
   assert.deepEqual(body.applyTextureCalls, [{ texture: FakeTexture.all[1], faces: true }]);
-  assert.deepEqual(undo.initCalls, [{ elements: [body] }]);
+  assert.equal(result.texture_uuid, FakeTexture.all[1].uuid, 'the response names the registered texture');
+  assert.deepEqual(Object.values(body.faces).map((face) => face.texture), Array(6).fill(result.texture_uuid));
+  assert.deepEqual(undo.initCalls, [{ elements: [body], textures: [] }]);
   assert.equal(undo.finishCalls.length, 1, 'the application uses one undo step');
   assert.equal(undo.finishCalls[0]?.action, 'Apply texture');
+  assert.deepEqual(undo.finishCalls[0]?.aspects, { elements: [body], textures: [FakeTexture.all[1]] });
+  assert.equal(undo.history.length, 1, 'registration and application form one history entry');
   assert.equal(canvasUpdates, 1);
+  undo.undo();
+  assert.equal(FakeTexture.all.length, 1, 'undo removes the newly registered texture');
+  assert.deepEqual(Object.values(body.faces).map((face) => face.texture), Array(6).fill('t-1'));
 });
+
+for (const { applyAll, saved } of [
+  { applyAll: false, saved: false }, { applyAll: true, saved: false },
+  { applyAll: false, saved: true }, { applyAll: true, saved: true },
+]) {
+  test(`assign_texture reuses a ${saved ? 'saved' : 'unsaved'} path texture for ${applyAll ? 'all cubes' : 'selected faces'} and preserves it on undo`, async (t) => {
+    const harness = await makeHarness();
+    t.after(harness.cleanup);
+    const { texture, body, eye, loose } = injectModelProject();
+    const undo = makeModelUndo();
+    injectedGlobals.Undo = undo;
+    injectedGlobals.Canvas = { updateAll: () => {} };
+    eye.faces.north.texture = false;
+    texture.path = join(harness.scopeDir, 'skin.png');
+    texture.saved = saved;
+    nodeFs.writeFileSync(texture.path, 'texture fixture');
+    const outcome = await harness.bridge.request('assign_texture', {
+      name: 'ignored replacement name',
+      source: { kind: 'path', path: 'skin.png' },
+      apply_to: applyAll ? 'all' : { cube_uuids: ['c-eye'], faces: ['north'] },
+    });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+    // fromPath can remove/remap saved duplicates before add, and starts a
+    // watcher for candidates (textures.js:584-608); reuse must bypass loading.
+    assert.deepEqual(FakeTexture.loadedPaths, [], 'reuse must not load or start a candidate watcher');
+    assert.deepEqual(outcome.result, { texture_uuid: 't-1', name: 'skin', applied_to: applyAll ? 'all' : ['c-eye'] });
+    assert.deepEqual(FakeTexture.all, [texture], 'deduplication keeps the original registry entry');
+    assert.deepEqual(eye.applyTextureCalls, [{ texture, faces: applyAll ? true : ['north'] }]);
+    assert.equal(eye.faces.north.texture, 't-1');
+    assert.equal(eye.faces.south.texture, 't-1', 'other faces keep the registered texture');
+    assert.equal(texture.saved, saved, 'reuse preserves the texture state');
+    assert.deepEqual(body.applyTextureCalls, applyAll ? [{ texture, faces: true }] : []);
+    assert.deepEqual(Object.values(loose.faces).map((face) => face.texture), Array(6).fill(applyAll ? 't-1' : false));
+    assert.equal(undo.history.length, 1);
+    const { before, post } = undo.history[0];
+    assert.deepEqual(before.textures, [texture], 'only the reused texture is tracked');
+    assert.deepEqual(post.textures, [texture]);
+    assert.deepEqual(before.textures, post.textures, 'a reused texture must not appear only in the post snapshot');
+    assert.deepEqual(Object.keys(before.elements), applyAll ? ['c-body', 'c-eye', 'c-loose'] : ['c-eye']);
+    assert.deepEqual(Object.keys(post.elements), Object.keys(before.elements));
+    undo.undo();
+    assert.deepEqual(FakeTexture.all, [texture], 'undo retains the reused texture');
+    assert.equal(eye.faces.north.texture, false, 'undo restores the previously untextured face');
+    assert.deepEqual(Object.values(loose.faces).map((face) => face.texture), Array(6).fill(false));
+  });
+}
 
 /** Inject a project with one cube for UV command tests. */
 function injectUvProject(
@@ -1009,9 +1157,16 @@ class FakeConstructedCube {
   uuid: string;
   name: string;
   parent: unknown = 'root';
+  from: number[] = [0, 0, 0];
+  to: number[] = [0, 0, 0];
+  faces = sixFaces(false);
+  box_uv = false;
+  autouv = 1;
+  preview_controller = { updateUV: () => {} };
   constructor(options: Record<string, unknown>) {
     this.name = String(options.name ?? 'cube');
     this.uuid = `cc-${FakeConstructedCube.constructed.length + 1}`;
+    Object.assign(this, options);
     FakeConstructedCube.constructed.push(options);
   }
   init(): this {
@@ -1020,7 +1175,14 @@ class FakeConstructedCube {
   }
   extend(changes: Record<string, unknown>): this {
     Object.assign(FakeConstructedCube.constructed[FakeConstructedCube.constructed.length - 1], changes);
+    Object.assign(this, changes);
     return this;
+  }
+  size(axis: number): number {
+    return this.to[axis] - this.from[axis];
+  }
+  mapAutoUV(): void {
+    mapUnclampedAutoUV(this);
   }
   addTo(): this {
     return this;
@@ -1037,6 +1199,80 @@ function injectCreateCubesProject(format: Record<string, unknown>): void {
   injectedGlobals.Undo = makeFakeUndo();
   injectedGlobals.Canvas = { updateAll: () => {}, updateAllUVs: () => {} };
 }
+
+test('create_cubes maps native auto-UV rectangles before the undo snapshot and preserves box UV', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  injectCreateCubesProject({ id: 'java_block', box_uv: false, optional_box_uv: true });
+  const undo = makeModelUndo();
+  injectedGlobals.Undo = undo;
+  const outcome = await harness.bridge.request('create_cubes', {
+    cubes: [
+      { name: 'auto', from: [0, 0, 0], to: [4, 8, 2] },
+      { name: 'box', from: [0, 0, 0], to: [4, 8, 2], box_uv: true, uv_offset: [8, 4] },
+      { name: 'box_auto', from: [0, 0, 0], to: [4, 8, 2], box_uv: true },
+    ],
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const [cube, box, boxAuto] = FakeConstructedCube.all;
+  const expected = {
+    north: [0, 0, 4, 8], south: [0, 0, 4, 8], east: [0, 0, 2, 8], west: [0, 0, 2, 8],
+    up: [0, 0, 4, 2], down: [0, 0, 4, 2],
+  };
+  assert.deepEqual(Object.fromEntries(Object.entries(cube.faces).map(([side, face]) => [side, face.uv])), expected);
+  assert.deepEqual(Object.fromEntries(Object.entries(undo.history[0].post.elements[cube.uuid]).map(([side, face]) => [side, face.uv])), expected);
+  assert.deepEqual(Object.values(box.faces).map((face) => face.uv), Array(6).fill([0, 0, 4, 4]));
+  assert.deepEqual(Object.values(boxAuto.faces).map((face) => face.uv), Array(6).fill([0, 0, 4, 4]));
+  assert.deepEqual(FakeConstructedCube.constructed[1].uv_offset, [8, 4]);
+});
+
+test('update_cube maps native auto-UV after from and to changes before finishing undo', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube } = injectUvProject();
+  const undo = makeModelUndo();
+  injectedGlobals.Undo = undo;
+  const resized = await harness.bridge.request('update_cube', { uuid: cube.uuid, set: { to: [4, 8, 2] } });
+  assert.equal(resized.ok, true, JSON.stringify(resized.error));
+  assert.deepEqual(cube.faces.north.uv, [0, 0, 4, 8]);
+  assert.deepEqual(cube.faces.east.uv, [0, 0, 2, 8]);
+  assert.deepEqual(cube.faces.up.uv, [0, 0, 4, 2]);
+  assert.deepEqual(undo.history[0].post.elements[cube.uuid].north.uv, [0, 0, 4, 8]);
+  const movedFrom = await harness.bridge.request('update_cube', { uuid: cube.uuid, set: { from: [1, 2, 1] } });
+  assert.equal(movedFrom.ok, true, JSON.stringify(movedFrom.error));
+  assert.deepEqual(cube.faces.north.uv, [0, 0, 3, 6]);
+  assert.deepEqual(cube.faces.east.uv, [0, 0, 1, 6]);
+  assert.deepEqual(cube.faces.up.uv, [0, 0, 3, 1]);
+  assert.deepEqual(undo.history[1].post.elements[cube.uuid].up.uv, [0, 0, 3, 1]);
+});
+
+test('update_cube preserves explicit UV and box UV and leaves UVs alone for non-size edits', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { cube } = injectUvProject();
+  const explicit = await harness.bridge.request('set_cube_uv', { uuid: cube.uuid, faces: { north: { uv: [1, 2, 3, 4], rotation: 90 } } });
+  assert.equal(explicit.ok, true, JSON.stringify(explicit.error));
+  const resized = await harness.bridge.request('update_cube', { uuid: cube.uuid, set: { to: [4, 8, 2] } });
+  assert.equal(resized.ok, true, JSON.stringify(resized.error));
+  assert.deepEqual(cube.faces.north.uv, [1, 2, 3, 4]);
+  assert.equal(cube.faces.north.rotation, 90);
+  assert.equal(cube.autouv, 0);
+  cube.box_uv = true;
+  cube.autouv = 1;
+  cube.uv_offset = [8, 4];
+  cube.mirror_uv = true;
+  const boxed = await harness.bridge.request('update_cube', { uuid: cube.uuid, set: { from: [1, 2, 1] } });
+  assert.equal(boxed.ok, true, JSON.stringify(boxed.error));
+  assert.deepEqual(cube.faces.north.uv, [1, 2, 3, 4]);
+  assert.deepEqual(cube.uv_offset, [8, 4]);
+  assert.equal(cube.mirror_uv, true);
+  cube.box_uv = false;
+  const metadata = await harness.bridge.request('update_cube', {
+    uuid: cube.uuid, set: { name: 'renamed', visibility: false, origin: [8, 8, 8], rotation: { axis: 'y', angle: 45 } },
+  });
+  assert.equal(metadata.ok, true, JSON.stringify(metadata.error));
+  assert.deepEqual(cube.faces.north.uv, [1, 2, 3, 4], 'metadata and transforms must not remap UVs');
+});
 
 test('create_cubes passes box_uv and uv_offset through and disables auto-UV only for UV data', async (t) => {
   const harness = await makeHarness();

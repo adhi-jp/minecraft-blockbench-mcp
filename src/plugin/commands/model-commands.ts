@@ -357,6 +357,7 @@ export function registerModelCommands(
       }
       const group = groups[index];
       if (group !== null) cube.addTo(group);
+      cube.mapAutoUV();
       return cube;
     });
     // The post-edit save must carry the created elements, or undo cannot
@@ -383,6 +384,7 @@ export function registerModelCommands(
       }
     }
     cube.extend(changes);
+    if (params.set.from !== undefined || params.set.to !== undefined) cube.mapAutoUV();
     Undo.finishEdit('Edit cube');
     Canvas.updateAll();
     return { uuid: cube.uuid, updated: true as const };
@@ -573,7 +575,10 @@ export function registerModelCommands(
           path: resolved,
         });
       }
-      texture = new Texture({ name: params.name }).fromPath(resolved);
+      // fromPath can replace saved duplicates and start a file watcher;
+      // reuse the registered texture before loading a candidate.
+      texture = Texture.all.find((existing) => existing.path === resolved)
+        ?? new Texture({ name: params.name }).fromPath(resolved);
     } else {
       if (params.source.data_url.length > DEFAULTS.maxTextureDataUrlBytes) {
         throw new CommandError(
@@ -583,22 +588,22 @@ export function registerModelCommands(
       }
       texture = new Texture({ name: params.name ?? 'texture' }).fromDataURL(params.source.data_url);
     }
-    texture.add(true);
+    // Snapshot the texture if registered so reuse is present on both
+    // sides of undo, while a fresh registration is removed with its faces.
+    Undo.initEdit({ elements: cubes, textures: Texture.all.includes(texture) ? [texture] : [] });
+    texture = texture.add(false);
 
     let appliedTo: 'all' | string[];
     if (params.apply_to === 'all') {
-      Undo.initEdit({ elements: cubes });
       for (const cube of cubes) cube.applyTexture(texture, true);
-      Undo.finishEdit('Apply texture');
       appliedTo = 'all';
     } else {
-      Undo.initEdit({ elements: cubes });
       for (const cube of cubes) {
         cube.applyTexture(texture, params.apply_to.faces !== undefined ? params.apply_to.faces : true);
       }
-      Undo.finishEdit('Apply texture');
       appliedTo = cubes.map((cube) => cube.uuid);
     }
+    Undo.finishEdit('Apply texture', { elements: cubes, textures: [texture] });
     Canvas.updateAll();
     return { texture_uuid: texture.uuid, name: texture.name, applied_to: appliedTo };
   });

@@ -995,7 +995,7 @@ export const FORMAT_NEUTRAL_COMMAND_SPECS = {
   },
   assign_texture: {
     description:
-      'Add a texture from a scoped file path or data URL and apply it to all cubes or to selected cubes/faces. Creates a new texture object.',
+      'Add a texture from a scoped file path or data URL and apply it to all cubes or to selected cubes/faces. Reuses a registered texture with the same file path; otherwise creates a new texture object.',
     mutates: true,
     params: assignTextureParams,
     result: assignTextureResult,
