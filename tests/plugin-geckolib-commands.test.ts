@@ -750,8 +750,19 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
   previewStates: Array<{ time: number; playing: string[]; muted: boolean[] }>;
   defaultPoseCalls: number;
   visiblePose: { time: number; playing: string[] };
+  rootScale: { x: number; y: number; z: number };
 } {
-  injectedGlobals.Project = { uuid: 'project-animation', saved: true, name: 'ghost' };
+  // Animator.preview applies the preview.scale placeholder to the model root;
+  // showDefaultPose leaves the root scale alone.
+  const rootScale = {
+    x: 1, y: 1, z: 1,
+    set(x: number, y: number, z: number) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+    },
+  };
+  injectedGlobals.Project = { uuid: 'project-animation', saved: true, name: 'ghost', model_3d: { scale: rootScale } };
   injectedGlobals.Cube = { all: [{}, {}, {}] };
   injectedGlobals.Texture = { all: [{}] };
   const visible = makeFakePreview('visible');
@@ -773,6 +784,7 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
   };
   injectedGlobals.Animator = {
     preview(inLoop?: boolean) {
+      rootScale.set(2, 2, 2);
       events.push(`preview:${inLoop === true ? 'loop' : 'still'}:${(injectedGlobals.Timeline as { time: number }).time}`);
       previewStates.push({
         time: (injectedGlobals.Timeline as { time: number }).time,
@@ -828,6 +840,7 @@ function injectAnimationScreenshotSurface(options: { captureDelayMs?: number; fa
     visible, offscreen, captures, events, previewStates,
     get defaultPoseCalls() { return defaultPoseCalls; },
     get visiblePose() { return visiblePose; },
+    rootScale,
   };
 }
 
@@ -1302,6 +1315,42 @@ for (const failCapture of [false, true]) {
       time: 0.75, playing: ['animation.ghost.walk', 'animation.ghost.overlay'], muted: [true, true],
     }, 'effects stay muted while redrawing the restored pose');
     assert.equal(surface.defaultPoseCalls, 0);
+  });
+}
+
+for (const failCapture of [false, true]) {
+  test(`capture_geckolib_animation_frame leaves the default pose in Edit mode after screenshot ${failCapture ? 'failure' : 'success'}`, async (t) => {
+    const harness = await makeHarness();
+    t.after(harness.cleanup);
+    injectAnimationGlobals();
+    const surface = injectAnimationScreenshotSurface({ failFirstCapture: failCapture });
+    const idle = addFakeAnimation('animation.ghost.idle', 'once', 2);
+    const walk = addFakeAnimation('animation.ghost.walk', 'loop', 2);
+    // Leaving Animate mode keeps the playing flags but resets the viewport.
+    (injectedGlobals.Animator as { open?: boolean }).open = false;
+    walk.playing = true;
+    walk.select();
+    const timeline = injectedGlobals.Timeline as { time: number; playing: boolean; setTime(seconds: number): void };
+    timeline.setTime(0.75);
+    surface.previewStates.length = 0;
+
+    const outcome = await harness.bridge.request('capture_geckolib_animation_frame', {
+      animation: idle.name, time: 1.25,
+    });
+    assert.equal(outcome.ok, !failCapture, JSON.stringify(outcome.error));
+    assert.equal(surface.previewStates.length, 1, 'only the target pose is drawn; the playing clip is not re-applied');
+    assert.deepEqual(surface.visiblePose, { time: 0, playing: [] }, 'the Edit-mode viewport ends in the default pose');
+    assert.equal(surface.defaultPoseCalls, 1);
+    assert.deepEqual(
+      [surface.rootScale.x, surface.rootScale.y, surface.rootScale.z],
+      [1, 1, 1],
+      'the model root scale is reset like Animator.leave()',
+    );
+    assert.equal(FakeAnimation.selected, walk);
+    assert.deepEqual([walk.selected, idle.selected], [true, false]);
+    assert.equal(walk.playing, true, 'previous playing flags are restored');
+    assert.equal(idle.playing, false);
+    assert.equal(timeline.time, 0.75, 'the previous timeline time is restored');
   });
 }
 

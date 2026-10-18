@@ -137,6 +137,7 @@ interface TimelineLike {
 }
 
 interface AnimatorLike {
+  open?: boolean;
   preview(inLoop?: boolean): void;
   showDefaultPose?(noMatrixUpdate?: boolean): void;
 }
@@ -245,10 +246,17 @@ function restoreAnimationState(snapshot: AnimationStateSnapshot, timeline: Timel
     timeline.playing = snapshot.timelinePlaying;
     timeline.setTime(snapshot.timelineTime);
     setEffectMutes(snapshot.effectMutes, true);
-    if (snapshot.playingFlags.some(([, playing]) => playing === true || playing === 'locked')) {
+    // Leaving Animate mode keeps the playing flags, and Animator.preview poses
+    // them without checking Animator.open; only re-pose while Animate is open.
+    if (
+      animator.open !== false &&
+      snapshot.playingFlags.some(([, playing]) => playing === true || playing === 'locked')
+    ) {
       animator.preview(false);
     } else if (typeof animator.showDefaultPose === 'function') {
       animator.showDefaultPose(true);
+      // Animator.leave() also resets the root scale that Animator.preview changes.
+      if (animator.open === false && Project) Project.model_3d.scale.set(1, 1, 1);
     } else {
       animator.preview(false);
     }
