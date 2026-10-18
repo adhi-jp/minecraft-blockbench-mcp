@@ -2,6 +2,74 @@
 
 All notable changes to `@adhisang/minecraft-blockbench-mcp` are documented in this file.
 
+## [0.3.1] - 2026-10-18
+
+### Changed
+
+- The `E_PLUGIN_NOT_CONNECTED` message is now the same everywhere it is
+  returned (adapter, broker, and the initial scope reset): "Blockbench or its
+  MCP plugin is not running or not connected. Start Blockbench, load the
+  plugin, and match its port/secret settings." Some paths previously returned
+  only "Blockbench plugin is not connected."
+- The `health` description now says that `plugin_connected: false` does not
+  prove Blockbench is closed, and points to `setup_errors` and
+  **Tools → MCP Connection Status** in Blockbench. The `read_file` and
+  `write_files` descriptions (and their `path` parameters) now state that they
+  work through the Blockbench desktop plugin inside the directory approved via
+  `propose_scoped_directory`, and that the host's own filesystem tools are the
+  way to reach other workspace files. The `assign_texture` description now
+  says it reuses a registered texture with the same file path.
+- `README.md` documents the `controller_state` values (`idle`, `owned`,
+  `releasing`, `recovering`), what to check when `health` reports
+  `plugin_connected: false`, giving the scoped directory in Windows notation
+  when Blockbench runs on Windows, and a temporary pose-probe clip for
+  checking bone-local yaw and pitch with `capture_geckolib_animation_frame`.
+
+### Fixed
+
+- `assign_texture` no longer creates a duplicate when a texture with the same
+  file path is already registered, including on Windows, where Blockbench keeps
+  backslash paths. It reuses that texture, and reloads it when it had failed to
+  load because the file did not exist when the model was opened. Undo and redo
+  keep the texture and its face assignments consistent.
+- Automatic UV is now refreshed when `create_cubes` creates a cube and when
+  `update_cube` changes `from` or `to`, so a cube created or resized this way
+  no longer keeps stale automatic UVs.
+- Ctrl+Z after `create_group` now removes the group. Previously the group stayed
+  in the project and redo failed.
+- `open_geckolib_model` now resolves textures saved with relative paths against
+  the opened file. It loads the current PNG and keeps the link to the file,
+  instead of loading the stale embedded copy and losing the link. `save_project`
+  and Ctrl+S still treat the tab as never saved.
+- `capture_geckolib_animation_frame` now restores the pose when an animation
+  was locked in the preview, and leaves a viewport that was in Edit mode in the
+  default pose and unscaled after the capture.
+- The scope consent dialog now shows the path and reason text supplied by the
+  AI as plain text; HTML in it is escaped.
+- File tools now reject a path component that exists under a different name
+  than the directory lists (for example a Windows short name or a trailing
+  period), and match names across Unicode normalization forms, so a link
+  inside the scoped directory cannot be reached through an alias. For the
+  same reason, a new file or directory name that contains `~` followed by a
+  digit, or ends with a period or space, is rejected.
+- On a Windows Blockbench, `propose_scoped_directory` now rejects POSIX-style
+  paths such as `/home/me/mod` or `/mnt/c/...` (for example from an agent in
+  WSL) with `E_INVALID_PARAMS` and guidance to use Windows notation. Previously
+  it silently used a directory on the current drive.
+- When setup rewrites the config file, it now keeps the other runtime settings
+  already in it, but drops numeric options with invalid values and prints
+  `Dropped "<key>" from the rewritten config because its value was invalid.`
+  Its advice to rerun with `--rotate-secret` therefore repairs the file.
+- Setup now reports an executable that fails to launch asynchronously (for
+  example a missing or non-executable Blockbench binary) instead of reporting
+  success.
+- The scoped-directory status shown by `health` is now sent to all clients
+  sharing a broker when the plugin reports a scope change, and a client that
+  owns control but is idle no longer keeps it after the plugin disconnects.
+- The broker now assembles long IPC messages that arrive in fragments once per
+  message instead of re-copying the buffer on every fragment, which reduces
+  work for large messages.
+
 ## [0.3.0] - 2026-09-28
 
 0.2.0 was skipped and never published, so this release contains every change since 0.1.0.
