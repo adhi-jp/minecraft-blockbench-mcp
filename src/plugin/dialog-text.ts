@@ -8,6 +8,9 @@ const CONTROL_OR_WHITESPACE_RE = /[\u0000-\u001F\u0080-\u009F\s]+/g;
 export function sanitizeDialogText(input: string, maxLength: number): string {
   const collapsed = input.replace(CONTROL_OR_WHITESPACE_RE, ' ').trim();
   const escaped = collapsed
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
     .replace(/\\/g, '\\\\')
     .replace(/`/g, '\\`')
     .replace(/\*/g, '\\*')

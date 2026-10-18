@@ -13,6 +13,12 @@ test('escapes every inline-Markdown character', () => {
   assert.equal(sanitizeDialogText(input, SCOPE_REASON_MAX_LENGTH), expected);
 });
 
+test('sanitizeDialogText escapes HTML so client text cannot add markup', () => {
+  const output = sanitizeDialogText('<span style="x">a</span> & b', SCOPE_REASON_MAX_LENGTH);
+  assert.equal(output, '&lt;span style="x"&gt;a&lt;/span&gt; &amp; b');
+  assert.equal(output.includes('<'), false);
+});
+
 test('truncates at the requested boundary and appends one ellipsis', () => {
   assert.equal(sanitizeDialogText('abcdef', 3), 'abc…');
   assert.equal(sanitizeDialogText('abc', 3), 'abc');
