@@ -19,6 +19,7 @@ function makeManager(options: {
   confirm?: boolean | (() => Promise<boolean>);
   acquire?: (() => ScopedFsLike | null) | undefined;
   initialMemo?: string | null;
+  platform?: string;
 }): Harness {
   const events: ScopeStatus[] = [];
   let memo: string | null = options.initialMemo ?? null;
@@ -33,6 +34,7 @@ function makeManager(options: {
       },
     },
     onScopeChanged: (status) => events.push(status),
+    platform: options.platform,
   });
   return { manager, events, memoValue: () => memo };
 }
@@ -69,6 +71,45 @@ test('confirming a proposal grants access, persists the memo, and emits scope ev
     events.map((e) => e.state),
     ['proposed', 'confirmed'],
   );
+});
+
+test('a POSIX-rooted path is rejected on a Windows host before any dialog is shown', async () => {
+  for (const path of ['/mnt/c/Users/me/mymod', '/home/me/mymod']) {
+    let dialogShown = false;
+    const { manager, events } = makeManager({
+      platform: 'win32',
+      confirm: () => {
+        dialogShown = true;
+        return Promise.resolve(true);
+      },
+    });
+    const error = await expectCommandError(manager.propose(path, undefined), 'E_INVALID_PARAMS');
+    assert.deepEqual(error.details, { path });
+    assert.equal(dialogShown, false);
+    assert.deepEqual(manager.status, { state: 'unconfirmed' });
+    assert.deepEqual(events, []);
+  }
+});
+
+test('drive and UNC paths are accepted on a Windows host', async () => {
+  const drive = makeManager({ platform: 'win32' });
+  assert.deepEqual(await drive.manager.propose('C:\\Users\\me\\mymod', undefined), {
+    state: 'confirmed',
+    normalized_path: 'C:/Users/me/mymod',
+  });
+  const unc = makeManager({ platform: 'win32' });
+  assert.deepEqual(await unc.manager.propose('\\\\wsl.localhost\\Ubuntu\\home\\me\\mymod', undefined), {
+    state: 'confirmed',
+    normalized_path: '//wsl.localhost/Ubuntu/home/me/mymod',
+  });
+});
+
+test('a POSIX-rooted path is still accepted without a platform or on Linux', async () => {
+  for (const platform of [undefined, 'linux']) {
+    const { manager } = makeManager({ platform });
+    const result = await manager.propose('/home/me/mymod', undefined);
+    assert.deepEqual(result, { state: 'confirmed', normalized_path: '/home/me/mymod' });
+  }
 });
 
 test('a rejected proposal returns E_SCOPE_NOT_CONFIRMED with the user_rejected reason', async () => {

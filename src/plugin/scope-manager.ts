@@ -35,6 +35,8 @@ export interface ScopeManagerOptions {
     set: (path: string | null) => void;
   };
   onScopeChanged?: (status: ScopeStatus) => void;
+  /** The host OS as `Blockbench.platform` reports it. */
+  platform?: string;
 }
 
 export class ScopeManager {
@@ -109,6 +111,15 @@ export class ScopeManager {
       throw new CommandError('E_INVALID_PARAMS', 'The proposed scoped directory must be a valid absolute path.', {
         path,
       });
+    }
+    // Blockbench's scoped fs resolves the scope with path.resolve, so on Windows
+    // a POSIX path would silently become a different directory on the current drive.
+    if (this.#options.platform === 'win32' && normalized.startsWith('/') && !normalized.startsWith('//')) {
+      throw new CommandError(
+        'E_INVALID_PARAMS',
+        'Blockbench runs on Windows, so the scoped directory must be given in Windows notation: C:\\... for a /mnt/c/... path, or \\\\wsl.localhost\\<distro>\\... for a path inside a WSL distribution.',
+        { path },
+      );
     }
     this.#proposalInFlight = true;
     const proposalGeneration = ++this.#generation;

@@ -269,6 +269,11 @@ restricted to one directory per session:
    writes preflight every destination and write nothing if any blocker exists.
    Symbolic links inside the scoped directory are rejected.
 
+When Blockbench runs on Windows (including with the adapter in WSL), give the
+scoped directory in Windows notation, either a drive path or a
+`\\wsl.localhost\<distro>\...` UNC path; POSIX paths such as `/home/me/mod`
+or `/mnt/c/...` are rejected.
+
 ## Security model
 
 The adapter listens on loopback only (`127.0.0.1`) and authenticates the

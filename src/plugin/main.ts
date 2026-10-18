@@ -186,6 +186,7 @@ function setupRuntime(): PluginRuntime {
       },
     },
     onScopeChanged: (status) => session.sendEvent('scope_changed', status),
+    platform: Blockbench.platform,
   });
 
   session.registerHandler('get_plugin_status', () => {
