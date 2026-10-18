@@ -514,7 +514,7 @@ export function registerModelCommands(
   register(session, 'create_group', (params) => {
     requireProject();
     const parent = params.parent_uuid !== undefined ? findGroup(params.parent_uuid) : null;
-    Undo.initEdit({ outliner: true });
+    Undo.initEdit({ outliner: true, groups: [] });
     const group = new Group({ name: params.name, origin: params.origin }).init();
     if (parent !== null) group.addTo(parent);
     Undo.finishEdit('Create group', { outliner: true, groups: [group] });

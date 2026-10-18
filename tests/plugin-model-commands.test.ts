@@ -2339,3 +2339,36 @@ test('close_project reports E_BLOCKBENCH_ERROR when Blockbench refuses to close 
   assert.deepEqual(locked.closeCalls, [[]], 'the refusal came from close itself');
   assert.equal(injectedGlobals.Project, locked);
 });
+
+class FakeCreatedGroup {
+  static all: FakeCreatedGroup[] = [];
+  uuid: string;
+  name: string;
+  constructor(options: { name: string }) {
+    this.uuid = `cg-${FakeCreatedGroup.all.length + 1}`;
+    this.name = options.name;
+  }
+  init(): this {
+    FakeCreatedGroup.all.push(this);
+    return this;
+  }
+}
+
+test('create_group records an empty groups aspect before the edit so undo removes the new group', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  FakeCreatedGroup.all = [];
+  injectedGlobals.Project = { saved: true, name: 'ghost' };
+  injectedGlobals.Format = { id: 'java_block' };
+  injectedGlobals.Group = FakeCreatedGroup;
+  const undo = makeFakeUndo();
+  injectedGlobals.Undo = undo;
+
+  const outcome = await harness.bridge.request('create_group', { name: 'arm' });
+
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const [group] = FakeCreatedGroup.all;
+  assert.deepEqual(undo.initCalls, [{ outliner: true, groups: [] }], 'the pre-edit snapshot lists no groups so undo removes the new one');
+  assert.equal(undo.finishCalls[0]?.action, 'Create group');
+  assert.deepEqual(undo.finishCalls[0]?.aspects, { outliner: true, groups: [group] });
+});
