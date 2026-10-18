@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as nodeFs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import WsClient from 'ws';
@@ -89,6 +89,7 @@ function clearBlockbenchGlobals(): void {
   delete injectedGlobals.Codecs;
   delete injectedGlobals.Canvas;
   delete injectedGlobals.newProject;
+  delete injectedGlobals.osfs;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +580,7 @@ test('create/open open a new tab while an unsaved user project is open, and clos
   let newProjects = 0;
   injectedGlobals.Formats = { geckolib_model: {} };
   injectedGlobals.Project = user;
+  injectedGlobals.osfs = '/';
   injectedGlobals.Cube = { all: [] };
   injectedGlobals.Group = { all: [] };
   injectedGlobals.Texture = { all: [] };
@@ -1489,6 +1491,7 @@ test('open_geckolib_model reloads file-linked textures before returning the reso
   let parsedPath: string | undefined;
   injectedGlobals.Formats = { geckolib_model: {} };
   injectedGlobals.Project = null;
+  injectedGlobals.osfs = '/';
   injectedGlobals.Cube = { all: [] };
   injectedGlobals.Group = { all: [] };
   injectedGlobals.Texture = textures;
@@ -1524,6 +1527,103 @@ test('open_geckolib_model reloads file-linked textures before returning the reso
   assert.equal(loaded, true, 'the result waits for the reloaded image');
   assert.deepEqual([linked.reloads, embedded.reloads], [1, 0], 'embedded textures are not reloaded');
   assert.equal(listeners.length, 0, 'settle listeners are detached');
+});
+
+test('open_geckolib_model resolves relative_path textures against the opened file only while parsing', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+
+  type Listener = () => void;
+  const listeners: Array<{ type: string; listener: Listener }> = [];
+  const img = {
+    addEventListener: (type: string, listener: Listener) => listeners.push({ type, listener }),
+    removeEventListener: (type: string, listener: Listener) => {
+      const index = listeners.findIndex((entry) => entry.type === type && entry.listener === listener);
+      if (index >= 0) listeners.splice(index, 1);
+    },
+  };
+  const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  nodeFs.mkdirSync(join(harness.scopeDir, 'textures'));
+  nodeFs.writeFileSync(join(harness.scopeDir, 'textures', 'ghost.png'), Buffer.from(pngBase64, 'base64'));
+  // save_project's default output for a file-linked texture: relative_path
+  // plus an embedded copy, and no absolute path.
+  nodeFs.writeFileSync(
+    join(harness.scopeDir, 'ghost.bbmodel'),
+    JSON.stringify({
+      meta: { format_version: '5.0', model_format: 'geckolib_model' },
+      name: 'ghost',
+      textures: [
+        {
+          id: '0',
+          name: 'ghost.png',
+          relative_path: 'textures/ghost.png',
+          internal: true,
+          source: `data:image/png;base64,${pngBase64}`,
+        },
+      ],
+    }),
+  );
+
+  const textures = { all: [] as unknown[] };
+  const savePathsDuringParse: string[] = [];
+  let reloads = 0;
+  injectedGlobals.Formats = { geckolib_model: {} };
+  injectedGlobals.Project = null;
+  injectedGlobals.osfs = '/';
+  injectedGlobals.Cube = { all: [] };
+  injectedGlobals.Group = { all: [] };
+  injectedGlobals.Texture = textures;
+  injectedGlobals.Canvas = { updateAll: () => {} };
+  injectedGlobals.newProject = () => {
+    textures.all.length = 0;
+    injectedGlobals.Project = { saved: true, name: 'ghost', save_path: '' };
+    return true;
+  };
+  // Mirrors the bbmodel codec: relative_path resolves only against a set
+  // Project.save_path; otherwise the embedded source loads as an internal
+  // texture without a path.
+  injectedGlobals.Codecs = {
+    project: {
+      parse: (model: { textures: Array<{ id: string; name: string; relative_path?: string }> }) => {
+        const savePath = (injectedGlobals.Project as { save_path: string }).save_path;
+        savePathsDuringParse.push(savePath);
+        for (const texture of model.textures) {
+          const resolved = savePath && texture.relative_path ? resolve(dirname(savePath), texture.relative_path) : '';
+          const linked = resolved !== '' && nodeFs.existsSync(resolved);
+          textures.all.push({
+            id: texture.id,
+            name: texture.name,
+            path: linked ? resolved : '',
+            internal: !linked,
+            error: 0,
+            img,
+            reloadTexture() {
+              reloads += 1;
+              setTimeout(() => {
+                for (const entry of listeners.filter((candidate) => candidate.type === 'load')) entry.listener();
+              }, 20);
+            },
+          });
+        }
+      },
+    },
+  };
+
+  const outcome = await harness.bridge.request('open_geckolib_model', { path: 'ghost.bbmodel' });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  const result = outcome.result as { textures: unknown[] };
+  assert.deepEqual(result.textures, [
+    { id: '0', name: 'ghost.png', path: join(harness.scopeDir, 'textures', 'ghost.png') },
+  ]);
+  assert.equal(reloads, 1, 'the linked texture is reloaded once');
+  assert.equal((injectedGlobals.Project as { save_path: string }).save_path, '', 'save_path is restored after parsing');
+
+  injectedGlobals.osfs = '\\';
+  const windows = await harness.bridge.request('open_geckolib_model', { path: 'ghost.bbmodel' });
+  assert.equal(windows.ok, true, JSON.stringify(windows.error));
+  const modelPath = join(harness.scopeDir, 'ghost.bbmodel').replace(/\\/g, '/');
+  assert.equal(savePathsDuringParse[1], modelPath.split('/').join('\\'), "with '\\' every separator is native");
+  assert.equal((injectedGlobals.Project as { save_path: string }).save_path, '');
 });
 
 test('capture_geckolib_animation_frame preflights file conflicts before rendering and requires an output path for overwrite', async (t) => {

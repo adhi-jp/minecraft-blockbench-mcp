@@ -473,6 +473,13 @@ export function registerGeckolibCommands(
       throw new CommandError('E_BLOCKBENCH_ERROR', 'Blockbench refused to create a project for the opened model.');
     }
     trackMcpProject();
+    // The codec resolves a texture's relative_path against Project.save_path,
+    // which a native open sets first; without it the embedded copy loads and
+    // the file link is lost. The save path is restored afterwards so
+    // save_project and Ctrl+S still treat the tab as never saved.
+    const opened = Project;
+    const previousSavePath = opened.save_path;
+    opened.save_path = normalizedPath.split('/').join(osfs);
     try {
       Codecs.project.parse!(parsed, normalizedPath);
     } catch (error) {
@@ -480,6 +487,8 @@ export function registerGeckolibCommands(
         path: normalizedPath,
         reason: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      opened.save_path = previousSavePath;
     }
     Canvas.updateAll();
     // The texture wait yields, and the user may switch tabs meanwhile; the
