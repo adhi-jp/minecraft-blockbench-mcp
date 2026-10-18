@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { withoutInvalidNumericOptions } from '../adapter/config.js';
 import { DEFAULT_WS_PORT } from '../shared/protocol.js';
 import { parentDirectory } from '../shared/config-path.js';
 import { createRealDeps, resolveConfigPath, type SetupDeps } from './deps.js';
@@ -346,11 +347,15 @@ export async function runSetup(deps: SetupDeps, flags: SetupFlags): Promise<numb
   }
 
   if (needConfigWrite) {
-    const content = `${JSON.stringify({ ...(existing.kind === 'valid' ? existing.record : {}), version: 1, mode: 'shared-secret', port, secret }, null, 2)}\n`;
+    const carried = withoutInvalidNumericOptions(existing.kind === 'valid' ? existing.record! : {});
+    const content = `${JSON.stringify({ ...carried.record, version: 1, mode: 'shared-secret', port, secret }, null, 2)}\n`;
     deps.writeSecretFile(configPath, content);
     deps.out(
       `Wrote ${configPath}${deps.osPlatform === 'win32' ? '' : ' (permissions 0600 — readable only by your user)'}.`,
     );
+    for (const key of carried.dropped) {
+      deps.out(`Dropped "${key}" from the rewritten config because its value was invalid.`);
+    }
     if (!reuseSecret && (existing.kind !== 'missing' || registrationMatches)) {
       deps.out('Secret rotated — update "MCP Shared Secret" in Blockbench settings to the new value.');
     }

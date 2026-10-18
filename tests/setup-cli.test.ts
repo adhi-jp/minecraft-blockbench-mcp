@@ -423,6 +423,26 @@ test('--port change rewrites the config and tells the user to update Blockbench'
   assertNoSecretLeak(world, SENTINEL);
 });
 
+test('--rotate-secret drops an invalid runtime option so the rewritten config loads without issues', async () => {
+  const world = makeWorld({
+    existingConfig: JSON.stringify({
+      version: 1, mode: 'shared-secret', secret: SENTINEL, port: 40123,
+      requestTimeoutMs: 0, brokerIdleTimeoutMs: 180000,
+    }),
+    registrationDetail: ourRegistrationDetail(CONFIG_PATH, FAKE_CLI),
+  });
+  const code = await runSetup(world.deps, flags({ rotateSecret: true }));
+  assert.equal(code, 0);
+  const written = JSON.parse(world.writes[0].content) as Record<string, unknown>;
+  assert.notEqual(written.secret, SENTINEL);
+  assert.equal('requestTimeoutMs' in written, false, 'the invalid option must not be carried forward');
+  assert.equal(written.brokerIdleTimeoutMs, 180000);
+  const loaded = loadConfig(['--config', CONFIG_PATH], {}, world.deps.readTextFile);
+  assert.deepEqual(loaded.issues, []);
+  assert.match(allOutput(world), /requestTimeoutMs/);
+  assertNoSecretLeak(world, SENTINEL, written.secret as string);
+});
+
 test('--port is honored when the existing config has no usable port field', async () => {
   const world = makeWorld({
     existingConfig: `${JSON.stringify({ version: 1, mode: 'shared-secret', secret: SENTINEL }, null, 2)}\n`,

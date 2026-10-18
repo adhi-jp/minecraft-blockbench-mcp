@@ -108,6 +108,31 @@ const NUMERIC_KEYS: NumericKey[] = [
   },
 ];
 
+function parseNumericValue(key: NumericKey, raw: unknown): number | null {
+  const value = typeof raw === 'number' ? raw : typeof raw === 'string' && raw !== '' ? Number(raw) : NaN;
+  return Number.isInteger(value) && value >= key.min && value <= key.max ? value : null;
+}
+
+/**
+ * Returns a shallow copy of a parsed config file record without the numeric
+ * options loadConfig would reject, plus the dropped file keys. Lets a config
+ * rewrite carry forward only settings the adapter accepts.
+ */
+export function withoutInvalidNumericOptions(record: Record<string, unknown>): {
+  record: Record<string, unknown>;
+  dropped: string[];
+} {
+  const cleaned = { ...record };
+  const dropped: string[] = [];
+  for (const key of NUMERIC_KEYS) {
+    if (cleaned[key.fileKey] !== undefined && parseNumericValue(key, cleaned[key.fileKey]) === null) {
+      delete cleaned[key.fileKey];
+      dropped.push(key.fileKey);
+    }
+  }
+  return { record: cleaned, dropped };
+}
+
 export interface ConfigSource {
   kind: 'explicit' | 'explicit-failed' | 'default' | 'none';
   path?: string;
@@ -190,8 +215,8 @@ export function loadConfig(
   }
 
   const applyNumeric = (key: NumericKey, raw: unknown, source: string): boolean => {
-    const value = typeof raw === 'number' ? raw : typeof raw === 'string' && raw !== '' ? Number(raw) : NaN;
-    if (!Number.isInteger(value) || value < key.min || value > key.max) {
+    const value = parseNumericValue(key, raw);
+    if (value === null) {
       issues.push({
         code: 'E_INVALID_PARAMS',
         message: `Invalid ${key.configKey} from ${source}: expected an integer in [${key.min}, ${key.max}].`,
