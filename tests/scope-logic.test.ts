@@ -85,7 +85,12 @@ test('segment walk rejects symlinked components inside the scope (real temp syml
 
   const normalizedScope = normalizePath(scope)!;
 
-  const throughLink = findSymlinkComponent(normalizedScope, `${normalizedScope}/link/secret.txt`, nodeListDir);
+  const throughLink = findSymlinkComponent(
+    normalizedScope,
+    `${normalizedScope}/link/secret.txt`,
+    nodeListDir,
+    existsSync,
+  );
   assert.equal(throughLink.ok, false);
   if (!throughLink.ok) assert.equal(throughLink.error.code, 'E_PATH_OUTSIDE_SCOPE');
 
@@ -93,13 +98,19 @@ test('segment walk rejects symlinked components inside the scope (real temp syml
     normalizedScope,
     `${normalizedScope}/real/final-link.json`,
     nodeListDir,
+    existsSync,
   );
   assert.equal(finalComponentLink.ok, false, 'a symlink as the write target itself must be rejected');
 
-  const realDir = findSymlinkComponent(normalizedScope, `${normalizedScope}/real/file.json`, nodeListDir);
+  const realDir = findSymlinkComponent(normalizedScope, `${normalizedScope}/real/file.json`, nodeListDir, existsSync);
   assert.equal(realDir.ok, true);
 
-  const notYetExisting = findSymlinkComponent(normalizedScope, `${normalizedScope}/new/dir/file.json`, nodeListDir);
+  const notYetExisting = findSymlinkComponent(
+    normalizedScope,
+    `${normalizedScope}/new/dir/file.json`,
+    nodeListDir,
+    existsSync,
+  );
   assert.equal(notYetExisting.ok, true);
 });
 
@@ -111,33 +122,171 @@ test('segment walk joins drive-root and trailing-slash scopes without doubling s
     if (dir === 'C:/a') return [{ name: 'evil', isSymlink: true }];
     return null;
   };
-  const result = findSymlinkComponent('C:/', 'C:/a/evil/x.json', fakeListDir);
+  const result = findSymlinkComponent('C:/', 'C:/a/evil/x.json', fakeListDir, () => false);
   assert.equal(result.ok, false, 'symlink below a drive-root scope must be detected');
   assert.ok(listed.every((dir) => !dir.includes('//')), `listDir received a malformed path: ${listed.join(', ')}`);
 
   // A trailing-slash scope root must behave like its canonical form.
-  const trailing = findSymlinkComponent('/scope/', '/scope/a/x.json', (dir) =>
-    dir === '/scope' ? [{ name: 'a', isSymlink: true }] : null,
+  const trailing = findSymlinkComponent(
+    '/scope/',
+    '/scope/a/x.json',
+    (dir) => (dir === '/scope' ? [{ name: 'a', isSymlink: true }] : null),
+    () => false,
   );
   assert.equal(trailing.ok, false, 'trailing-slash scope roots must still detect symlinks');
 });
 
 test('segment walk matches entry names ignoring case, as case-insensitive filesystems resolve them', () => {
-  const linked = findSymlinkComponent('/scope', '/scope/renders/new.png', (dir) =>
-    dir === '/scope' ? [{ name: 'Renders', isSymlink: true }] : null,
+  const linked = findSymlinkComponent(
+    '/scope',
+    '/scope/renders/new.png',
+    (dir) => (dir === '/scope' ? [{ name: 'Renders', isSymlink: true }] : null),
+    () => false,
   );
   assert.equal(linked.ok, false, 'a symlink whose name differs only in case must be rejected');
   if (!linked.ok) assert.equal(linked.error.code, 'E_PATH_OUTSIDE_SCOPE');
 
   const listed: string[] = [];
-  const plain = findSymlinkComponent('/scope', '/scope/renders/new.png', (dir) => {
-    listed.push(dir);
-    if (dir === '/scope') return [{ name: 'Renders', isSymlink: false }];
-    if (dir === '/scope/Renders') return [{ name: 'other.png', isSymlink: false }];
-    return null;
-  });
+  const plain = findSymlinkComponent(
+    '/scope',
+    '/scope/renders/new.png',
+    (dir) => {
+      listed.push(dir);
+      if (dir === '/scope') return [{ name: 'Renders', isSymlink: false }];
+      if (dir === '/scope/Renders') return [{ name: 'other.png', isSymlink: false }];
+      return null;
+    },
+    () => false,
+  );
   assert.equal(plain.ok, true, 'a differently cased real directory still passes');
   assert.deepEqual(listed, ['/scope', '/scope/Renders'], 'the walk descends through the matching entry');
+});
+
+test('segment walk rejects a component that exists under a name the listing does not show', () => {
+  // Windows resolves an 8.3 short name or a trailing period to the listed
+  // 'run_shared' entry, so either spelling would follow its link.
+  const exists = (path: string) => path === '/scope/RUN_SH~1' || path === '/scope/run_shared.';
+  for (const alias of ['RUN_SH~1', 'run_shared.']) {
+    const listed: string[] = [];
+    const result = findSymlinkComponent(
+      '/scope',
+      `/scope/${alias}/x.json`,
+      (dir) => {
+        listed.push(dir);
+        return dir === '/scope' ? [{ name: 'run_shared', isSymlink: true }] : null;
+      },
+      exists,
+    );
+    assert.equal(result.ok, false, `${alias} must be rejected`);
+    if (!result.ok) {
+      assert.equal(result.error.code, 'E_PATH_OUTSIDE_SCOPE');
+      assert.equal(result.error.path, `/scope/${alias}`);
+    }
+    assert.deepEqual(listed, ['/scope'], 'the walk must not list through the unlisted alias');
+  }
+});
+
+test('segment walk rejects an unlisted alias-shaped component that the existence probe misses', () => {
+  // The probe follows links, so an alias of a dangling link (for example
+  // LONG_O~1.JSO for long_output_link.json -> a missing outside file)
+  // reports missing although writing through it would create the target.
+  const rootEntries = [
+    { name: 'long_output_link.json', isSymlink: true },
+    { name: 'run_shared', isSymlink: true },
+    { name: 'name', isSymlink: true },
+  ];
+  for (const alias of ['LONG_O~1.JSO', 'RUN_SH~1', 'name.', 'name ']) {
+    for (const path of [`/scope/${alias}`, `/scope/${alias}/x.json`]) {
+      const listed: string[] = [];
+      const result = findSymlinkComponent(
+        '/scope',
+        path,
+        (dir) => {
+          listed.push(dir);
+          return dir === '/scope' ? rootEntries : null;
+        },
+        () => false,
+      );
+      assert.equal(result.ok, false, `${JSON.stringify(path)} must be rejected`);
+      if (!result.ok) {
+        assert.equal(result.error.code, 'E_PATH_OUTSIDE_SCOPE');
+        assert.equal(result.error.path, `/scope/${alias}`);
+      }
+      assert.deepEqual(listed, ['/scope'], 'the walk must not list through the unlisted alias');
+    }
+  }
+});
+
+test('segment walk still accepts components that do not exist yet', () => {
+  for (const relative of ['new/dir/x.json', 'tilde~name.json', 'a.b.json']) {
+    const result = findSymlinkComponent(
+      '/scope',
+      `/scope/${relative}`,
+      (dir) => (dir === '/scope' ? [{ name: 'run_shared', isSymlink: true }] : null),
+      (path) => path === '/scope' || path === '/scope/run_shared',
+    );
+    assert.deepEqual(result, { ok: true }, `${relative} must be accepted`);
+  }
+});
+
+test('segment walk matches entry names across Unicode normalization forms', () => {
+  // exists reports nothing, so only the folded name match can reject these.
+  const nfdListing = findSymlinkComponent(
+    '/scope',
+    '/scope/caf\u00e9/x.json',
+    (dir) => (dir === '/scope' ? [{ name: 'cafe\u0301', isSymlink: true }] : null),
+    () => false,
+  );
+  assert.equal(nfdListing.ok, false, 'an NFC request must match an NFD-listed symlink');
+  if (!nfdListing.ok) assert.equal(nfdListing.error.code, 'E_PATH_OUTSIDE_SCOPE');
+
+  const nfcListing = findSymlinkComponent(
+    '/scope',
+    '/scope/cafe\u0301/x.json',
+    (dir) => (dir === '/scope' ? [{ name: 'caf\u00e9', isSymlink: true }] : null),
+    () => false,
+  );
+  assert.equal(nfcListing.ok, false, 'an NFD request must match an NFC-listed symlink');
+  if (!nfcListing.ok) assert.equal(nfcListing.error.code, 'E_PATH_OUTSIDE_SCOPE');
+});
+
+test('segment walk prefers an exactly named entry over folded siblings on distinguishing filesystems', () => {
+  // A case- or normalization-sensitive filesystem can list both names; the OS
+  // opens the exact one, so only that entry decides.
+  const unicodeEntries = [
+    { name: 'caf\u00e9.json', isSymlink: false },
+    { name: 'cafe\u0301.json', isSymlink: true },
+  ];
+  const unicodeListDir = (dir: string) => (dir === '/scope' ? unicodeEntries : null);
+  assert.deepEqual(
+    findSymlinkComponent('/scope', '/scope/caf\u00e9.json', unicodeListDir, () => false),
+    { ok: true },
+    'the exact NFC regular file must be accepted',
+  );
+  const nfdLink = findSymlinkComponent('/scope', '/scope/cafe\u0301.json', unicodeListDir, () => false);
+  assert.equal(nfdLink.ok, false, 'the exact NFD symlink must be rejected');
+  if (!nfdLink.ok) assert.equal(nfdLink.error.code, 'E_PATH_OUTSIDE_SCOPE');
+
+  const listed: string[] = [];
+  const caseListDir = (dir: string) => {
+    listed.push(dir);
+    if (dir === '/scope') {
+      return [
+        { name: 'Foo', isSymlink: false },
+        { name: 'foo', isSymlink: true },
+      ];
+    }
+    return dir === '/scope/Foo' ? [] : null;
+  };
+  assert.deepEqual(
+    findSymlinkComponent('/scope', '/scope/Foo/x.json', caseListDir, () => false),
+    { ok: true },
+    'the exactly cased real directory must be accepted',
+  );
+  assert.deepEqual(listed, ['/scope', '/scope/Foo'], 'the walk descends through the exact entry');
+  const lowerLink = findSymlinkComponent('/scope', '/scope/foo/x.json', caseListDir, () => false);
+  assert.equal(lowerLink.ok, false, 'the exactly cased symlink must be rejected');
+  if (!lowerLink.ok) assert.equal(lowerLink.error.code, 'E_PATH_OUTSIDE_SCOPE');
 });
 
 test('normalizePath handles UNC prefixes and drive roots', () => {

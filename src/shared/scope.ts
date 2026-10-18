@@ -5,9 +5,10 @@
 // Path policy: comparisons are case-sensitive and lexical. Both '/' and '\'
 // are accepted as separators in input; normalized output uses '/'. Windows
 // drive letters ('C:') and UNC prefixes ('//server/share') are preserved.
-// Duplicate-destination detection additionally folds case and Unicode (NFC),
-// and the symlink check folds case, because the common Blockbench desktop
-// filesystems (Windows, macOS) are case-insensitive.
+// Duplicate-destination detection and the symlink check additionally fold case
+// and Unicode (NFC), because the common Blockbench desktop filesystems
+// (Windows, macOS) are case-insensitive. The symlink check also rejects a
+// component that exists but is not listed under a matching name.
 
 import type { ErrorCode } from './protocol.js';
 
@@ -167,21 +168,28 @@ export function resolveInScope(
 /**
  * Segment-walk symlink rejection. Walks each component of `normalizedPath`
  * strictly below the (normalized) scope root and rejects the path when any
- * component — including the final one — is a symbolic link, matching entry
- * names ignoring case. Blockbench's
- * scoped filesystem does not resolve symlinks, so a link inside the scope
- * could otherwise escape it.
+ * component — including the final one — is a symbolic link. An exactly named
+ * entry takes precedence; otherwise entry names match with case and Unicode
+ * normalization folded. Blockbench's scoped filesystem does not resolve
+ * symlinks, so a link inside the scope could otherwise escape it. A component
+ * no listed entry matches is rejected when `exists` still finds it (a Windows
+ * short name or trailing period), because it may alias a listed link. As
+ * `exists` follows links, an unlisted alias-shaped name ('~' plus a digit, or
+ * a trailing period or space) is rejected even when it reports missing.
  *
  * `listDir(dir)` contract: return the entries of `dir` with symlink flags;
  * return null ONLY when `dir` does not exist (missing components are fine for
  * write destinations); THROW on any other failure (permission errors,
  * not-a-directory, I/O errors) so unexpected states fail closed instead of
- * silently skipping the symlink check.
+ * silently skipping the symlink check. `exists(path)` only probes an unlisted
+ * component; it is never listed, as listing through an alias would read the
+ * link's target.
  */
 export function findSymlinkComponent(
   scopeRoot: string,
   normalizedPath: string,
   listDir: (dir: string) => Array<{ name: string; isSymlink: boolean }> | null,
+  exists: (path: string) => boolean,
 ): { ok: true } | { ok: false; error: ScopeCheckError } {
   const scope = normalizePath(scopeRoot);
   if (scope === null || !isAbsoluteNormalized(scope)) {
@@ -207,11 +215,39 @@ export function findSymlinkComponent(
   for (const segment of segments) {
     const entries = listDir(currentDir);
     if (entries === null) return { ok: true }; // remaining components do not exist yet
-    // Case-insensitive filesystems resolve a differently cased name to the
-    // same entry, so a link matching the segment ignoring case is rejected.
-    const folded = segment.toLowerCase();
-    const matches = entries.filter((e) => e.name.toLowerCase() === folded);
-    if (matches.length === 0) return { ok: true }; // this component does not exist yet
+    // Case- and normalization-insensitive filesystems resolve a differently
+    // cased or composed name to the same entry, so a folded match is rejected.
+    // A filesystem that lists the exact name as well opens that entry.
+    const exact = entries.filter((e) => e.name === segment);
+    const folded = segment.normalize('NFC').toLowerCase();
+    const matches =
+      exact.length > 0 ? exact : entries.filter((e) => e.name.normalize('NFC').toLowerCase() === folded);
+    if (matches.length === 0) {
+      const joined = joinSegment(currentDir, segment);
+      if (exists(joined)) {
+        return {
+          ok: false,
+          error: {
+            code: 'E_PATH_OUTSIDE_SCOPE',
+            message:
+              'Path component exists under a different name than the directory lists (e.g. a Windows short name); use the exact entry name.',
+            path: joined,
+          },
+        };
+      }
+      if (/~\d|[. ]$/.test(segment)) {
+        return {
+          ok: false,
+          error: {
+            code: 'E_PATH_OUTSIDE_SCOPE',
+            message:
+              "Path component names containing '~' followed by a digit or ending in a period or space may be Windows short names or normalized aliases; spell the name exactly as the directory lists it.",
+            path: joined,
+          },
+        };
+      }
+      return { ok: true }; // the rest does not exist yet
+    }
     if (matches.some((e) => e.isSymlink)) {
       return {
         ok: false,
@@ -222,7 +258,7 @@ export function findSymlinkComponent(
         },
       };
     }
-    const entry = matches.find((e) => e.name === segment) ?? matches[0];
+    const entry = matches[0];
     currentDir = joinSegment(currentDir, entry.name);
   }
   return { ok: true };
@@ -291,7 +327,7 @@ export function preflightWrites(
     const path = resolved.path;
     resolvedPaths.push(path);
 
-    const symlinkCheck = findSymlinkComponent(scope, path, listDir);
+    const symlinkCheck = findSymlinkComponent(scope, path, listDir, fileExists);
     if (!symlinkCheck.ok) {
       blockers.push({ path, code: symlinkCheck.error.code, message: symlinkCheck.error.message });
       continue;

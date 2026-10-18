@@ -31,7 +31,7 @@ export function resolveForIo(scope: ScopeManager, inputPath: string): string {
   if (!resolved.ok) {
     throw new CommandError(resolved.error.code, resolved.error.message, { path: resolved.error.path });
   }
-  const walk = findSymlinkComponent(root, resolved.path, makeListDir(scope.fs));
+  const walk = findSymlinkComponent(root, resolved.path, makeListDir(scope.fs), (path) => scope.fs.existsSync(path));
   if (!walk.ok) {
     throw new CommandError(walk.error.code, walk.error.message, { path: walk.error.path });
   }
