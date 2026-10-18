@@ -4,6 +4,15 @@ on:
   push:
     tags: ["v*"]
 
+# Serialize publishes. If a tag is deleted and re-pushed while a publish is
+# still running, the second run queues instead of racing the first (npm would
+# reject the duplicate version, but the race would still burn a run and could
+# interleave with test:package). Queuing is the safe default, so
+# cancel-in-progress stays false.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
@@ -21,7 +30,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (actions/checkout)
 
       - name: Verify the pushed tag matches the package version
         run: |
@@ -33,7 +42,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (actions/setup-node)
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"

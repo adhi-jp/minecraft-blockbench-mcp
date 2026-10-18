@@ -197,13 +197,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (actions/checkout)
 
       # engines.node is ">=22". The Linux baseline these expected counts come
       # from was measured on v24.13.0; 22 is the declared floor, so the floor is
       # what CI pins.
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (actions/setup-node)
         with:
           node-version: 22
           cache: npm
@@ -269,7 +269,7 @@ jobs:
       # a hit, which defeats the point.
       - name: Restore Blockbench types
         id: blockbench_types_cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0 (actions/cache)
         with:
           path: external/blockbench/types
           key: blockbench-types-${{ env.BLOCKBENCH_REF }}-${{ runner.os }}
