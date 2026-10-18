@@ -101,6 +101,9 @@ class FakeTexture {
   name: string;
   path = '';
   saved = true;
+  error = 0;
+  reloadCalls = 0;
+  watcherStarts = 0;
   constructor(uuidOrOptions: string | { name?: string }, name?: string) {
     if (typeof uuidOrOptions === 'string') {
       this.uuid = uuidOrOptions;
@@ -118,6 +121,13 @@ class FakeTexture {
     FakeTexture.loadedPaths.push(path);
     this.path = path;
     return this;
+  }
+  reloadTexture(): void {
+    this.reloadCalls += 1;
+    this.error = 0;
+  }
+  startWatcher(): void {
+    this.watcherStarts += 1;
   }
   add(undo: boolean): FakeTexture {
     // textures.js:942 returns a path match before creating an undo entry.
@@ -893,6 +903,8 @@ for (const { applyAll, saved } of [
     assert.equal(eye.faces.north.texture, 't-1');
     assert.equal(eye.faces.south.texture, 't-1', 'other faces keep the registered texture');
     assert.equal(texture.saved, saved, 'reuse preserves the texture state');
+    assert.equal(texture.reloadCalls, 0, 'a healthy reused texture is not reloaded');
+    assert.equal(texture.watcherStarts, 0, 'a healthy reused texture keeps its watcher');
     assert.deepEqual(body.applyTextureCalls, applyAll ? [{ texture, faces: true }] : []);
     assert.deepEqual(Object.values(loose.faces).map((face) => face.texture), Array(6).fill(applyAll ? 't-1' : false));
     assert.equal(undo.history.length, 1);
@@ -908,6 +920,48 @@ for (const { applyAll, saved } of [
     assert.deepEqual(Object.values(loose.faces).map((face) => face.texture), Array(6).fill(false));
   });
 }
+
+test('assign_texture reuses a registered texture whose path uses backslashes', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { texture, body } = injectModelProject();
+  injectedGlobals.Undo = makeModelUndo();
+  injectedGlobals.Canvas = { updateAll: () => {} };
+  const file = join(harness.scopeDir, 'skin.png');
+  nodeFs.writeFileSync(file, 'texture fixture');
+  texture.path = file.replace(/\//g, '\\');
+  const outcome = await harness.bridge.request('assign_texture', {
+    source: { kind: 'path', path: 'skin.png' },
+    apply_to: { cube_uuids: ['c-body'] },
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.deepEqual(FakeTexture.loadedPaths, [], 'a separator difference must not load a duplicate');
+  assert.deepEqual(FakeTexture.all, [texture]);
+  assert.deepEqual(outcome.result, { texture_uuid: 't-1', name: 'skin', applied_to: ['c-body'] });
+  assert.deepEqual(body.applyTextureCalls, [{ texture, faces: true }]);
+});
+
+test('assign_texture reloads and watches a registered texture left in error', async (t) => {
+  const harness = await makeHarness();
+  t.after(harness.cleanup);
+  const { texture, body } = injectModelProject();
+  injectedGlobals.Undo = makeModelUndo();
+  injectedGlobals.Canvas = { updateAll: () => {} };
+  texture.path = join(harness.scopeDir, 'skin.png');
+  texture.error = 1;
+  nodeFs.writeFileSync(texture.path, 'texture fixture');
+  const outcome = await harness.bridge.request('assign_texture', {
+    source: { kind: 'path', path: 'skin.png' },
+    apply_to: { cube_uuids: ['c-body'] },
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(outcome.error));
+  assert.equal(texture.reloadCalls, 1, 'the errored texture is reloaded once');
+  assert.equal(texture.watcherStarts, 1, 'the errored texture gets a watcher once');
+  assert.equal(texture.error, 0);
+  assert.deepEqual(FakeTexture.loadedPaths, [], 'reuse must not load a candidate');
+  assert.deepEqual(FakeTexture.all, [texture]);
+  assert.deepEqual(body.applyTextureCalls, [{ texture, faces: true }]);
+});
 
 /** Inject a project with one cube for UV command tests. */
 function injectUvProject(

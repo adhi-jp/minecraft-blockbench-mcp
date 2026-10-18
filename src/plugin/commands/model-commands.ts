@@ -576,9 +576,22 @@ export function registerModelCommands(
         });
       }
       // fromPath can replace saved duplicates and start a file watcher;
-      // reuse the registered texture before loading a candidate.
-      texture = Texture.all.find((existing) => existing.path === resolved)
-        ?? new Texture({ name: params.name }).fromPath(resolved);
+      // reuse the registered texture before loading a candidate. Blockbench
+      // keeps backslash paths on Windows while resolved is slash-separated.
+      const registered = Texture.all.find(
+        (existing) => typeof existing.path === 'string' && normalizePath(existing.path) === resolved,
+      );
+      if (registered !== undefined) {
+        // A texture registered while the file was missing keeps its error and
+        // has no watcher; the file exists now, so load it again.
+        if (registered.error) {
+          registered.reloadTexture();
+          registered.startWatcher();
+        }
+        texture = registered;
+      } else {
+        texture = new Texture({ name: params.name }).fromPath(resolved);
+      }
     } else {
       if (params.source.data_url.length > DEFAULTS.maxTextureDataUrlBytes) {
         throw new CommandError(
